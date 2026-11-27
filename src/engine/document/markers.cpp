@@ -418,7 +418,6 @@ namespace gnubase::engine
 			return {{"start", *start}, {"end", *end}};
 		}
 
-		// Moves the cursor to the next marker after it, or the previous one before it. Without one it stays.
 		// With the user setting transport.cycleFollowsMarkers, locating to a marker sets the locators to it: a cycle
 		// marker's range, or from a position marker to the next marker after it on its track (none: they stay).
 		void followMarker(const Project& project, CommandContext& context, const Marker& marker)
@@ -704,6 +703,7 @@ namespace gnubase::engine
 			return tracks;
 		}
 
+		// Moves the cursor to the next marker after it, or the previous one before it. Without one it stays.
 		Json locateNeighbour(const Project& project, CommandContext& context, bool next)
 		{
 			const time::Samples cursor = context.call("transport.get").at("position").get<time::Samples>();

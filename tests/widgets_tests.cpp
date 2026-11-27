@@ -2107,6 +2107,37 @@ TEST_CASE("list views select rows with clicks and keys, and data-value binds the
 	CHECK(page.selection == "2");
 }
 
+TEST_CASE("Page Up and Page Down in a table with a header move one row less than the body rows the view shows", "[ui]")
+{
+	test::UiApp app;
+	Rml::ElementDocument& document = app.show("paged-table.rml");
+	app.setDpRatio(1.0F);
+	document.UpdateDocument();
+	Rml::Element* list = document.GetElementById("paged");
+	Rml::Element* head = document.QuerySelector("thead");
+	Rml::Element* first = document.GetElementById("row-1");
+	REQUIRE(list != nullptr);
+	REQUIRE(head != nullptr);
+	REQUIRE(first != nullptr);
+	const float row = first->GetOffsetHeight();
+	REQUIRE(row > 0.0F);
+	const int page = static_cast<int>((list->GetClientHeight() - head->GetOffsetHeight()) / row) - 1;
+	REQUIRE(page >= 2);
+	// A page that counted the header row too would be longer.
+	REQUIRE(static_cast<int>(list->GetClientHeight() / row) - 1 > page);
+
+	const auto rowId = [](int number) { return "#row-" + std::to_string(number); };
+	click(app, rowId(1));
+	app.ui().key(std::nullopt, "PageDown");
+	CHECK(selected(app, rowId(1 + page)));
+	app.ui().key(std::nullopt, "PageDown");
+	CHECK(selected(app, rowId(1 + (2 * page))));
+	app.ui().key(std::nullopt, "PageUp");
+	CHECK(selected(app, rowId(1 + page)));
+	app.ui().key(std::nullopt, "PageUp");
+	CHECK(selected(app, rowId(1)));
+}
+
 TEST_CASE("tree views show the children of expanded rows, toggled by click or by the arrow keys", "[ui]")
 {
 	test::UiApp app;

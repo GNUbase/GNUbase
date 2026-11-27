@@ -345,13 +345,20 @@ namespace gnubase::ui
 				changed(all);
 			}
 
-			// How many rows Page Up and Page Down move: one less than the view shows, at least one.
+			// How many rows Page Up and Page Down move: one less than the view shows, at least one. The header rows of
+			// a table don't count.
 			std::ptrdiff_t pageRows(const std::vector<Rml::Element*>& shown)
 			{
 				const float row = shown.front()->GetOffsetHeight();
 				if (row <= 0.0F)
 					return 1;
-				return std::max<std::ptrdiff_t>(static_cast<std::ptrdiff_t>(GetClientHeight() / row) - 1, 1);
+				float header = 0.0F;
+				Rml::ElementList heads;
+				GetElementsByTagName(heads, "thead");
+				for (Rml::Element* head : heads)
+					header += head->GetOffsetHeight();
+				return std::max<std::ptrdiff_t>(
+					static_cast<std::ptrdiff_t>(std::max(GetClientHeight() - header, 0.0F) / row) - 1, 1);
 			}
 
 			static void selectOnly(const std::vector<Rml::Element*>& all, const Rml::Element& chosen)

@@ -153,6 +153,10 @@
 	{
 		color: #0969da;
 	}
+	listview thead td .sort-arrow
+	{
+		decorator: svg(dropdown-arrow.svg);
+	}
 	tabset tabs
 	{
 		decorator: svg-ninepatch(tabbar.svg, 6 6 6 6);

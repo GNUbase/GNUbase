@@ -2307,6 +2307,22 @@ listitem.expanded > .tree-toggle, tr.expanded .tree-toggle
 	transform: none;
 }
 
+/* The arrow in the header a table is sorted by (the markers window): up for the ascending order, down for the
+   descending one (.descending on its header). The themes draw it. */
+listview thead td .sort-arrow
+{
+	display: inline-block;
+	width: 12dp;
+	height: 8dp;
+	margin-left: 4dp;
+	transform: rotate(180deg);
+}
+
+listview thead td.descending .sort-arrow
+{
+	transform: none;
+}
+
 table
 {
 	display: table;

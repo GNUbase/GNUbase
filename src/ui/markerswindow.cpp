@@ -335,7 +335,8 @@ namespace gnubase::ui
 	}
 
 	// The header: the locate column, then the others in their order, the one the list is sorted by with .sorted (and
-	// .descending), at the widths the user gave them.
+	// .descending) and an arrow (.sort-arrow, which the style sheets turn to its direction), at the widths the user
+	// gave them.
 	void MarkersWindow::showHead()
 	{
 		if (!alive() || m_head == nullptr)
@@ -354,6 +355,8 @@ namespace gnubase::ui
 			cells += column;
 			cells += R"(">)";
 			cells += g_headers[index];
+			if (column == m_columns.sort)
+				cells += R"(<span class="sort-arrow"/>)";
 			cells += "</td>";
 		}
 		m_head->SetInnerRML(cells);
@@ -538,7 +541,8 @@ namespace gnubase::ui
 	}
 
 	// Where a press at x on the header grabs it: the column it moves or, within reach of the line between two headers,
-	// the column on the line's left, which it resizes. Nothing outside the column headers.
+	// the column on the line's left, which it resizes. The locate column has no line to grab: a press next to it is a
+	// press on the first column. Nothing outside the column headers.
 	std::optional<MarkersWindow::HeaderDrag> MarkersWindow::grab(Rml::Element* target, float x) const
 	{
 		Rml::Element* cell = closest(target, "td");
@@ -553,12 +557,13 @@ namespace gnubase::ui
 		{
 			drag.resize = true;
 		}
-		else if (x - left <= g_reach * ratio)
+		else if (Rml::Element* previous = cell->GetPreviousSibling();
+			x - left <= g_reach * ratio && previous != nullptr && previous->HasAttribute("column"))
 		{
 			drag.resize = true;
-			cell = cell->GetPreviousSibling();
+			cell = previous;
 		}
-		if (cell == nullptr || !cell->HasAttribute("column"))
+		if (!cell->HasAttribute("column"))
 			return std::nullopt;
 		drag.column = cell->GetAttribute<Rml::String>("column", "");
 		drag.width = cell->GetBox().GetSize(Rml::BoxArea::Content).x / ratio;
@@ -672,8 +677,18 @@ namespace gnubase::ui
 		for (const auto& [id, setting] : g_toggles)
 			if (on(id))
 			{
-				// The toggle turns itself; the setting, once changed, turns it to the setting.
-				m_binding.send("settings.set", {{"key", setting}, {"value", !m_flags.at(setting)}});
+				// The toggle turns itself after this listener: the setting becomes what it will show, so that two
+				// clicks before the engine answers end as the toggle does. If the engine refuses, the toggle goes back
+				// to the setting.
+				const Rml::Element* toggle = m_document->GetElementById(id);
+				const bool checked = toggle != nullptr ? !toggle->HasAttribute("checked") : !m_flags.at(setting);
+				m_binding.send("settings.set", {{"key", setting}, {"value", checked}},
+					[this, id = std::string(id), key = std::string(setting), token = std::weak_ptr<bool>(m_alive)](
+						const engine::Result& result)
+					{
+						if (!token.expired() && !result.ok() && alive())
+							setChecked(m_document->GetElementById(id), m_flags.at(key));
+					});
 				return;
 			}
 		if (on("add-position-marker"))

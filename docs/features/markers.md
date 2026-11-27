@@ -70,9 +70,9 @@ The reference's defaults (`ui::defaultKeyMap`, [key-commands.md](key-commands.md
   ([inspector.md](inspector.md), p. 430); selecting a marker deselects the events and selecting an event the markers.
   With the object selection tool:
   - **Moving.** A drag of a selected position marker, or of a cycle marker by its label or upper border (the top 8 dp
-    of the lane, away from its handles), moves the selected markers, shown where they go while dragging; dropped on another marker track's
-    lane, they go onto that track (`marker.set` `track`, where a marker whose number is taken gets the first free one),
-    also dragged straight there to keep their position.
+    of the lane, away from its handles), moves the selected markers, shown where they go while dragging; dropped on
+    another marker track's lane, they go onto that track (`marker.set` `track`, where a marker whose number is taken
+    gets the first free one), also dragged straight there to keep their position.
     One undo step, a `history.transaction` of `marker.set`s.
   - **Resizing.** A drag at a cycle marker's start or end handle, within 4 dp of it at any height of the lane, its
     upper border too, moves that edge.
@@ -148,15 +148,20 @@ Marker Tracks and Off set `ui.markerLines`.
   to all the selected markers (the length to the cycle markers among them), in one undo step (`history.transaction`).
   The reference does this with checkbox attributes, which markers here don't have.
 - **Columns** (p. 429): a click on a header sorts by its column, a second one the other way round, the position always
-  second (`.sorted` and `.descending` on the header); dragging a header moves its column, dragging the line between
-  two headers resizes the column on its left. The locate column stays first. Their order, widths and sorting are the
+  second (`.sorted` and `.descending` on the header, with a `.sort-arrow` in it that the themes draw: up for the
+  ascending order); dragging a header moves its column, dragging the line between two headers resizes the column on
+  its left, and a press within reach of the line between the locate column and the first column is a press on the first
+  column. The locate column stays first. Their order, widths and sorting are the
   user setting `ui.markerColumns`, whose changes from MCP or Lua apply at once.
 - **Auto-Scroll with Project Cursor** (`#marker-auto-scroll`, p. 427), the user setting `ui.markersAutoScroll` (on by
   default): when the arrow moves to another marker, the list scrolls as little as it takes to show its row.
 - **Marker settings** (`#marker-settings`, p. 428): Show Marker IDs on Marker Track (`ui.markerIds`), Cycle Follows
   When Locating to Markers (`transport.cycleFollowsMarkers`) and Sync Selection (`ui.markersSyncSelection`, on by
   default), with which the markers window and the project window's marker events select the same markers
-  (`app::AppUi` gives each one's selection to the other), except while recording. When it starts syncing (the window opens, recording stops, the setting is turned on) the window takes the project window's selection.
+  (`app::AppUi` gives each one's selection to the other), except while recording. When it starts syncing (the window
+  opens, recording stops, the setting is turned on) the window takes the project window's selection. Each toggle sends
+  the state it turns to, so that two clicks before the engine answers end as the toggle shows, and goes back to the
+  setting if the engine refuses the change.
 - Add Marker (`#add-position-marker`) adds a position marker at the cursor, Add Cycle Marker one at the locators,
   Remove the selected markers. The Functions menu moves the selected markers to the cursor in one undo step
   (`history.transaction` of `marker.set`s; cycle markers keep their length) and reassigns the position or cycle

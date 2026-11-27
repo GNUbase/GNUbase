@@ -3,6 +3,7 @@
 // real engine, and the markers window and the marker key commands in the app's UI.
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
+#include "testutils/commandholds.h"
 #include "testutils/fakeui.h"
 #include "ui/automation.h"
 #include "ui/canvas.h"
@@ -26,6 +27,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <optional>
 #include <string>
@@ -1001,7 +1003,14 @@ TEST_CASE("the markers window scrolls to the locate arrow, and Page Up and Page 
 	app.ui().key(window, "PageDown");
 	REQUIRE(app.waitUntil([&selected] { return selected() > 1; }));
 	const int page = selected();
-	CHECK(page < 30);
+	// One row less than the body rows the list shows: its header row doesn't count.
+	document.UpdateDocument();
+	Rml::Element* head = document.QuerySelector("#marker-list thead");
+	REQUIRE(head != nullptr);
+	const float rowHeight = markerRows(document)[0]->GetOffsetHeight();
+	const int shown = static_cast<int>((list->GetClientHeight() - head->GetOffsetHeight()) / rowHeight);
+	REQUIRE(shown > 2);
+	CHECK(page == shown - 1);
 	CHECK(inView(markerRows(document)[static_cast<size_t>(page)]));
 	app.ui().key(window, "PageDown");
 	REQUIRE(app.waitUntil([&selected, page] { return selected() == 2 * page; }));
@@ -1173,6 +1182,93 @@ TEST_CASE("the marker settings: marker ids on the marker track, cycle follows an
 	REQUIRE(app.waitUntil([&lines, intro] { return lines.selection() == std::vector<uint64_t>{intro}; }));
 	const ui::MarkersWindow& reopened = openMarkers(app, 2);
 	REQUIRE(app.waitUntil([&reopened, intro] { return reopened.selection() == std::vector<uint64_t>{intro}; }));
+}
+
+TEST_CASE("the markers window's toggles send their own state, also two clicks before the engine answers, and go back "
+		  "when it refuses (#563)",
+	"[ui]")
+{
+	test::CommandHolds holds; // declared before the app: its engine's command thread waits in hold()
+	test::UiApp app;
+	const test::ReleaseHolds releaseHolds{holds};
+	app.engine().registerCommand(
+		{"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters, Json::object(), false},
+		[&holds](engine::CommandContext&) { return holds.hold(); });
+	app.call("track.add", {{"type", "marker"}});
+	openMarkers(app, 0);
+	const ui::WindowId window = app.appUi().markersWindow();
+	Rml::ElementDocument& document = markersDocument(app);
+	const auto checked = [&document](const char* id) { return document.GetElementById(id)->HasAttribute("checked"); };
+	const auto answered = [&app]
+	{ return app.waitUntil([&app] { return app.appUi().binding().waiting("settings.set") == 0; }); };
+	REQUIRE(app.waitUntil([&checked] { return checked("marker-auto-scroll"); }));
+
+	// Two clicks before the engine answers the first one turn the setting off and on again, as the toggle shows.
+	engine::Client holder(app.engine(), "holder");
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(1));
+	app.ui().click(window, at("#marker-auto-scroll"), ui::MouseButton::Left, 1, {});
+	app.ui().click(window, at("#marker-auto-scroll"), ui::MouseButton::Left, 1, {});
+	holds.release(1);
+	REQUIRE(answered());
+	settle(app);
+	CHECK(setting(app, "ui.markersAutoScroll") == true);
+	CHECK(checked("marker-auto-scroll"));
+
+	// A setting the engine refuses (here the settings file can't be written) leaves the toggle as the setting is.
+	const std::filesystem::path folder = app.engine().settingsDirectory();
+	REQUIRE(!folder.empty());
+	std::filesystem::remove_all(folder);
+	std::ofstream(folder) << "not a folder";
+	app.ui().click(window, at("#marker-auto-scroll"), ui::MouseButton::Left, 1, {});
+	REQUIRE(answered());
+	settle(app);
+	CHECK(setting(app, "ui.markersAutoScroll") == true);
+	CHECK(checked("marker-auto-scroll"));
+}
+
+TEST_CASE(
+	"the markers window sorts by a click at the left edge of its first column, and arrows the sorted header (#563)",
+	"[ui]")
+{
+	test::UiApp app;
+	app.call("track.add", {{"type", "marker"}});
+	addMarker(app, {{"position", 2 * g_quarter}, {"name", "B"}});
+	addMarker(app, {{"position", 4 * g_quarter}, {"name", "A"}});
+	openMarkers(app, 2);
+	const ui::WindowId window = app.appUi().markersWindow();
+	Rml::ElementDocument& document = markersDocument(app);
+	const auto arrows = [&document]
+	{
+		Rml::ElementList found;
+		document.QuerySelectorAll(found, "#marker-head .sort-arrow");
+		return found;
+	};
+
+	// The header the list is sorted by has the arrow, only that one.
+	REQUIRE(arrows().size() == 1);
+	CHECK(document.QuerySelector("#marker-head td.position .sort-arrow") != nullptr);
+
+	// A press next to the locate column, within reach of the line between it and the first column, is a press on the
+	// first column: it sorts, and a second click turns the order around.
+	for (const bool descending : {false, true})
+	{
+		document.UpdateDocument();
+		Rml::Element* number = document.QuerySelector("#marker-head td.number");
+		REQUIRE(number != nullptr);
+		app.ui().click(window, pointIn(*number, 1.0F), ui::MouseButton::Left, 1, {});
+		REQUIRE(app.waitUntil(
+			[&app, descending]
+			{
+				const Json columns = setting(app, "ui.markerColumns");
+				return columns.value("sort", "") == "number" && columns.value("descending", false) == descending;
+			}));
+		Rml::Element* sorted = document.QuerySelector("#marker-head td.number");
+		REQUIRE(sorted != nullptr);
+		CHECK(sorted->IsClassSet("descending") == descending);
+		CHECK(arrows().size() == 1);
+		CHECK(sorted->QuerySelector(".sort-arrow") != nullptr);
+	}
 }
 
 TEST_CASE("File > Export and File > Import > Markers write and read the marker file chosen", "[ui]")
