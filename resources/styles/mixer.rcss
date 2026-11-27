@@ -240,7 +240,6 @@
 	right: 0;
 	height: 10dp;
 	margin-top: -5dp;
-	font-size: 8dp;
 	line-height: 10dp;
 }
 

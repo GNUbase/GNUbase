@@ -420,12 +420,13 @@ TEST_CASE("a channel meter's bars fall back from a peak at meter.fallback", "[ui
 			bars.empty() ? std::nullopt : ui::widgets::parse(bars[0].at("attributes").value("value", std::string()));
 		return value.value_or(0.0F);
 	};
-	// The strip first: the frame that takes the peak must find it, since the peak comes only once.
+	// The sine plays on until the bar shows its peak, so every read after a render finds the peak again.
 	REQUIRE(app.waitUntil(
-		[&app, &strip] { return app.ui().dom(std::nullopt, strip + ".mixer-peak", 0).at("elements").size() == 1; }));
-	app.call("audio.render", {{"frames", 4800}});
-	// At the peak, or a few ms of fall below it when the step that shows it is slow.
-	REQUIRE(app.waitUntil([&bar] { return bar() <= -6.0F && bar() > -6.1F; }));
+		[&app, &bar]
+		{
+			app.call("audio.render", {{"frames", 480}});
+			return bar() == -6.0F;
+		}));
 
 	// Silence after the peak (p. 1614): the bar falls 10 dB a second, not at once, to silence below its scale.
 	const auto start = std::chrono::steady_clock::now();

@@ -147,8 +147,8 @@ below their -60 dB end to silence: the UI keeps each bar's level and lowers it b
 Channel selection and the agents and Move Selected Channels commands that work on it, dragging several channels at
 once and the green drop line; the Zones tab (locking channels to the left and right), the History and Snapshots tabs and
 the right zone; the channel overview, the meter bridge, Channel Latency, the inserts section (#113), routing several selected channels at once (p. 471) and the
-channel meters' colors (the +3 dB digital scale's color handles) and clipping indicators (pp. 467-468,
-[metering.md](metering.md)); Find Track/Channel, channel visibility configurations, Undo Visibility Change, linking mixers ([link-groups.md](link-groups.md) links channels), the zoom palette and the transport buttons of the toolbar (the state buttons: solo-mute-listen.md); the track pictures browser and pictures in the track list; and faders of busses. The
+channel meters' colors (the +3 dB digital scale's color handles), the scale's headroom marks (p. 534) and clipping
+indicators (pp. 467-468, [metering.md](metering.md)); Find Track/Channel, channel visibility configurations, Undo Visibility Change, linking mixers ([link-groups.md](link-groups.md) links channels), the zoom palette and the transport buttons of the toolbar (the state buttons: solo-mute-listen.md); the track pictures browser and pictures in the track list; and faders of busses. The
 windows' places are kept in `ui.layout` and workspaces ([workspaces.md](workspaces.md)).
 
 ## Checks

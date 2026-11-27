@@ -944,6 +944,10 @@
 	{
 		color: #000000;
 	}
+	.mixer-meter-scale span
+	{
+		font-size: 8dp;
+	}
 	.midi-editor .editor-part, .in-place-editor .editor-part
 	{
 		color: #c8c8c8;
