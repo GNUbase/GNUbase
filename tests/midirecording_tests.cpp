@@ -507,6 +507,34 @@ TEST_CASE("retrospective recording inserts what a track's input played while it 
 	CHECK_THAT(reject(client, "midi.insertRetrospective", {{"track", setup.track}}), ContainsSubstring("nothing"));
 }
 
+TEST_CASE("Insert from All MIDI Inputs inserts into the track what came in at all MIDI inputs (#641)", "[integration]")
+{
+	// Reference manual p. 354: its own buffer, before the tracks' routing, so a track that neither monitors nor is
+	// record-enabled, and whose own buffer holds nothing, gets it too.
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "channel.set", {{"channel", setup.channel}, {"recordEnable", false}, {"midiInput", "none"}});
+	const auto key = [&](std::vector<int> bytes)
+	{
+		run(client, "midi.keyboard", {{"messages", Json::array({{{"bytes", std::move(bytes)}}})}});
+		run(client, "audio.render", {{"frames", 640}});
+	};
+	key({0x90, 60, 100});
+	key({0x80, 60, 0});
+	CHECK_THAT(reject(client, "midi.insertRetrospective", {{"track", setup.track}}), ContainsSubstring("nothing"));
+	run(client, "midi.insertRetrospective", {{"track", setup.track}, {"allInputs", true}});
+	const std::vector<Json> parts = setup.parts();
+	REQUIRE(parts.size() == 1);
+	REQUIRE(parts[0].at("notes").size() == 1);
+	CHECK(parts[0].at("notes")[0].at("pitch") == 60);
+
+	// Empty All Buffers empties it too.
+	key({0x90, 62, 100});
+	run(client, "midi.clearRetrospective");
+	CHECK_THAT(reject(client, "midi.insertRetrospective", {{"track", setup.track}, {"allInputs", true}}),
+		ContainsSubstring("nothing"));
+}
+
 TEST_CASE("input in stop mode on the next audio device leaves out the old device's input in stop mode", "[integration]")
 {
 	Setup setup;

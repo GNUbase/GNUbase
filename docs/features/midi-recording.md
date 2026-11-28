@@ -91,10 +91,16 @@ undo step.
   Retrospective Recording > Empty All Buffers runs it for all (p. 356). The Retrospective Recording button among the
   inspector's top buttons of a MIDI or instrument track opens its pop-up menu (pp. 354-356): Insert as Linear Recording,
   Insert as Cycle Recording and Empty Retrospective Record Buffer, for that track (`tests/inspector_tests.cpp`).
+- **Insert from All MIDI Inputs** (#641, p. 354). What came in at all MIDI inputs, before the tracks' routing (the
+  audio engine's block of all inputs, which MIDI thru plays to the tracks), goes into a retrospective buffer of its own
+  (`Recorder::process`, the buffer of channel 0), kept as the tracks' buffers are, whatever the tracks' MIDI inputs,
+  monitor and record enable. `midi.insertRetrospective` with `allInputs` inserts it into the track instead of the
+  track's own buffer; Empty All Buffers empties it too. Transport > MIDI Retrospective Recording > Insert from All MIDI
+  Inputs runs it for the first selected MIDI or instrument track (`track.insertFromAllMidiInputs`). Tests:
+  `tests/midirecording_tests.cpp`, `tests/mainmenu_tests.cpp`.
 
 ## Not yet
 
 Choosing a single MIDI input port for a track (p. 348); Record in Editor (p. 349); Length Adjustment, Insert Reset
 Events after Record and the latency compensation for live playing (p. 350, p. 1616); the MIDI thru filter and the
-reference's Record-Enable allows MIDI Thru switch; retrospective recording from all MIDI inputs and its Insert from All
-MIDI Inputs (p. 354); SysEx from the inputs.
+reference's Record-Enable allows MIDI Thru switch; SysEx from the inputs.

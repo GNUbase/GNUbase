@@ -1128,18 +1128,21 @@ namespace gnubase::app
 		// Auto fades (docs/features/fades.md): the project's, or the first selected audio track's.
 		m_keys.add({"project.autoFades", "Opens the auto fades dialog for the whole project.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openAutoFades(window, 0); }});
-		// Only audio tracks have auto fades: other selected tracks don't count.
-		const auto firstAudioTrack = [this]() -> uint64_t
+		// The first selected track of one of the types: other selected tracks don't count.
+		const auto firstSelected = [this](std::vector<std::string> types) -> uint64_t
 		{
 			if (!m_trackList || !m_eventDisplay || !m_eventDisplay->project().is_object())
 				return 0;
 			const engine::Json& tracks = m_eventDisplay->project().at("tracks");
 			for (const uint64_t id : m_trackList->selection())
 				for (const engine::Json& track : tracks)
-					if (track.at("id") == id && track.at("type") == "audio")
+					if (track.at("id") == id &&
+						std::find(types.begin(), types.end(), track.at("type").get<std::string>()) != types.end())
 						return id;
 			return 0;
 		};
+		// Only audio tracks have auto fades.
+		const auto firstAudioTrack = [firstSelected] { return firstSelected({"audio"}); };
 		m_keys.add({"track.autoFades", "Opens the auto fades dialog for the first selected audio track.",
 			[this, firstAudioTrack](ui::Window& window, Rml::Element* /*zone*/)
 			{
@@ -1148,6 +1151,18 @@ namespace gnubase::app
 			}});
 		m_keys.enableWhen(
 			"track.autoFades", [firstAudioTrack](ui::Window&, Rml::Element*) { return firstAudioTrack() != 0; });
+		// Transport > MIDI Retrospective Recording > Insert from All MIDI Inputs (reference manual p. 354, #641): into
+		// the first selected MIDI or instrument track.
+		const auto firstMidiTrack = [firstSelected] { return firstSelected({"midi", "instrument"}); };
+		m_keys.add({"track.insertFromAllMidiInputs",
+			"Inserts what came in at all MIDI inputs into the first selected MIDI or instrument track.",
+			[this, firstMidiTrack](ui::Window&, Rml::Element* /*zone*/)
+			{
+				if (const uint64_t track = firstMidiTrack(); track != 0)
+					m_binding.send("midi.insertRetrospective", {{"track", track}, {"allInputs", true}});
+			}});
+		m_keys.enableWhen("track.insertFromAllMidiInputs",
+			[firstMidiTrack](ui::Window&, Rml::Element*) { return firstMidiTrack() != 0; });
 		// New tracks go below the lowest selected track (reference manual p. 198).
 		const auto below = [this]
 		{

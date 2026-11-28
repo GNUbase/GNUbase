@@ -213,9 +213,10 @@ namespace gnubase::engine
 
 		// Audio thread: a block of the device's input, each frame of which belongs where played says the transport
 		// played the frame offset frames before it (recorded only if the transport recorded then), and what the
-		// sequencers' MIDI input plays in the block, recorded where the transport plays it.
+		// sequencers' MIDI input plays in the block, recorded where the transport plays it. What came in at all MIDI
+		// inputs goes into a retrospective buffer of its own, that of channel 0 (Insert from All MIDI Inputs, #641).
 		void process(const audio::DeviceBlock& block, const PlayedPositions& played, int64_t offset,
-			const MidiTap::Sequencers& sequencers) noexcept;
+			const MidiTap::Sequencers& sequencers, const graph::EventBuffer& allInputs) noexcept;
 
 		// Command thread, while it calls process itself (an offline render): if the chunks the audio thread sent fill
 		// half the pool, waits until the disk thread has handled all of them, so that no block finds the pool empty.
@@ -227,7 +228,8 @@ namespace gnubase::engine
 		// MIDI input events lost because the disk thread fell behind: a block found no free MIDI chunk.
 		uint64_t droppedMidi() const { return m_droppedMidi.load(std::memory_order_relaxed); }
 
-		// Command thread: what the retrospective buffer of the channel holds, oldest first. Doesn't wait while the disk
+		// Command thread: what the retrospective buffer of the channel holds, oldest first; channel 0 for all MIDI
+		// inputs. Doesn't wait while the disk
 		// thread lists the record folder and creates a recording's files, and leaves a recording's start to it: the
 		// input sent after the chunk that starts the recording isn't in it yet then.
 		std::vector<RetrospectiveEvent> retrospective(ObjectId channel);
@@ -337,9 +339,10 @@ namespace gnubase::engine
 		// Audio thread: hands frames frames from offset in the block on, or false if no chunk is free.
 		bool send(const audio::DeviceBlock& block, uint32_t offset, uint32_t frames, time::Samples position) noexcept;
 		void processMidi(const audio::DeviceBlock& block, const PlayedPositions& played,
-			const MidiTap::Sequencers& sequencers) noexcept;
+			const MidiTap::Sequencers& sequencers, const graph::EventBuffer& allInputs) noexcept;
 		bool sendMidi(const audio::DeviceBlock& block, const PlayedPositions& played,
-			const MidiTap::Sequencers& sequencers, uint32_t offset, uint32_t frames, time::Samples position) noexcept;
+			const MidiTap::Sequencers& sequencers, const graph::EventBuffer& allInputs, uint32_t offset,
+			uint32_t frames, time::Samples position) noexcept;
 
 		Notify m_notify;
 		CreateWriter m_createWriter;

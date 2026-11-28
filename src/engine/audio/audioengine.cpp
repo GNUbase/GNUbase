@@ -1579,7 +1579,8 @@ namespace gnubase::engine
 		program.graph.process(block.frames, transport, m_workers.get());
 		// After the graph: the MIDI inserts above the divider played the input there, with their automation, before
 		// it is recorded (MidiSequencer::process).
-		m_recorder.process(block, m_played, m_recordOffset.load(std::memory_order_relaxed), program.sequencers);
+		m_recorder.process(
+			block, m_played, m_recordOffset.load(std::memory_order_relaxed), program.sequencers, m_midiInput);
 		m_tap.capture(block.position, program.instruments);
 		m_playback.endBlock();
 		output(block, program);
