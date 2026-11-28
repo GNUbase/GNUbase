@@ -249,6 +249,7 @@
 				{key = "editing.defaultTimeBase", label = "Default Track Time Type", choices = {
 					{"musical", "Musical"}, {"linear", "Time Linear"},
 					{"followTimeFormat", "Follow Transport Main Display"}}},
+				{key = "editing.rangeToolSplitsPartlySelectedEvents", label = "Range Tool Splits Partly Selected Events"},
 				{key = "ui.upDownSelectsTracksOnly",
 					label = "Use Up/Down Navigation Commands for Selecting Tracks only"}}},
 			{id = "editing-audio", parent = "Editing", name = "Audio", items = {

@@ -919,6 +919,56 @@ TEST_CASE("range.split cuts the events and parts on the range's tracks at its ed
 	CHECK(f.spans(f.audioTrack) == Spans{{g_second, 3 * g_second}});
 }
 
+TEST_CASE("range.set splits the events and parts at the range's edges and mutes or unmutes those in it", "[unit]")
+{
+	// Range Tool Splits Partly Selected Events (reference manual pp. 277, 293, 1595).
+	RangeFixture f;
+	// The events and parts on a track as start and whether they are muted, by start.
+	const auto muted = [&f](int64_t onTrack)
+	{
+		std::vector<std::pair<int64_t, bool>> result;
+		const Json project = f.call("project.get");
+		for (const char* kind : {"audioEvents", "midiParts"})
+			for (const Json& item : project.at(kind))
+				if (item.at("track") == onTrack)
+				{
+					const Json info = f.call("event.get", {{"events", {item.at("id")}}}).at("events").at(0);
+					result.emplace_back(info.at("start").get<int64_t>(), item.value("mute", false));
+				}
+		std::sort(result.begin(), result.end());
+		return result;
+	};
+	const size_t before = f.steps();
+	CHECK(f.call("range.set", f.range({{"mute", true}})).at("events").size() == 2);
+	CHECK(f.steps() == before + 1);
+	CHECK(muted(f.audioTrack) == std::vector<std::pair<int64_t, bool>>{{g_second, false}, {g_start, true}});
+	CHECK(muted(f.midiTrack) ==
+		std::vector<std::pair<int64_t, bool>>{{2 * g_second, false}, {g_start, true}, {g_end, false}});
+	f.call("range.set", f.range({{"mute", false}}));
+	CHECK(muted(f.midiTrack) ==
+		std::vector<std::pair<int64_t, bool>>{{2 * g_second, false}, {g_start, false}, {g_end, false}});
+
+	// One undo step each, which takes the cuts back too.
+	f.call("history.undo");
+	f.call("history.undo");
+	CHECK(muted(f.audioTrack) == std::vector<std::pair<int64_t, bool>>{{g_second, false}});
+	CHECK(muted(f.midiTrack) == std::vector<std::pair<int64_t, bool>>{{2 * g_second, false}});
+
+	// A locked event across an edge stays whole and as it is; one wholly in the range is muted.
+	const int64_t inside = f.audioEvent(f.track("audio", "linear"));
+	f.call("event.move", {{"events", {inside}}, {"delta", 2 * g_second}}); // 3 to 5 seconds
+	f.call("event.set", {{"events", {f.event, inside}}, {"lock", true}});
+	const Json tracks = {f.audioTrack, f.audio(inside).at("track")};
+	CHECK(f.call("range.set", f.range({{"end", 6 * g_second}, {"tracks", tracks}, {"mute", true}})).at("events") ==
+		Json::array({inside}));
+	CHECK(muted(f.audioTrack) == std::vector<std::pair<int64_t, bool>>{{g_second, false}});
+	CHECK(f.audio(inside).at("mute") == true);
+
+	// A range needs a length and mute.
+	f.fails("range.set", f.range({{"end", g_start}, {"mute", true}}));
+	f.fails("range.set", f.range());
+}
+
 TEST_CASE("range.delete removes what is in the range, and with time closes the gap", "[unit]")
 {
 	RangeFixture f;

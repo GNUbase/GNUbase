@@ -2710,6 +2710,70 @@ TEST_CASE("the edit commands edit the selection range, and paste pastes at its s
 	REQUIRE(f.waitUntil([&f] { return !f.display.canRun("edit.paste"); }));
 }
 
+TEST_CASE("with Range Tool Splits Partly Selected Events, mute, unmute and Range Start and End to Cursor cut the "
+		  "events at the range's edges",
+	"[unit]")
+{
+	// Reference manual pp. 259, 277, 293, 1595.
+	Fixture f;
+	const Json tracks = f.call("project.get").at("tracks");
+	const auto audio = tracks[0].at("id").get<uint64_t>();
+	const auto midi = tracks[1].at("id").get<uint64_t>();
+	const auto mutes = [](const Json& items)
+	{
+		std::vector<bool> result;
+		for (const Json& item : items)
+			result.push_back(item.value("mute", false));
+		return result;
+	};
+	const auto range = [&f] { return f.display.range().value_or(ui::RangeSelection{}); };
+	// From 1.5 to 2.25 seconds on both tracks: the event reaches out of its end, the part out of both edges.
+	f.display.setTool(ui::Tool::RangeSelection);
+	f.display.setRange(ui::RangeSelection{72000, 108000, {audio, midi}});
+	const size_t before = f.call("history.get").at("steps").size();
+	// Off by default: mute works on the selected events, here none.
+	f.run("edit.mute");
+	f.call("settings.set", {{"key", "editing.rangeToolSplitsPartlySelectedEvents"}, {"value", true}});
+	f.step();
+	CHECK(f.call("history.get").at("steps").size() == before);
+
+	// On, what lies in the range is cut out and muted, in one undo step, and unmute unmutes it.
+	f.run("edit.mute");
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 3; }));
+	CHECK(mutes(f.parts()) == std::vector<bool>{false, true, false});
+	CHECK(mutes(f.audioEvents()) == std::vector<bool>{true, false});
+	CHECK(f.call("history.get").at("steps").size() == before + 1);
+	f.run("edit.unmute");
+	REQUIRE(f.waitUntil([&f, mutes] { return mutes(f.parts()) == std::vector<bool>{false, false, false}; }));
+	f.call("history.undo");
+	f.call("history.undo");
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 1; }));
+
+	// Range Start to Cursor moves what lies in the range to the cursor at 5 seconds, and the range with it.
+	f.call("transport.locate", {{"position", 240000}});
+	REQUIRE(f.waitUntil([&f] { return f.display.cursor() == 5.0; }));
+	f.run("edit.moveStartToCursor");
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 3; }));
+	CHECK(range().start == 240000);
+	CHECK(range().end == 276000);
+	REQUIRE(f.waitUntil(
+		[&f]
+		{
+			const Json events = f.audioEvents();
+			return events.size() == 2 && (events[0].at("position") == 264000 || events[1].at("position") == 264000);
+		}));
+	// Range End to Cursor puts the range's end there, and moves the audio event's piece from 264000 to 228000.
+	f.run("edit.moveEndToCursor");
+	CHECK(range().start == 204000);
+	CHECK(range().end == 240000);
+	REQUIRE(f.waitUntil(
+		[&f]
+		{
+			const Json events = f.audioEvents();
+			return events.size() == 2 && (events[0].at("position") == 228000 || events[1].at("position") == 228000);
+		}));
+}
+
 TEST_CASE("without a range, cut and copy take the selected events, and Paste Relative to Cursor keeps their distance",
 	"[unit]")
 {

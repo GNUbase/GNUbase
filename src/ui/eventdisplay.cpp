@@ -279,6 +279,12 @@ namespace gnubase::ui
 					m_wheelVolume = wheel->get<bool>();
 					m_wheelVolumeKnown = true;
 				}
+				if (const auto splits = values.find("editing.rangeToolSplitsPartlySelectedEvents");
+					splits != values.end())
+				{
+					m_rangeSplits = splits->get<bool>();
+					m_rangeSplitsKnown = true;
+				}
 				if (const auto muted = values.find("editing.treatMutedAudioLikeDeleted"); muted != values.end())
 				{
 					m_treatMutedKnown = true;
@@ -365,6 +371,12 @@ namespace gnubase::ui
 			{
 				if (!alive.expired() && result.ok() && !m_wheelVolumeKnown)
 					m_wheelVolume = result.value.at("value").get<bool>();
+			});
+		m_binding.send("settings.get", {{"key", "editing.rangeToolSplitsPartlySelectedEvents"}},
+			[this, alive](const engine::Result& result)
+			{
+				if (!alive.expired() && result.ok() && !m_rangeSplitsKnown)
+					m_rangeSplits = result.value.at("value").get<bool>();
 			});
 		m_binding.send("settings.get", {{"key", "editing.treatMutedAudioLikeDeleted"}},
 			[this, alive](const engine::Result& result)

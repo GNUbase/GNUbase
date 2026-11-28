@@ -24,6 +24,7 @@ changes nothing if it fails; `range.copy` changes nothing in the project at all.
 | `range.cut` | `range.copy`, then `range.delete`; `time` (Cut Time) closes the gap; with `events` it copies and removes those | pp. 292, 425 |
 | `range.paste` | Pastes the clipboard at `position` (default the cursor) or `positionTicks`, with `origin` (Paste at Origin) at the copied range's start, or with `relative` (Paste Relative to Cursor) as far from the cursor as it was when copied; `time` (Paste Time) first makes room; `selectedTrack` and `snap` paste events as Paste does | pp. 270, 292 |
 | `range.move` | Moves what is in the range to `position` or `positionTicks`, on the same tracks or from `track` on, without the clipboard; `copy` leaves it and pastes a copy | pp. 291, 432 |
+| `range.set` | Splits at the range's edges and mutes or unmutes (`mute`) what is in it, as `event.set` does; locked events only when they lie wholly in it | pp. 277, 293 |
 
 - **Cuts at the edges.** Events and parts that cross an edge are split there first, as `event.split` splits them, so
   only what lies in the range is affected (p. 291). A MIDI part's notes across an edge stay in the part they start in,
@@ -190,8 +191,17 @@ The info line shows the range, made with the range selection tool or, with the s
 selection tool: Range Start, Range End, Range Length, Top Track and Bottom Track, which set it (pp. 287-288,
 [inspector.md](inspector.md)).
 
-Not yet (#1910): Range Tool Splits Partly Selected Events, and the range in the editors (they come with their
-tickets).
+Range Tool Splits Partly Selected Events (`editing.rangeToolSplitsPartlySelectedEvents`, off by default, on the
+preferences' Editing page, pp. 293, 1595): on, Mute and Unmute (`edit.mute`, `edit.unmute`) on a range with a length cut
+what lies in it out at its edges and mute or unmute that (`range.set`, p. 277), and Range Start and Range End to Cursor
+(`edit.moveStartToCursor`, `edit.moveEndToCursor`) move what lies in it so that its start or end is at the project
+cursor (`range.move`), where the range goes (p. 259). Off, these work on the selected events, as without a range. The
+manual describes only the preference on. Dragging the range's contents and Duplicate cut at the edges either way, and
+the nudges move the range, not its contents (p. 290). Invert Phase (p. 276), Mod+clicking the toolbar's Move Left and
+Move Right to nudge a range's contents (p. 257) and Range to Selected Track (pp. 259-260) aren't in GNUbase yet: they
+should follow the preference too (#2178).
+
+Not yet: the range in the editors (it comes with its ticket).
 
 ## Checks
 
@@ -268,6 +278,12 @@ tickets).
   start, and a range's copy at its start; a range cutting a MIDI part with control changes on two channels, pitch bend
   and a program change, its copy and the piece after it starting with the curves' values and no program change, the
   piece before it unchanged, and undo.
+- `tests/eventedit_tests.cpp`, `range.set`: muting cuts the audio event and the MIDI part at the edges and mutes the
+  pieces in the range, unmuting unmutes them, each one undo step that takes the cuts back too; a locked event across an
+  edge stays whole and unmuted, one wholly in the range is muted; a range of no length and one without `mute` refused.
+- `tests/eventediting_tests.cpp`, Range Tool Splits Partly Selected Events: off, Mute on a range with no selected
+  events changes nothing; on, Mute cuts out and mutes the range's contents in one undo step and Unmute unmutes them,
+  and Range Start to Cursor and Range End to Cursor move the contents and the range to the cursor.
 - `tests/eventediting_tests.cpp` (fake window system, real engine): the commands exist; without a range the range
   commands can't run, and Paste can't until a cut, nor after `project.new`; split, Delete Time, cut and paste on a
   selection range, which stays; paste at the cursor without a range, selecting what it pasted, and Paste at Origin where

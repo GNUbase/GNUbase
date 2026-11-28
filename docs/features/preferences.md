@@ -30,7 +30,9 @@ presets to preferences and clients can tell them from the settings that have a p
   whose own preferences GNUbase doesn't have yet would only hold the pages under it. Each preference is a
   check box, a drop-down list or a number field, from its setting's schema, labelled as in the manual:
   - Editing: Display Warning before Deleting Non-Empty Tracks (`ui.removeTracksWarning`), Default Track Time Type
-    (`editing.defaultTimeBase`), Use Up/Down Navigation Commands for Selecting Tracks only
+    (`editing.defaultTimeBase`), Range Tool Splits Partly Selected Events
+    (`editing.rangeToolSplitsPartlySelectedEvents`, [range-editing.md](range-editing.md)), Use Up/Down Navigation
+    Commands for Selecting Tracks only
     (`ui.upDownSelectsTracksOnly`). Audio: Treat Muted Audio Events like Deleted (`editing.treatMutedAudioLikeDeleted`,
     [comping.md](comping.md)), Use Mouse Wheel for Event Volume and Fades (`editing.wheelEventVolumeAndFades`,
     [volume-curves.md](volume-curves.md)), On Import Audio Files (`editing.onImportAudio`) and its settings, Copy Files

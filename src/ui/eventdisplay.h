@@ -408,10 +408,12 @@ namespace gnubase::ui
 		// copies its contents to its end, where the range goes; edit.nudgeLeft and edit.nudgeRight move the range by a
 		// grid step without its contents, the start and end nudges its edges, and edit.nudgeTopUp, edit.nudgeTopDown,
 		// edit.nudgeBottomUp and edit.nudgeBottomDown take a track in or out at its top or bottom (reference manual pp.
-		// 288-291). edit.snap (snap on or off) and edit.snapPointToCursor (the selected audio events' snap points); and
-		// the tools: tool.objectSelection, tool.rangeSelection, tool.draw, tool.erase, tool.split, tool.glue,
-		// tool.mute, tool.zoom, tool.line, tool.play, tool.next, tool.previous and tool.combineSelectionTools (on or
-		// off).
+		// 288-291). With editing.rangeToolSplitsPartlySelectedEvents, edit.mute and edit.unmute set what lies in a
+		// range with a length, cut at its edges (range.set), and edit.moveStartToCursor and edit.moveEndToCursor move
+		// it to the cursor with the range (range.move); off, they take the selected events. edit.snap (snap on or off)
+		// and edit.snapPointToCursor (the selected audio events' snap points); and the tools: tool.objectSelection,
+		// tool.rangeSelection, tool.draw, tool.erase, tool.split, tool.glue, tool.mute, tool.zoom, tool.line,
+		// tool.play, tool.next, tool.previous and tool.combineSelectionTools (on or off).
 		const std::map<std::string, std::function<void()>>& actions() const { return m_actions; }
 		// Whether the action can do something now, for menus and keys to disable it: the actions that only edit the
 		// selection range (edit.cutTime, edit.deleteTime, edit.insertSilence, edit.cropRange, edit.splitRange and the
@@ -1150,6 +1152,8 @@ namespace gnubase::ui
 		bool m_treatMutedKnown = false;
 		bool m_wheelVolume = false; // editing.wheelEventVolumeAndFades
 		bool m_wheelVolumeKnown = false;
+		bool m_rangeSplits = false; // editing.rangeToolSplitsPartlySelectedEvents
+		bool m_rangeSplitsKnown = false;
 		std::optional<std::pair<double, double>> m_mouse; // over the lanes, in dp, while the mouse is there
 		std::string m_held;           // the modifier keys held, as modifiersOf joins them, for the pointer
 		std::set<int> m_modifierKeys; // the modifier keys seen going down and not up (Rml::Input::KeyIdentifier)
