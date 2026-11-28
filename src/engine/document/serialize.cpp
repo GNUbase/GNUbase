@@ -599,10 +599,10 @@ namespace gnubase::engine
 			{"program", channel.program ? Json(*channel.program) : Json(nullptr)},
 			{"bank", channel.bank ? Json(*channel.bank) : Json(nullptr)},
 			{"midiChannel", channel.midiChannel ? Json(*channel.midiChannel) : Json(nullptr)},
-			{"device", channel.device}, {"monitor", channel.monitor}, {"recordEnable", channel.recordEnable},
-			{"midiInput", channel.midiInput}, {"mute", channel.mute}, {"solo", channel.solo},
-			{"soloDefeat", channel.soloDefeat}, {"listen", channel.listen}, {"slots", channel.slots},
-			{"notes", channel.notes}, {"modifiers", toJson(channel.modifiers)},
+			{"device", channel.device}, {"midiPort", channel.midiPort}, {"monitor", channel.monitor},
+			{"recordEnable", channel.recordEnable}, {"midiInput", channel.midiInput}, {"mute", channel.mute},
+			{"solo", channel.solo}, {"soloDefeat", channel.soloDefeat}, {"listen", channel.listen},
+			{"slots", channel.slots}, {"notes", channel.notes}, {"modifiers", toJson(channel.modifiers)},
 			{"midiInserts", toJson(channel.midiInserts, false)}, {"midiSends", toJson(channel.midiSends, true)},
 			{"inputTransformer", midi::toJson(channel.inputTransformer)},
 			{"noteExpression", toJson(channel.noteExpression)}};
@@ -2400,6 +2400,8 @@ namespace gnubase::engine
 			if (const Json stored = item.value("midiChannel", Json()); !stored.is_null())
 				channel.midiChannel = static_cast<int>(checkedNumber(stored, 0.0, 15.0, name + " midiChannel"));
 			channel.device = item.value("device", std::string());
+			if (track != project.trackById.end() && track->second.type == TrackType::Midi)
+				channel.midiPort = item.value("midiPort", std::string());
 			// An instrument this build doesn't have, e.g. in a file from a newer one, or one on a track that doesn't
 			// play instruments: the channel plays none.
 			if (!processors::isInstrument(channel.instrument) || track == project.trackById.end() ||

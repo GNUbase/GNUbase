@@ -10,14 +10,18 @@
 #include "platform/midi/inputqueue.h"
 #include "platform/midi/port.h"
 #include "platform/rt/spscqueue.h"
+#include "platform/rt/workerpool.h"
 
 #include <array>
 #include <atomic>
+#include <bitset>
 #include <cstddef>
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace gnubase::engine
@@ -36,7 +40,7 @@ namespace gnubase::engine
 	// midi command lists the ports and opens the visible inputs, so an engine that never uses MIDI leaves the hardware
 	// alone. Their messages reach the audio thread, which places them in its blocks. A port that disappears is listed
 	// as not present and opens again when it comes back. Only the command thread changes ports; outputs open once
-	// something sends to them.
+	// something plays to them (outputSlot), and a thread of their own sends them what the audio thread queued (send).
 	class MidiPorts
 	{
 	public:
@@ -70,6 +74,23 @@ namespace gnubase::engine
 		using PadBuffers = std::array<audio::MidiBuffer, ChordPadKeys::g_maxPlayers>;
 		void take(const audio::DeviceBlock& block, double sampleRate, graph::EventBuffer& allInputs, PadBuffers& pads,
 			const ChordPadKeys& padKeys) noexcept;
+
+		// Command thread: the slot of the output port with this key in midi.portSettings (backend/out/id), for send. It
+		// opens the first time and stays open; -1 while no such port is there or if it doesn't open.
+		int outputSlot(const std::string& key);
+
+		// The notes a channel started on an output and hasn't ended there, by MIDI channel * 128 + pitch.
+		using HeldNotes = std::bitset<size_t{16} * 128>;
+
+		// Audio thread, after the graph processed the block: queues the events that a channel played in it for an
+		// output slot, each at time, the host time of the block's first frame, plus its offset at the sample rate,
+		// and keeps the notes it holds there in held. The sender thread passes them on to the port, which sends them
+		// then. What doesn't fit is dropped.
+		void send(
+			int slot, const graph::EventBuffer& events, HostTime time, double sampleRate, HeldNotes& held) noexcept;
+		// Audio thread: a channel left the output slot. Queues note-offs at time for the notes in held that staying,
+		// those of the channels still playing there, doesn't hold, and forgets held's notes.
+		void release(int slot, HeldNotes& held, const HeldNotes& staying, HostTime time) noexcept;
 
 		// Any thread but an audio thread: a message from the on-screen keyboard (midi.keyboard), which belongs to all
 		// MIDI inputs and arrives now, as a port's would. False if the input queue is full.
@@ -126,6 +147,15 @@ namespace gnubase::engine
 		static constexpr size_t g_maxInputs = 256;
 
 	private:
+		// A message for an output, at the host time it is due.
+		struct Outgoing
+		{
+			int slot = 0;
+			audio::MidiMessage message;
+			HostTime time = 0;
+		};
+		void sendQueued(); // the sender thread
+
 		static constexpr int g_keyboardSlot = -1; // the on-screen keyboard's in the input queue
 		static constexpr int g_padsSlot = -2;     // the chord pads' first player's, the others' below it
 		struct Port
@@ -218,5 +248,14 @@ namespace gnubase::engine
 		// Per input slot, chordPadPortHash of its port's key, for the MIDI input that the remote keys come from.
 		std::array<std::atomic<uint64_t>, g_maxInputs> m_slotHashes{};
 		std::atomic<size_t> m_monitorDropped{0};
+		// MIDI output: what the audio thread queued, the open outputs by slot and their keys, and the thread that
+		// sends to them, woken by the audio thread.
+		rt::SpscQueue<Outgoing> m_outgoing{4096};
+		std::mutex m_outputMutex; // guards m_outputs between the command thread and the sender
+		std::vector<std::unique_ptr<gnubase::midi::Output>> m_outputs;
+		std::map<std::string, int> m_outputSlots;
+		rt::Semaphore m_sendWake;
+		std::atomic<bool> m_stopSending{false};
+		std::thread m_sender;
 	};
 }

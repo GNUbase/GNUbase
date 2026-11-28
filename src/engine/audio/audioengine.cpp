@@ -776,6 +776,7 @@ namespace gnubase::engine
 		program->sequencers.assign(m_sequencers.begin(), m_sequencers.end()); // ordered by channel id
 		for (const auto& [channel, instrument] : m_instruments)
 			program->instruments.emplace_back(channel, instrument.channel);
+		attachPorts(snapshot, *program, generation);
 		for (const auto& [channel, sequencer] : program->sequencers)
 		{
 			uint64_t destination = 0; // its own instrument, or the one it is routed to
@@ -826,6 +827,45 @@ namespace gnubase::engine
 			m_programs = std::make_unique<rt::SnapshotPublisher<Program>>(std::move(program));
 		if (m_slots)
 			m_slots->retire(generation);
+	}
+
+	void AudioEngine::attachPorts(const RenderSnapshot& snapshot, Program& program, uint64_t generation)
+	{
+		// A channel that comes back to its port before its release ran keeps its notes there.
+		std::map<std::pair<ObjectId, int>, std::shared_ptr<MidiPorts::HeldNotes>> kept;
+		for (const RenderChannel& channel : snapshot.channels)
+		{
+			const int slot = channel.midiPort.empty() ? -1 : m_midi.outputSlot(channel.midiPort);
+			if (slot < 0)
+				continue;
+			const std::pair<ObjectId, int> key{channel.id, slot};
+			std::shared_ptr<MidiPorts::HeldNotes> held;
+			if (const auto found = m_portNotes.find(key); found != m_portNotes.end())
+				held = std::move(found->second);
+			const auto pending = std::find_if(m_portReleases.begin(), m_portReleases.end(),
+				[&key](const PendingPortRelease& release) { return release.channelAndSlot == key; });
+			if (pending != m_portReleases.end())
+			{
+				held = std::move(pending->held);
+				m_portReleases.erase(pending);
+			}
+			if (!held)
+				held = std::make_shared<MidiPorts::HeldNotes>();
+			program.midiOutputs.push_back({program.graph.find(channel.id), slot, held});
+			kept.emplace(key, std::move(held));
+		}
+		for (auto& [key, held] : m_portNotes)
+			if (held)
+				m_portReleases.push_back({key, std::move(held), generation});
+		m_portNotes = std::move(kept);
+		// Until the audio thread started a program that has them, as it may skip programs.
+		const uint64_t started = m_started.load(std::memory_order_acquire);
+		m_portReleases.erase(
+			std::remove_if(m_portReleases.begin(), m_portReleases.end(),
+				[started](const PendingPortRelease& release) { return release.generation <= started; }),
+			m_portReleases.end());
+		for (const PendingPortRelease& release : m_portReleases)
+			program.portReleases.push_back({-1, release.channelAndSlot.second, release.held});
 	}
 
 	int AudioEngine::sourceNode(ObjectId channel) const
@@ -1508,9 +1548,21 @@ namespace gnubase::engine
 		if (m_resetPerformance.exchange(false, std::memory_order_acq_rel))
 			m_meter.reset();
 		const Program& program = m_programs->acquire();
+		const double deviceRate = m_device->format().sampleRate;
+		// MIDI output goes out one output latency ahead, to sound with the audio of its frames.
+		const HostTime portTime = block.time +
+			static_cast<HostTime>(std::llround(m_outputLatency.load(std::memory_order_relaxed) * 1e9 / deviceRate));
 		if (program.generation != m_running)
 		{
 			m_running = program.generation;
+			for (const PortOutput& release : program.portReleases)
+			{
+				MidiPorts::HeldNotes staying;
+				for (const PortOutput& output : program.midiOutputs)
+					if (output.slot == release.slot)
+						staying |= *output.held;
+				m_midi.release(release.slot, *release.held, staying, portTime);
+			}
 			for (const Release& release : program.releases)
 				if (release.departedSend)
 					release.channel->releaseNotesOf(
@@ -1577,6 +1629,9 @@ namespace gnubase::engine
 		transport.tempo = program.tempo.bpmAt(program.tempo.toTicks(transport.position, program.sampleRate));
 		transport.tempoMap = &program.tempo;
 		program.graph.process(block.frames, transport, m_workers.get());
+		// In the order of the channels, so that the ports get the same for any number of threads.
+		for (const PortOutput& port : program.midiOutputs)
+			m_midi.send(port.slot, program.graph.eventsOut(port.node), portTime, format.sampleRate, *port.held);
 		// After the graph: the MIDI inserts above the divider played the input there, with their automation, before
 		// it is recorded (MidiSequencer::process).
 		m_recorder.process(block, m_played, m_recordOffset.load(std::memory_order_relaxed), program.sequencers);
@@ -1892,6 +1947,7 @@ namespace gnubase::engine
 					engine->post("audio.updateLatency");
 			});
 		m_recordOffset = recordOffset();
+		m_outputLatency = m_device->latency().output;
 		m_silenceReason = m_device->silenceReason();
 		m_played = PlayedPositions(static_cast<size_t>(g_maxRecordOffset) + m_device->format().blockSize);
 		m_recorder.prepare(m_device->format().inputChannels, m_device->format().blockSize);
@@ -2142,9 +2198,12 @@ namespace gnubase::engine
 		std::string silenceReason = m_device->silenceReason();
 		const bool silence = silenceReason != m_silenceReason;
 		m_silenceReason = std::move(silenceReason);
+		// The audio thread takes it at its next block, for the MIDI output.
+		const uint32_t outputLatency = m_device->latency().output;
+		const bool outputChanged = outputLatency != m_outputLatency.exchange(outputLatency, std::memory_order_relaxed);
 		const int64_t offset = recordOffset();
 		if (offset == m_recordOffset.load(std::memory_order_relaxed))
-			return set || silence;
+			return set || silence || outputChanged;
 		// The audio thread takes it at its next block and keeps the positions it has, which cover any offset.
 		m_recordOffset.store(offset, std::memory_order_relaxed);
 		return true;

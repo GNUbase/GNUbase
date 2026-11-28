@@ -311,6 +311,10 @@ namespace gnubase::engine
 		std::optional<int> midiChannel = std::nullopt;
 		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
 		std::string device = {};
+		// MIDI channels: the MIDI output port they play to instead of output, by its key in midi.portSettings
+		// (backend/out/id), or empty (docs/features/midi-output.md).
+		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
+		std::string midiPort = {};
 		// MIDI and instrument tracks: the MIDI modifiers, which change how the track's notes play
 		// (docs/features/midi-modifiers.md).
 		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
@@ -1887,14 +1891,14 @@ namespace gnubase::engine
 	{
 		return std::tie(a.id, a.track, a.format, a.input, a.output, a.instrument, a.volume, a.pan, a.panner, a.panLeft,
 				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.program, a.bank, a.midiChannel, a.device,
-				   a.modifiers, a.midiInserts, a.midiSends, a.inputTransformer, a.noteExpression,
+				   a.midiPort, a.modifiers, a.midiInserts, a.midiSends, a.inputTransformer, a.noteExpression,
 				   a.instrumentParameters, a.sample, a.pads, a.monitor, a.recordEnable, a.midiInput, a.mute, a.solo,
 				   a.soloDefeat, a.listen, a.slots, a.notes, a.sections, a.sends) ==
 			std::tie(b.id, b.track, b.format, b.input, b.output, b.instrument, b.volume, b.pan, b.panner, b.panLeft,
 				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.program, b.bank, b.midiChannel, b.device,
-				b.modifiers, b.midiInserts, b.midiSends, b.inputTransformer, b.noteExpression, b.instrumentParameters,
-				b.sample, b.pads, b.monitor, b.recordEnable, b.midiInput, b.mute, b.solo, b.soloDefeat, b.listen,
-				b.slots, b.notes, b.sections, b.sends);
+				b.midiPort, b.modifiers, b.midiInserts, b.midiSends, b.inputTransformer, b.noteExpression,
+				b.instrumentParameters, b.sample, b.pads, b.monitor, b.recordEnable, b.midiInput, b.mute, b.solo,
+				b.soloDefeat, b.listen, b.slots, b.notes, b.sections, b.sends);
 	}
 
 	inline bool operator==(const Slot& a, const Slot& b)

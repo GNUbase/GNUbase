@@ -18,7 +18,7 @@ The MIDI insert and send slots of MIDI and instrument tracks, and GNUbase's buil
 
 ## Not yet
 
-Third-party MIDI effect plugins in the slots, in their host processes: they would need the tempo map in the plugin transport, which only the built-in ones get, and a way to choose them in the inspector; sends to MIDI output ports, which MIDI tracks don't play to yet ([midi-devices.md](midi-devices.md)); more effects and an arpeggiator that follows the bars instead of its first note.
+Third-party MIDI effect plugins in the slots, in their host processes: they would need the tempo map in the plugin transport, which only the built-in ones get, and a way to choose them in the inspector; sends to MIDI output ports, which only the tracks themselves play to yet ([midi-output.md](midi-output.md)); more effects and an arpeggiator that follows the bars instead of its first note.
 
 ## Checks
 

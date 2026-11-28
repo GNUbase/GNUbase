@@ -50,7 +50,7 @@ namespace gnubase::engine
 
 		// An event as MIDI 1.0 messages: none for SysEx and parameter changes, three for a program change with a bank
 		// (bank select MSB and LSB, then the program change), one for the others.
-		size_t toMidi1(const graph::ProcessEvent& event, std::array<audio::MidiMessage, 3>& out) noexcept
+		size_t asMidi1(const graph::ProcessEvent& event, std::array<audio::MidiMessage, 3>& out) noexcept
 		{
 			size_t count = 0;
 			const auto add = [&](uint32_t status, uint32_t data1, int size = 2, uint32_t data2 = 0)
@@ -123,6 +123,11 @@ namespace gnubase::engine
 		{
 			return now.pass != before.pass ? before.cycle && now.cycle : now.lap != before.lap;
 		}
+	}
+
+	size_t MidiTap::toMidi1(const graph::ProcessEvent& event, std::array<audio::MidiMessage, 3>& out) noexcept
+	{
+		return asMidi1(event, out);
 	}
 
 	graph::ProcessEvent MidiTap::toEvent(const audio::MidiMessage& message, uint32_t offset) noexcept
