@@ -218,7 +218,9 @@ namespace gnubase::engine
 			std::vector<Release> releases;
 			MidiTap::Sequencers sequencers;     // of the MIDI and instrument channels, for midi.inject
 			std::vector<uint64_t> destinations; // per sequencer, where it plays (MidiSequencer::playOn)
-			std::vector<uint8_t> thru;          // per sequencer, 1 if it plays all MIDI inputs (MidiTap::thru)
+			// Per sequencer, 1 if it plays all MIDI inputs (MidiTap::thru), 2 + n if it plays the port ports[n] (#641).
+			std::vector<uint8_t> thru;
+			std::array<uint64_t, PortInputs::g_max> ports{}; // the single ports that sequencers play (PortInputs)
 			// Per chord pads player, per sequencer: 1 if it plays that player's notes (#1089).
 			std::array<std::vector<uint8_t>, ChordPadKeys::g_maxPlayers> padThru;
 			ChordPadKeys chordPadKeys; // what MIDI inputs' notes on the chord pads' remote keys play
@@ -552,8 +554,9 @@ namespace gnubase::engine
 		std::map<ObjectId, int> m_sourceNodes;          // rebuild: per channel
 		Transport m_transport;                          // advanced by the audio thread
 		MidiPorts m_midi;
-		graph::EventBuffer
-			m_midiInput; // the block's events from all MIDI inputs: MIDI thru (MidiTap::thru), the recorder
+		// The block's events from all MIDI inputs: MIDI thru (MidiTap::thru), the recorder.
+		graph::EventBuffer m_midiInput;
+		PortInputs m_portInputs;           // and from the single ports that tracks play
 		MidiPorts::PadBuffers m_padOutput; // and the chord pads' notes, by player
 		// Which wait for the grid with Snap Playback to Musical Grid, by player.
 		std::array<midi::PadSnap, ChordPadKeys::g_maxPlayers> m_padSnap;

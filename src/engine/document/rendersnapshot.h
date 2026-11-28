@@ -263,6 +263,8 @@ namespace gnubase::engine
 		// MIDI and instrument tracks: they play what comes from all MIDI inputs (MIDI thru), since they monitor or
 		// are record-enabled and their MIDI input is all MIDI inputs.
 		bool midiThru = false;
+		// The same for a single MIDI input port: chordPadPortHash of its key, or 0 (#641).
+		uint64_t midiPort = 0;
 		// MIDI and instrument tracks whose MIDI input is the chord pads, and that monitor or are record-enabled: they
 		// play the chord pads (#1089).
 		bool padThru = false;

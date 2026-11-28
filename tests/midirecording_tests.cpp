@@ -722,6 +722,15 @@ TEST_CASE("MIDI and instrument tracks play all MIDI inputs while they monitor or
 	CHECK(played({{"recordEnable", false}}) == 0);
 	CHECK(played({{"monitor", true}}) == 2);
 	CHECK(played({{"midiInput", "none"}}) == 0);
+	// Or a single input port (reference manual p. 348, #641), also one outside all MIDI inputs.
+	CHECK(played({{"midiInput", "dummy/in/Keys"}}) == 2);
+	CHECK(played({{"midiInput", "dummy/in/Other"}}) == 0);
+	run(client, "midi.setPort", {{"id", "Keys"}, {"input", true}, {"inAllInputs", false}});
+	CHECK(played({{"midiInput", "all"}}) == 0);
+	CHECK(played({{"midiInput", "dummy/in/Keys"}}) == 2);
+	run(client, "midi.setPort", {{"id", "Keys"}, {"input", true}, {"inAllInputs", true}});
+	CHECK_THAT(reject(client, "channel.set", {{"channel", setup.channel}, {"midiInput", "Keys"}}),
+		ContainsSubstring("midiInput"));
 
 	// What a record-enabled track receives there is recorded.
 	played({{"midiInput", "all"}, {"monitor", false}, {"recordEnable", true}});

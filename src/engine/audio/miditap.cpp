@@ -259,11 +259,14 @@ namespace gnubase::engine
 		}
 	}
 
-	void MidiTap::thru(
-		const graph::EventBuffer& input, const Sequencers& sequencers, const std::vector<uint8_t>& thru) noexcept
+	void MidiTap::thru(const graph::EventBuffer& input, const PortInputs& ports, const Sequencers& sequencers,
+		const std::vector<uint8_t>& thru) noexcept
 	{
 		for (size_t i = 0; i < sequencers.size(); ++i)
-			sequencers[i].second->thru(input, i < thru.size() && thru[i] != 0);
+		{
+			const uint8_t from = i < thru.size() ? thru[i] : 0;
+			sequencers[i].second->thru(from >= 2 ? ports.events.at(from - 2U) : input, from != 0);
+		}
 	}
 
 	void MidiTap::capture(uint64_t position, const Instruments& instruments) noexcept

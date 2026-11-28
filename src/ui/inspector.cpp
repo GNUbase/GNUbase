@@ -1146,13 +1146,30 @@ namespace gnubase::ui
 					std::to_string(channel->at("output").get<uint64_t>()));
 			if (Rml::Element* input = element("select[control=input]"); input != nullptr && type == "audio")
 				widgets::fill(*input, inputChoices(*m_project), std::to_string(channel->at("input").get<uint64_t>()));
-			// A MIDI or instrument track's MIDI input: all MIDI inputs, the chord pads (reference manual p. 1367) or
-			// none.
+			// A MIDI or instrument track's MIDI input: all MIDI inputs, the chord pads (reference manual p. 1367),
+			// none, or a single MIDI input (p. 348, #641), also one that isn't there now.
 			if (Rml::Element* input = element("select[control=input]");
 				input != nullptr && (type == "midi" || type == "instrument"))
-				widgets::fill(*input,
-					{{"all", "All MIDI Inputs"}, {"chordPads", "Chord Pads"}, {"none", "Not Connected"}},
-					channel->value("midiInput", std::string("all")));
+			{
+				if (!m_portsAsked)
+				{
+					m_portsAsked = true;
+					m_binding.send("midi.ports", Json::object(),
+						[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+						{
+							if (!alive.expired() && result.ok())
+								readPorts(result.value);
+						});
+				}
+				widgets::Options inputs{
+					{"all", "All MIDI Inputs"}, {"chordPads", "Chord Pads"}, {"none", "Not Connected"}};
+				inputs.insert(inputs.end(), m_inputPorts.begin(), m_inputPorts.end());
+				const std::string midiInput = channel->value("midiInput", std::string("all"));
+				if (std::none_of(
+						inputs.begin(), inputs.end(), [&](const auto& each) { return each.first == midiInput; }))
+					inputs.emplace_back(midiInput, midiInput);
+				widgets::fill(*input, inputs, midiInput);
+			}
 			if (type == "midi")
 			{
 				// The MIDI channel its patch, MIDI volume and pan go out on (reference manual p. 349): Any or 1-16.
@@ -1433,9 +1450,17 @@ namespace gnubase::ui
 	void Inspector::readPorts(const Json& ports)
 	{
 		m_notInAllInputs.clear();
+		m_inputPorts.clear();
 		for (const Json& port : ports.value("ports", Json::array()))
+		{
+			const std::string backend = port.value("backend", std::string());
+			const std::string id = port.value("id", std::string());
 			if (port.value("input", false) && !port.value("inAllInputs", true))
-				m_notInAllInputs.insert(port.value("backend", std::string()) + " " + port.value("id", std::string()));
+				m_notInAllInputs.insert(backend + " " + id);
+			if (port.value("input", false) && port.value("visible", true))
+				m_inputPorts.emplace_back(backend + "/in/" + id, port.value("showAs", id));
+		}
+		m_stale = true;
 	}
 
 	void Inspector::showMidiEffects(const std::string& section, const Json& rack)
@@ -2192,8 +2217,8 @@ namespace gnubase::ui
 			key = name == "record" ? "recordEnable" : name;
 			value = event.GetParameter<bool>("value", false);
 		}
-		else if (const auto picked = event.GetParameter<Rml::String>("value", "");
-			name == "input" && (picked == "all" || picked == "chordPads" || picked == "none"))
+		else if (const auto picked = event.GetParameter<Rml::String>("value", ""); name == "input" &&
+			(picked == "all" || picked == "chordPads" || picked == "none" || picked.find("/in/") != std::string::npos))
 		{
 			key = "midiInput"; // a MIDI or instrument track's
 			value = picked;

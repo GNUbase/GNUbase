@@ -8,7 +8,12 @@ undo step.
 - **Record enable, monitor and MIDI input.** MIDI and instrument tracks have the record enable and monitor buttons
   (`channel.set` with `recordEnable` and `monitor`, in the track list and the inspector) and a MIDI input, `midiInput`:
   `all` (all MIDI inputs, the default: every input port whose `inAllInputs` is on, see `midi.setPort`, and the
-  on-screen keyboard, [onscreen-keyboard.md](onscreen-keyboard.md)) or `none`.
+  on-screen keyboard, [onscreen-keyboard.md](onscreen-keyboard.md)), `none`, or a single input port by its
+  `midi.portSettings` key such as `dummy/in/Keys` (p. 348, #641), also one outside all MIDI inputs or not connected
+  now; the inspector's input list offers the visible ones by the names they show as. The audio thread plays such a port
+  through a buffer of its own (`PortInputs`, up to 8 ports at a time, by the hash of the key that `RenderChannel::midiPort`
+  has): `MidiPorts::take` puts each message of a port that a track plays there, after its MPE input, as well as into
+  all MIDI inputs if the port belongs to them.
   While a track monitors or is record-enabled, it plays what comes from its MIDI input (MIDI thru), after what
   `midi.inject` played into it ([midi-injection.md](midi-injection.md)); injected MIDI always reaches it, as if it came
   from its input. When its MIDI thru goes off (record enable and monitor off, or `midiInput` set to `none` or
@@ -101,6 +106,6 @@ undo step.
 
 ## Not yet
 
-Choosing a single MIDI input port for a track (p. 348); Record in Editor (p. 349); Length Adjustment, Insert Reset
+Shift+Alt choosing the MIDI input of all selected tracks (p. 348); Record in Editor (p. 349); Length Adjustment, Insert Reset
 Events after Record and the latency compensation for live playing (p. 350, p. 1616); the MIDI thru filter and the
 reference's Record-Enable allows MIDI Thru switch; SysEx from the inputs.

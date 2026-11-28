@@ -171,7 +171,11 @@ namespace gnubase::ui
 		std::set<std::string> m_usedExpressions; // the expressions the track's notes have points of
 		Subscription m_activity;                 // midi.activity, for MIDI Learn
 		std::set<std::string> m_notInAllInputs;  // "backend id" of the MIDI inputs that aren't among all MIDI inputs
-		Subscription m_portsChanged;             // midi.changed, for them
+		// The visible MIDI inputs, by midi.portSettings key, with the names they show as, for a track's MIDI input
+		// (#641); asked for once a MIDI or instrument track shows.
+		std::vector<std::pair<std::string, std::string>> m_inputPorts;
+		bool m_portsAsked = false;
+		Subscription m_portsChanged; // midi.changed, for them
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 	};
 }

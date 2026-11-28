@@ -2840,10 +2840,15 @@ TEST_CASE("a MIDI modifier or a part's transpose dragged back to where it starte
 		"#info-line valuefield[field=transpose]", [&] { return window.part(part).at("transpose").get<int64_t>(); });
 }
 
-TEST_CASE("the inspector routes a MIDI or instrument track's MIDI input from all MIDI inputs or the chord pads", "[ui]")
+TEST_CASE("the inspector routes a MIDI or instrument track's MIDI input from all MIDI inputs, the chord pads or a port",
+	"[ui]")
 {
-	// Reference manual p. 1367: Chord Pads as the input routing (#1089).
-	Window window;
+	// Reference manual p. 1367: Chord Pads as the input routing (#1089); p. 348: a single MIDI input (#641).
+	auto backend = std::make_unique<midi::DummyBackend>();
+	backend->addLoopback("Keys");
+	std::vector<std::unique_ptr<midi::Backend>> backends;
+	backends.push_back(std::move(backend));
+	Window window(1200, std::move(backends));
 	const uint64_t keys = window.addTrack({{"type", "instrument"}, {"name", "Keys"}});
 	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 1; }));
 	window.list.select({keys});
@@ -2857,6 +2862,25 @@ TEST_CASE("the inspector routes a MIDI or instrument track's MIDI input from all
 	// Another client's choice shows.
 	window.call("channel.set", {{"channel", window.channel(keys).at("id")}, {"midiInput", "none"}});
 	CHECK(window.shows(".inspector select[control=input]", "none"));
+	// The input ports come after Not Connected, by the names they show as.
+	window.call("midi.setPort", {{"id", "Keys"}, {"input", true}, {"showAs", "My keys"}});
+	const auto lists = [&]
+	{
+		Rml::Context& context = window.app.main().context();
+		for (int i = 0; i < context.GetNumDocuments(); ++i)
+			if (auto* select = dynamic_cast<Rml::ElementFormControlSelect*>(
+					context.GetDocument(i)->QuerySelector(".inspector select[control=input]")))
+				for (int option = 0; option < select->GetNumOptions(); ++option)
+					if (select->GetOption(option)->GetAttribute<Rml::String>("value", "") == "dummy/in/Keys")
+						return select->GetOption(option)->GetInnerRML() == "My keys";
+		return false;
+	};
+	REQUIRE(window.app.waitUntil(lists));
+	window.click(".inspector select[control=input]");
+	window.app.ui().key(std::nullopt, "Down");
+	window.click(".inspector select[control=input]");
+	REQUIRE(window.app.waitUntil([&] { return window.channel(keys).at("midiInput") == "dummy/in/Keys"; }));
+	CHECK(window.shows(".inspector select[control=input]", "dummy/in/Keys"));
 }
 
 TEST_CASE("the inspector's MIDI Inserts and MIDI Sends sections show and change the track's MIDI effects", "[ui]")

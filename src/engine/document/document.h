@@ -342,7 +342,8 @@ namespace gnubase::engine
 		bool monitor = false;
 		bool recordEnable = false;
 		// MIDI and instrument tracks: where their MIDI input comes from, "all" (all MIDI inputs), "chordPads" (only
-		// the chord pads, reference manual p. 1367) or "none".
+		// the chord pads, reference manual p. 1367), "none", or a single MIDI input port, by its midi.portSettings key
+		// such as "dummy/in/Keys" (p. 348, #641).
 		std::string midiInput = "all";
 		// The mute and solo buttons (docs/features/solo-mute-listen.md): a muted channel is silent, unless mute
 		// automation plays (docs/features/automation.md); while any channel is soloed, only soloed ones, where they
