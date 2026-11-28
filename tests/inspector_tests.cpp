@@ -1183,15 +1183,34 @@ TEST_CASE("the inspector's Retrospective Recording menu inserts the track's buff
 	play(62, 100, 1000, 2000);
 	choose("retrospective-linear");
 	REQUIRE(window.app.waitUntil([&] { return pitches() == std::vector<std::vector<int64_t>>{{62}}; }));
-	// Without input from cycle laps it stays disabled.
+	// Without input from cycle laps it stays disabled, also once the answer is in (#2096).
+	ui::EngineBinding& binding = window.app.appUi().binding();
+	const auto answered = [&] { return binding.waiting("midi.getRetrospective") == 0; };
 	play(63, 100, 1000, 2000);
 	window.click(".inspector .inspector-retrospective");
 	CHECK(window.call("midi.getRetrospective", {{"track", track}}).at("cycleLaps") == 0);
-	REQUIRE(window.app.waitUntil([&] { return elements(window.app, cycleDisabled).size() == 1; }));
+	REQUIRE(window.app.waitUntil(answered));
+	CHECK(elements(window.app, cycleDisabled).size() == 1);
 	window.click("#inspector-retrospective-menu menuitem.retrospective-empty");
 
 	// Insert as Cycle Recording: a part per lap.
 	window.call("transport.set", {{"left", 0}, {"right", 20000}, {"cycle", true}});
+	window.call("transport.play");
+	play(64, 5000, 8000, 20000);
+	play(65, 5000, 8000, 10000);
+	window.call("transport.stop");
+	window.call("audio.render", {{"frames", 64}});
+	// An answer from an earlier opening, here from before Empty Retrospective Record Buffer, doesn't enable it: the
+	// answers come in together, without a step of the UI in between (#2096).
+	const auto clickNow = [&](const std::string& selector)
+	{ window.app.ui().click(std::nullopt, {selector, 0, std::nullopt}, ui::MouseButton::Left, 1, {}); };
+	clickNow(".inspector .inspector-retrospective");
+	clickNow("#inspector-retrospective-menu menuitem.retrospective-empty");
+	clickNow(".inspector .inspector-retrospective");
+	REQUIRE(window.app.waitUntil(answered));
+	CHECK(window.call("midi.getRetrospective", {{"track", track}}).at("cycleLaps") == 0);
+	CHECK(elements(window.app, cycleDisabled).size() == 1);
+	window.app.ui().key(std::nullopt, "Escape");
 	window.call("transport.play");
 	play(64, 5000, 8000, 20000);
 	play(65, 5000, 8000, 10000);

@@ -1446,14 +1446,17 @@ namespace gnubase::app
 		// locked asks whether to do it anyway (lock-record.rml), in the window whose key, button or menu item sent it
 		// (#645); the engine's reason says which it was.
 		for (const char* command : {"transport.stop", "transport.toggle", "transport.record"})
+		{
+			m_keys.keepSentFrom(command);
 			m_lockRecord.push_back(m_binding.onResult(command,
-				[this, command](const engine::Result& result)
+				[this](const engine::Result& result)
 				{
+					const ui::WindowId from = m_keys.sentFrom(result.request);
 					if (result.ok())
 						return;
 					const bool punchOut = result.error.find("punch out") != std::string::npos;
 					m_binding.send("transport.get", engine::Json::object(),
-						[this, punchOut, from = m_keys.sentFrom(command)](const engine::Result& status)
+						[this, punchOut, from](const engine::Result& status)
 						{
 							ui::Window* window = m_shell.find(from);
 							if (status.ok() && status.value.at("lockRecord").get<bool>() &&
@@ -1462,6 +1465,7 @@ namespace gnubase::app
 									{{"action", punchOut ? "punchOut" : "stop"}});
 						});
 				}));
+		}
 		// The status line's remaining record time changes as the disk fills up, also by other programs.
 		m_shell.every(std::chrono::seconds(1),
 			[this]

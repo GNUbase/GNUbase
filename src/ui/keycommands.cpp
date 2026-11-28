@@ -567,14 +567,24 @@ namespace gnubase::ui
 		// After what the user did before that waits for an answer (EngineBinding::afterAwaited), e.g. an undo right
 		// after Delete on a range whose edges move to zero crossings.
 		const auto sent = std::make_shared<const std::pair<std::string, Json>>(command, parameters);
-		m_sentFrom[command] = window.id();
-		m_binding.afterAwaited([&binding = m_binding, sent] { binding.send(sent->first, sent->second); });
+		m_binding.afterAwaited(
+			[&binding = m_binding, sent, sentFrom = m_keepSentFrom.count(command) != 0 ? m_sentFrom : nullptr,
+				from = window.id()]
+			{
+				const engine::RequestId request = binding.send(sent->first, sent->second);
+				if (sentFrom)
+					(*sentFrom)[request] = from;
+			});
 	}
 
-	WindowId KeyCommands::sentFrom(const std::string& command) const
+	WindowId KeyCommands::sentFrom(engine::RequestId request)
 	{
-		const auto found = m_sentFrom.find(command);
-		return found != m_sentFrom.end() ? found->second : 0;
+		const auto found = m_sentFrom->find(request);
+		if (found == m_sentFrom->end())
+			return 0;
+		const WindowId window = found->second;
+		m_sentFrom->erase(found);
+		return window;
 	}
 
 	void KeyCommands::enableWhen(
