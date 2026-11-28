@@ -64,12 +64,12 @@ namespace
 		return texts;
 	}
 
-	// A setting's control in the meter display, which a test sets as the user would.
-	Rml::ElementFormControl* control(test::UiApp& app, const std::string& key)
+	// A control in the meter display, which a test sets as the user would.
+	Rml::ElementFormControl* control(test::UiApp& app, const std::string& selector)
 	{
 		for (int i = 0; i < app.main().context().GetNumDocuments(); ++i)
 			if (auto* found = rmlui_dynamic_cast<Rml::ElementFormControl*>(
-					app.main().context().GetDocument(i)->QuerySelector("[setting=\"" + key + "\"]")))
+					app.main().context().GetDocument(i)->QuerySelector(".meter-display " + selector)))
 				return found;
 		return nullptr;
 	}
@@ -704,7 +704,7 @@ TEST_CASE("the master meter's scale follows meter.scale and meter.alignmentLevel
 	CHECK(setting("meter.alignmentLevel") == -18.0); // the lists send nothing until they show their settings
 
 	// EBU at the default alignment level of -18 dBFS: +12 is -6 dBFS, and the headroom's line at +9.
-	Rml::ElementFormControl* scale = control(app, "meter.scale");
+	Rml::ElementFormControl* scale = control(app, "[setting=\"meter.scale\"]");
 	REQUIRE(scale != nullptr);
 	scale->SetValue("ebu");
 	REQUIRE(app.waitUntil([&setting] { return setting("meter.scale") == "ebu"; }));
@@ -715,7 +715,7 @@ TEST_CASE("the master meter's scale follows meter.scale and meter.alignmentLevel
 	CHECK_FALSE(disabled());
 
 	// Another alignment level moves the scale; the list sets it as a number.
-	Rml::ElementFormControl* alignment = control(app, "meter.alignmentLevel");
+	Rml::ElementFormControl* alignment = control(app, "[setting=\"meter.alignmentLevel\"]");
 	REQUIRE(alignment != nullptr);
 	alignment->SetValue("-20");
 	REQUIRE(app.waitUntil([&setting] { return setting("meter.alignmentLevel") == -20.0; }));
@@ -795,4 +795,47 @@ TEST_CASE("the master meter's bars fall back from a peak at meter.fallback", "[u
 	CHECK(bar() > -60.0F);
 	app.call("settings.set", {{"key", "meter.fallback"}, {"value", 100.0}});
 	REQUIRE(app.waitUntil([&bar] { return bar() == -200.0F; }));
+}
+
+TEST_CASE("measurement presets save, load and remove the loudness thresholds", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	app.appUi().docking().open("meter");
+	const auto setting = [&app](const std::string& key)
+	{ return app.call("settings.get", {{"key", key}}).at("value"); };
+	const auto field = [&app](const std::string& key)
+	{
+		const Json found = elements(app, "[setting=\"" + key + "\"]");
+		return found.empty() ? std::string() : found[0].at("attributes").value("value", std::string());
+	};
+	REQUIRE(app.waitUntil([&app] { return shown(app, ".meter-master .meter-configure"); }));
+	click(app, ".meter-master .meter-configure");
+	app.call("settings.set", {{"key", "meter.integratedReference"}, {"value", -16.0}});
+	REQUIRE(app.waitUntil([&field] { return field("meter.integratedReference") == "-16"; }));
+
+	// Save takes the thresholds as they are under the typed name (reference manual p. 539).
+	Rml::ElementFormControl* name = control(app, ".meter-preset-name");
+	REQUIRE(name != nullptr);
+	name->SetValue("Streaming");
+	click(app, ".meter-preset-save");
+	REQUIRE(app.waitUntil([&setting] { return setting("meter.presets").contains("Streaming"); }));
+	const Json saved = setting("meter.presets").at("Streaming");
+	CHECK(saved.at("meter.integratedReference") == -16.0);
+	CHECK(saved.at("meter.integratedTolerance") == 1.0);
+	CHECK(saved.at("meter.truePeakReference") == -1.0);
+	CHECK(saved.size() == 8);
+
+	// Loading it from the list sets them again.
+	app.call("settings.set", {{"key", "meter.integratedReference"}, {"value", -23.0}});
+	REQUIRE(app.waitUntil([&field] { return field("meter.integratedReference") == "-23"; }));
+	Rml::ElementFormControl* presets = control(app, ".meter-presets");
+	REQUIRE(presets != nullptr);
+	presets->SetValue("Streaming");
+	REQUIRE(app.waitUntil([&setting] { return setting("meter.integratedReference") == -16.0; }));
+
+	// Remove removes the preset that the list shows.
+	click(app, ".meter-preset-remove");
+	REQUIRE(app.waitUntil([&setting] { return setting("meter.presets").empty(); }));
+	CHECK(setting("meter.integratedReference") == -16.0);
 }

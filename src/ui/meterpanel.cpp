@@ -5,6 +5,7 @@
 #include "ui/widgetutils.h"
 
 #include <RmlUi/Core/Elements/ElementFormControl.h>
+#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/StringUtilities.h>
 
@@ -112,9 +113,13 @@ namespace gnubase::ui
 		{
 			MeterScale scale = {wide ? -59.0F : -41.0F, wide ? -5.0F : -14.0F, 0.0F, false, {}};
 			scale.headroom = scale.max; // none
-			for (float level = scale.max; level >= scale.min; level -= wide ? 6.0F : 3.0F)
+			const float step = wide ? 6.0F : 3.0F;
+			for (int mark = 0; mark <= static_cast<int>((scale.max - scale.min) / step); ++mark)
+			{
+				const float level = scale.max - (static_cast<float>(mark) * step);
 				scale.marks.emplace_back(
 					level, lu ? markLabel(level - static_cast<float>(g_referenceLufs)) : widgets::format(level));
+			}
 			return scale;
 		}
 
@@ -137,6 +142,21 @@ namespace gnubase::ui
 					field(std::string(name) + "Tolerance", "Tolerance", "0", "10") + "</div>";
 			}
 			return rml;
+		}
+
+		// A list's or a field's value as its setting takes it: the alignment level list's and the fields' as numbers,
+		// whole ones for fields without decimals.
+		engine::Json settingValue(const Rml::Element& control, const Rml::Variant& value)
+		{
+			if (control.GetTagName() == "select")
+			{
+				const auto text = value.Get<Rml::String>();
+				const std::optional<float> number = widgets::parse(text);
+				return number ? engine::Json(*number) : engine::Json(text);
+			}
+			if (control.GetAttribute<Rml::String>("decimals", "") == "0")
+				return std::lround(value.Get<double>());
+			return value.Get<double>();
 		}
 
 		// The scale list's options (p. 534).
@@ -188,7 +208,10 @@ namespace gnubase::ui
 				R"(<button class="meter-measure" setting="meter.measureLoudness">Measure Loudness</button>)"
 				R"(<button class="meter-reset" value="loudness">Reset Loudness</button>)"
 				R"(<button class="meter-configure">Configure Loudness Settings</button></div>)"
-				R"(<div class="meter-settings"><div class="meter-settings-title">Loudness</div>)" +
+				R"(<div class="meter-settings"><div><span>Preset</span><select class="meter-presets">)"
+				R"(<option value="">No Preset</option></select></div><div class="meter-preset">)"
+				R"(<input type="text" class="meter-preset-name"/><button class="meter-preset-save">Save</button>)"
+				R"(<button class="meter-preset-remove">Remove</button></div><div class="meter-settings-title">Loudness</div>)" +
 				thresholds() +
 				R"(<div><span>Unit</span><select setting="meter.loudnessUnit"><option value="lufs">LUFS</option>)"
 				R"(<option value="lu">LU</option></select></div>)"
@@ -299,7 +322,7 @@ namespace gnubase::ui
 					showSetting(key, value);
 			});
 		std::vector<std::string> keys(g_settings.begin(), g_settings.end());
-		keys.insert(keys.end(), {"meter.scale", "meter.alignmentLevel", "meter.fallback"});
+		keys.insert(keys.end(), {"meter.scale", "meter.alignmentLevel", "meter.fallback", "meter.presets"});
 		for (const auto& threshold : g_thresholds)
 			for (const char* part : {"Reference", "Tolerance"})
 				keys.push_back(std::string("meter.") + threshold.first + part);
@@ -334,6 +357,8 @@ namespace gnubase::ui
 			m_lu = value == "lu";
 		else if (key == "meter.loudnessScale")
 			m_wide = value == "ebu18";
+		if (key == "meter.presets")
+			showPresets(value);
 		if (key == "meter.scale" || key == "meter.alignmentLevel" || key == "meter.loudnessUnit" ||
 			key == "meter.loudnessScale")
 			showScales();
@@ -357,6 +382,23 @@ namespace gnubase::ui
 		m_showing = false;
 		if (value.is_number())
 			m_thresholds[key] = value.get<double>();
+	}
+
+	void MeterPanel::showPresets(const engine::Json& presets)
+	{
+		// The measurement presets (p. 539), by name, after No Preset.
+		auto* list = m_root
+			? rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(m_root->QuerySelector(".meter-presets"))
+			: nullptr;
+		if (list == nullptr || !presets.is_object())
+			return;
+		m_presets = presets;
+		m_showing = true;
+		list->RemoveAll();
+		list->Add("No Preset", "");
+		for (const auto& [name, values] : presets.items())
+			list->Add(Rml::StringUtilities::EncodeRml(name), name);
+		m_showing = false;
 	}
 
 	void MeterPanel::showScales()
@@ -399,26 +441,25 @@ namespace gnubase::ui
 		{
 			if (m_showing)
 				return;
+			const auto given = event.GetParameters().find("value");
+			if (target->IsClassSet("meter-presets") && given != event.GetParameters().end())
+			{
+				// Loading a measurement preset (p. 539) sets its thresholds.
+				const auto preset = m_presets.find(given->second.Get<Rml::String>());
+				if (preset != m_presets.end())
+					m_binding.send("settings.set", {{"values", *preset}});
+				return;
+			}
 			// The meter settings pane's check boxes, the Unit and EBU Scale lists, the threshold fields and the RMS
 			// resolution in ms (pp. 539-540).
-			const auto given = event.GetParameters().find("value");
 			// A list selects its first option before its setting's value arrived, which mustn't overwrite it.
 			const auto key = target->GetAttribute<Rml::String>("setting", "");
 			if (key.empty() || (target->GetTagName() == "select" && m_shown.count(key) == 0))
 				return;
 			if (target->GetAttribute<Rml::String>("type", "") == "checkbox")
 				m_binding.send("settings.set", {{"key", key}, {"value", target->HasAttribute("checked")}});
-			else if (given != event.GetParameters().end() && target->GetTagName() == "select")
-			{
-				const auto text = given->second.Get<Rml::String>();
-				const std::optional<float> number = widgets::parse(text); // the alignment level
-				m_binding.send(
-					"settings.set", {{"key", key}, {"value", number ? engine::Json(*number) : engine::Json(text)}});
-			}
-			else if (given != event.GetParameters().end() && target->GetAttribute<Rml::String>("decimals", "") == "0")
-				m_binding.send("settings.set", {{"key", key}, {"value", std::lround(given->second.Get<double>())}});
 			else if (given != event.GetParameters().end())
-				m_binding.send("settings.set", {{"key", key}, {"value", given->second.Get<double>()}});
+				m_binding.send("settings.set", {{"key", key}, {"value", settingValue(*target, given->second)}});
 			return;
 		}
 		if (target->IsClassSet("meter-measure"))
@@ -426,6 +467,24 @@ namespace gnubase::ui
 			// Measure Loudness (p. 537) switches the measurement on and off.
 			m_binding.send(
 				"settings.set", {{"key", "meter.measureLoudness"}, {"value", !target->IsClassSet("checked")}});
+			return;
+		}
+		if (target->IsClassSet("meter-preset-save") || target->IsClassSet("meter-preset-remove"))
+		{
+			// Save keeps the thresholds as they are under the typed name, Remove removes the listed preset (p. 539).
+			engine::Json presets = m_presets;
+			const char* field = target->IsClassSet("meter-preset-save") ? ".meter-preset-name" : ".meter-presets";
+			const auto* control = rmlui_dynamic_cast<Rml::ElementFormControl*>(m_root->QuerySelector(field));
+			const std::string name = control != nullptr ? control->GetValue() : std::string();
+			if (name.empty() || (target->IsClassSet("meter-preset-remove") && presets.erase(name) == 0))
+				return;
+			if (target->IsClassSet("meter-preset-save"))
+				for (const auto& threshold : g_thresholds)
+					for (const char* part : {"Reference", "Tolerance"})
+						if (const auto value = m_thresholds.find(std::string("meter.") + threshold.first + part);
+							value != m_thresholds.end())
+							presets[name][value->first] = value->second;
+			m_binding.send("settings.set", {{"key", "meter.presets"}, {"value", presets}});
 			return;
 		}
 		if (target->IsClassSet("meter-unit"))

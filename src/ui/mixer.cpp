@@ -53,11 +53,15 @@ namespace gnubase::ui
 		constexpr const char* g_addEffect = "add"; // a send destination list's Add Effect Track to Send
 		// The channel meters' +3 dB digital scale (reference manual pp. 467-468, 1614): -60 to +3 dB, and the marks
 		// beside its bars, each placed at its level's height on the bars.
-		const MeterScale g_meterScale = meterScale("digital3");
+		const MeterScale& channelScale()
+		{
+			static const MeterScale scale = meterScale("digital3");
+			return scale;
+		}
 
 		std::string channelMeterScale()
 		{
-			return R"(<div class="mixer-meter-scale">)" + meterScaleMarks(g_meterScale) + "</div>";
+			return R"(<div class="mixer-meter-scale">)" + meterScaleMarks(channelScale()) + "</div>";
 		}
 
 		std::string encode(const std::string& text)
@@ -1019,8 +1023,8 @@ namespace gnubase::ui
 			{
 				std::string rml;
 				for (int c = 0; c < channels; ++c)
-					rml += "<meter min=\"" + widgets::format(g_meterScale.min) + "\" max=\"" +
-						widgets::format(g_meterScale.max) + "\"/>";
+					rml += "<meter min=\"" + widgets::format(channelScale().min) + "\" max=\"" +
+						widgets::format(channelScale().max) + "\"/>";
 				bars->SetInnerRML(rml);
 			}
 			for (int c = 0; c < channels; ++c)

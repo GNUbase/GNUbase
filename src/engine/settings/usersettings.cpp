@@ -650,6 +650,13 @@ namespace gnubase::engine::settings
 					"and muting, without the "
 					"panner; postPanner, after the panner too, both sides of a mono channel's panner.",
 					Json{{"type", "string"}, {"enum", {"input", "postFader", "postPanner"}}}, "postPanner"},
+				{"meter.presets",
+					"The measurement presets of the meter display's thresholds (reference manual p. 539), by name: "
+					"each the values of the settings meter.momentaryMaxReference, meter.momentaryMaxTolerance and so "
+					"on for shortTerm, integrated and truePeak. Loading one is settings.set with its values.",
+					Json{{"type", "object"},
+						{"additionalProperties", {{"type", "object"}, {"additionalProperties", {{"type", "number"}}}}}},
+					Json::object()},
 				{"meter.resetOnStart",
 					"Reset on Start: the loudness meter, and the main mix's peak and RMS maxima, start over when "
 					"playback starts (see meter.get).",

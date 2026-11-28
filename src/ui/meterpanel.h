@@ -82,10 +82,11 @@ namespace gnubase::ui
 	// Meter Settings and Configure Loudness Settings open the meter settings pane (pp. 538-540) with the user settings
 	// meter.loudnessUnit, meter.loudnessScale, meter.resetOnStart, meter.holdOnStop, meter.rmsAes17 and
 	// meter.rmsResolution, and the thresholds above which Momentary Max., Short-Term, Integrated and True Peak turn red
-	// (.over); Measure Loudness switches meter.measureLoudness, the unit switch meter.loudnessUnit. The master meter's
-	// scale (meter.scale, meter.alignmentLevel, p. 534) and the loudness meter's are left of the bars, and the master
-	// meter's bars fall back by meter.fallback (p. 1614). It reads the meters once a frame through the reader. Use it
-	// on the UI thread; the reader and the binding must outlive it.
+	// (.over), and the measurement presets of those (meter.presets); Measure Loudness switches meter.measureLoudness,
+	// the unit switch meter.loudnessUnit. The master meter's scale (meter.scale, meter.alignmentLevel, p. 534) and the
+	// loudness meter's are left of the bars, and the master meter's bars fall back by meter.fallback (p. 1614). It
+	// reads the meters once a frame through the reader. Use it on the UI thread; the reader and the binding must
+	// outlive it.
 	class MeterPanel final : private Rml::EventListener
 	{
 	public:
@@ -106,6 +107,8 @@ namespace gnubase::ui
 		// The pages' scales, by the settings meter.scale, meter.alignmentLevel, meter.loudnessScale and
 		// meter.loudnessUnit.
 		void showScales();
+		// The measurement presets in their list (the setting meter.presets).
+		void showPresets(const engine::Json& presets);
 
 		MeterReader& m_reader;
 		EngineBinding& m_binding;
@@ -122,7 +125,8 @@ namespace gnubase::ui
 		float m_alignment = -18.0F;      // meter.alignmentLevel, in dBFS
 		double m_fallback = 20.0;        // meter.fallback, in dB per second
 		std::vector<float> m_bars;       // the master meter's bars as they fall back
-		std::chrono::steady_clock::time_point m_read; // when read() read the meters last
-		std::map<std::string, double> m_thresholds;   // the settings meter.<name>Reference and meter.<name>Tolerance
+		std::chrono::steady_clock::time_point m_read;    // when read() read the meters last
+		engine::Json m_presets = engine::Json::object(); // meter.presets
+		std::map<std::string, double> m_thresholds;      // the settings meter.<name>Reference and meter.<name>Tolerance
 	};
 }
