@@ -186,17 +186,17 @@ first.
   to the type's next one (or the note's end) at its value, as playback holds a value until the next point. The values go
   from the box's bottom to its top: tuning from -48 to 48 semitones, MPE's pitch range (values beyond show at the edge),
   volume from 0 to 4 and the others from 0 to 1. Expressions that the note's track hides (#2120,
-  [note-expression-setup.md](note-expression-setup.md)) have no lines. A step narrower than a pixel of the note display
-  joins the next ones until it is as wide, at the last one's value, so that a recorded note with a point every few
-  milliseconds is a line per pixel at most, not hundreds of elements (#1671). The lines are built again when a pixel has
-  a quarter more or fewer ticks than they were built with: after an editor's first layout, as the editor window or the
-  lower zone resizes and as the project window zooms, but not on every frame of a scroll across a tempo change, which
-  changes the in-place editor's ticks per pixel a little (#1716). The quarter counts once the window's update has laid
-  the lines out with the ticks they were built for; before that, as when the lines first show, they are built again for
-  any other ticks. They are built for the box the last layout gave the notes, which need not be the window's: the editor
-  window's first layout, before the left zone has its size, gives the notes about a tenth more room (#1768). Each
-  editor's lines follow the update of its own window. The drum editor shows no overlay, as it has neither the buttons
-  nor the expression editor, also with Show Note Length.
+  [note-expression-setup.md](note-expression-setup.md)) have no lines, and the others take their track's Parameter
+  Colors. A step narrower than a pixel of the note display joins the next ones until it is as wide, at the last one's
+  value, so that a recorded note with a point every few milliseconds is a line per pixel at most, not hundreds of
+  elements (#1671). The lines are built again when a pixel has a quarter more or fewer ticks than they were built with:
+  after an editor's first layout, as the editor window or the lower zone resizes and as the project window zooms, but
+  not on every frame of a scroll across a tempo change, which changes the in-place editor's ticks per pixel a little
+  (#1716). The quarter counts once the window's update has laid the lines out with the ticks they were built for; before
+  that, as when the lines first show, they are built again for any other ticks. They are built for the box the last
+  layout gave the notes, which need not be the window's: the editor window's first layout, before the left zone has its
+  size, gives the notes about a tenth more room (#1768). Each editor's lines follow the update of its own window. The
+  drum editor shows no overlay, as it has neither the buttons nor the expression editor, also with Show Note Length.
 - **Expression editor** (pp. 1308-1311). With Double-Click Opens Note Expression Editor a double click on a note with
   the object selection tool opens the editor instead of deleting the note: on the note, or on the selected notes if it
   is one of them. It lies over the note display from the first selected note's start to the last one's end, centered on
@@ -265,8 +265,7 @@ loading cutting them there.
   which needs the other expressions' curves in the editor and a hit test by position (p. 1311), the Left and Right
   Arrow and Tab keys to step through the notes, the release phase (Change Release Length) and a key command for
   Double-Click Opens Note Expression Editor (p. 1308); the overlay's display size slider and Acoustic Feedback (p.
-  1303), a color per expression in the overlay, which draws all of them alike, and Trim Note Expression to Note Length
-  and Remove Note Expression in the MIDI menu (p. 1314).
+  1303), and Trim Note Expression to Note Length and Remove Note Expression in the MIDI menu (p. 1314).
 - What the inspector's Note Expression section doesn't have yet: [note-expression-setup.md](note-expression-setup.md).
 - The Note Expression Assignment's Preferred and Alternative rules (Expression Name Contains, Note Expression Number, As
   Recommended by Instrument, p. 1299), and renewing the assignments when the instrument or its preset changes (p. 1298,

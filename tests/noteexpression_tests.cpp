@@ -15,6 +15,8 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <limits>
 #include <map>
 #include <optional>
@@ -1000,7 +1002,7 @@ TEST_CASE("noteExpression.set sets a track's bypass and input assignments, which
 	Setup setup;
 	Client& client = setup.client;
 	CHECK(setupOf(client, setup.channel) ==
-		Json{{"bypass", false}, {"inputs", Json::array()}, {"hidden", Json::array()}});
+		Json{{"bypass", false}, {"inputs", Json::array()}, {"hidden", Json::array()}, {"colors", Json::array()}});
 
 	events(client);
 	const Json set = run(client, "noteExpression.set",
@@ -1008,7 +1010,7 @@ TEST_CASE("noteExpression.set sets a track's bypass and input assignments, which
 			{"inputs", {input("tuning", "pitchBend", -12.0, 12.0), input("brightness", "cc74", 0.25, 0.75)}}});
 	const Json expected = {{"bypass", true},
 		{"inputs", {input("tuning", "pitchBend", -12.0, 12.0), input("brightness", "cc74", 0.25, 0.75)}},
-		{"hidden", Json::array()}};
+		{"hidden", Json::array()}, {"colors", Json::array()}};
 	CHECK(set == Json{{"track", setup.track}, {"noteExpression", expected}});
 	// Clients that follow events, like the inspector, see the new setup.
 	const std::vector<Json> changes = events(client)["channel.changed"];
@@ -1026,7 +1028,7 @@ TEST_CASE("noteExpression.set sets a track's bypass and input assignments, which
 					{{"type", "tuning"}, {"max", 120.0}}, {{"type", "pressure"}, {"input", "aftertouch"}}}}});
 	const Json changed = {{"bypass", true},
 		{"inputs", {input("brightness", "cc74", 0.25, 1.0), input("pressure", "aftertouch", 0.0, 1.0)}},
-		{"hidden", Json::array()}};
+		{"hidden", Json::array()}, {"colors", Json::array()}};
 	CHECK(setupOf(client, setup.channel) == changed);
 
 	// Saved and loaded with the project.
@@ -1037,7 +1039,7 @@ TEST_CASE("noteExpression.set sets a track's bypass and input assignments, which
 	CHECK(setupOf(client, setup.channel) == expected);
 	run(client, "history.undo");
 	CHECK(setupOf(client, setup.channel) ==
-		Json{{"bypass", false}, {"inputs", Json::array()}, {"hidden", Json::array()}});
+		Json{{"bypass", false}, {"inputs", Json::array()}, {"hidden", Json::array()}, {"colors", Json::array()}});
 }
 
 TEST_CASE(
@@ -1052,11 +1054,14 @@ TEST_CASE(
 				{"inputs",
 					{input("volume", "cc7", -1.0, 9.0), input("wobble", "cc1", 0.0, 1.0),
 						input("pan", "cc200", 0.0, 0.5)}},
-				{"hidden", {"wobble", "tuning"}}};
+				{"hidden", {"wobble", "tuning"}},
+				{"colors",
+					{{{"type", "pan"}, {"color", "green"}}, {{"type", "wobble"}, {"color", "#ff0000"}},
+						{{"type", "tuning"}, {"color", "#0000ff"}}}}};
 	const Project loaded = projectFromJson(json);
 	CHECK(toJson(loaded.channels.at(setup.channel)).at("noteExpression") ==
 		Json{{"bypass", true}, {"inputs", {input("volume", "cc7", 0.0, 4.0), input("pan", "none", 0.0, 0.5)}},
-			{"hidden", Json::array({"tuning"})}});
+			{"hidden", Json::array({"tuning"})}, {"colors", {{{"type", "tuning"}, {"color", "#0000ff"}}}}});
 }
 
 TEST_CASE("noteExpression.set hides expressions from the editors, which the project keeps", "[integration]")
@@ -1085,6 +1090,74 @@ TEST_CASE("noteExpression.set hides expressions from the editors, which the proj
 	CHECK(hidden() == Json{"pan", "vibrato"});
 }
 
+TEST_CASE("noteExpression.set gives expressions their parameter colors, which the project keeps", "[integration]")
+{
+	// Parameter Color (#2120, reference manual p. 1301): colors lists them in the expressions' order.
+	Setup setup;
+	Client& client = setup.client;
+	events(client);
+	run(client, "noteExpression.set",
+		{{"track", setup.track},
+			{"colors", {{{"type", "pan"}, {"color", "#00ff00"}}, {{"type", "volume"}, {"color", "#ff0000"}}}}});
+	const auto colors = [&] { return setupOf(client, setup.channel).at("colors"); };
+	const Json both = {{{"type", "volume"}, {"color", "#ff0000"}}, {{"type", "pan"}, {"color", "#00ff00"}}};
+	CHECK(colors() == both);
+	// The editors draw the expressions in them: they read the notes again.
+	CHECK(events(client)["noteExpression.changed"].size() == 1);
+	const Project loaded = projectFromJson(run(client, "project.get"));
+	CHECK(toJson(loaded.channels.at(setup.channel)).at("noteExpression").at("colors") == both);
+	// An empty color is the default again; a call without colors keeps them.
+	run(client, "noteExpression.set", {{"track", setup.track}, {"colors", {{{"type", "volume"}, {"color", ""}}}}});
+	run(client, "noteExpression.set", {{"track", setup.track}, {"bypass", true}});
+	CHECK(colors() == Json{{{"type", "pan"}, {"color", "#00ff00"}}});
+	CHECK_THAT(reject(client, "noteExpression.set",
+				   {{"track", setup.track}, {"colors", {{{"type", "pan"}, {"color", "green"}}}}}),
+		ContainsSubstring("#rrggbb"));
+	run(client, "history.undo");
+	run(client, "history.undo");
+	CHECK(colors() == both);
+}
+
+TEST_CASE("an input assignment saved as a file loads into another track, replacing its assignments", "[integration]")
+{
+	// Save and Load Input Assignment (#2120, reference manual pp. 1302, 1304).
+	Setup setup;
+	Client& client = setup.client;
+	const gnubase::test::TempDir dir;
+	const std::string file = (dir.path() / "keyboard.neinput").u8string();
+	run(client, "noteExpression.set",
+		{{"track", setup.track}, {"bypass", true}, {"hidden", {"pan"}},
+			{"colors", {{{"type", "pan"}, {"color", "#00ff00"}}}},
+			{"inputs", {input("tuning", "pitchBend", -12.0, 12.0), input("brightness", "cc74", 0.25, 0.75)}}});
+	const Json revision = run(client, "project.revision");
+	run(client, "noteExpression.saveInputs", {{"track", setup.track}, {"path", file}});
+	CHECK(run(client, "project.revision") == revision);
+
+	const Json added = run(client, "track.add", {{"type", "instrument"}});
+	const auto other = added.at("track").at("id").get<ObjectId>();
+	const auto channel = added.at("channel").at("id").get<ObjectId>();
+	run(client, "noteExpression.set", {{"track", other}, {"inputs", {input("volume", "cc7", 0.0, 4.0)}}});
+	run(client, "noteExpression.loadInputs", {{"track", other}, {"path", file}});
+	// Only the inputs: the bypass, visibility and colors stay the track's own.
+	CHECK(setupOf(client, channel) ==
+		Json{{"bypass", false},
+			{"inputs", {input("tuning", "pitchBend", -12.0, 12.0), input("brightness", "cc74", 0.25, 0.75)}},
+			{"hidden", Json::array()}, {"colors", Json::array()}});
+	CHECK(run(client, "history.get").at("steps").back().at("action") == "Load input assignment");
+	run(client, "history.undo");
+	CHECK(setupOf(client, channel).at("inputs") == Json::array({input("volume", "cc7", 0.0, 4.0)}));
+
+	// A file that isn't one changes nothing.
+	const std::string broken = (dir.path() / "broken.neinput").u8string();
+	std::ofstream(std::filesystem::u8path(broken), std::ios::binary) << "not json";
+	CHECK_THAT(reject(client, "noteExpression.loadInputs", {{"track", other}, {"path", broken}}),
+		ContainsSubstring("broken.neinput"));
+	CHECK_THAT(reject(client, "noteExpression.loadInputs",
+				   {{"track", other}, {"path", (dir.path() / "missing.neinput").u8string()}}),
+		ContainsSubstring("can't open"));
+	CHECK(setupOf(client, channel).at("inputs") == Json::array({input("volume", "cc7", 0.0, 4.0)}));
+}
+
 TEST_CASE("noteExpression.set refuses what it can't do and changes nothing then", "[integration]")
 {
 	Setup setup;
@@ -1105,7 +1178,7 @@ TEST_CASE("noteExpression.set refuses what it can't do and changes nothing then"
 				   {{"track", setup.track}, {"inputs", {{{"type", "tuning"}, {"min", -121.0}}}}}),
 		ContainsSubstring("min must be -120 to 120"));
 	CHECK(setupOf(client, setup.channel) ==
-		Json{{"bypass", false}, {"inputs", Json::array()}, {"hidden", Json::array()}});
+		Json{{"bypass", false}, {"inputs", Json::array()}, {"hidden", Json::array()}, {"colors", Json::array()}});
 	CHECK(run(client, "project.revision") == revision);
 }
 

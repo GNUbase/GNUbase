@@ -1895,7 +1895,11 @@ namespace gnubase::engine
 		Json hidden = Json::array();
 		for (const plugin::NoteExpression type : setup.hidden)
 			hidden.push_back(g_expressionNames.at(static_cast<size_t>(type)));
-		return {{"bypass", setup.bypass}, {"inputs", std::move(inputs)}, {"hidden", std::move(hidden)}};
+		Json colors = Json::array();
+		for (const auto& [type, color] : setup.colors)
+			colors.push_back({{"type", g_expressionNames.at(static_cast<size_t>(type))}, {"color", color}});
+		return {{"bypass", setup.bypass}, {"inputs", std::move(inputs)}, {"hidden", std::move(hidden)},
+			{"colors", std::move(colors)}};
 	}
 
 	NoteExpressionSetup noteExpressionFromJson(const Json& json, const NoteExpressionSetup& fallback, bool loading)
@@ -1923,6 +1927,20 @@ namespace gnubase::engine
 			for (const Json& named : json.at("hidden"))
 				if (const std::optional<plugin::NoteExpression> type = expression(named, "hidden"))
 					setup.hidden.insert(*type);
+		}
+		// Parameter Colors (#2120): "#rrggbb", or empty for the theme's; a project file's other values are dropped.
+		for (const Json& item : json.value("colors", Json::array()))
+		{
+			const std::optional<plugin::NoteExpression> type = expression(item.at("type"), "colors");
+			const auto color = item.value("color", std::string());
+			if (!color.empty() && !isColor(color) && !loading)
+				throw std::invalid_argument("noteExpression.colors: a color must be #rrggbb or empty, not " + color);
+			if (!type)
+				continue;
+			if (isColor(color))
+				setup.colors[*type] = color;
+			else
+				setup.colors.erase(*type);
 		}
 		for (const Json& item : json.value("inputs", Json::array()))
 		{

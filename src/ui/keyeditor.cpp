@@ -576,16 +576,17 @@ namespace gnubase::ui
 		m_parts.clear();
 		m_notes.clear();
 		m_hiddenExpressions.clear();
+		m_expressionColors.clear();
 		if (!m_project.contains("tracks") || !m_view.contains("parts"))
 			return;
 		const TimeContext time = projectTime(m_project);
 		std::map<uint64_t, const Json*> tracks;
 		for (const Json& track : m_project.at("tracks"))
 			tracks[track.at("id").get<uint64_t>()] = &track;
-		std::map<uint64_t, Json> hidden; // by channel, the expressions its setup hides
+		std::map<uint64_t, Json> setups; // by channel, its note expression setup
 		for (const Json& channel : m_project.value("channels", Json::array()))
 			if (channel.contains("noteExpression"))
-				hidden[channel.at("id").get<uint64_t>()] = channel.at("noteExpression").value("hidden", Json::array());
+				setups[channel.at("id").get<uint64_t>()] = channel.at("noteExpression");
 		const Json& editable = m_view.at("editable");
 		m_noteColors.clear();
 		const std::string colors = m_view.value("eventColors", std::string("default"));
@@ -606,9 +607,14 @@ namespace gnubase::ui
 					std::find(editable.begin(), editable.end(), id) != editable.end()};
 				m_parts.push_back(item);
 				noteColors(colors, part, track, maps);
-				if (const auto found = hidden.find(track.value("channel", uint64_t{0})); found != hidden.end())
-					for (const Json& type : found->second)
+				if (const auto found = setups.find(track.value("channel", uint64_t{0})); found != setups.end())
+				{
+					for (const Json& type : found->second.value("hidden", Json::array()))
 						m_hiddenExpressions.emplace(item.id, type.get<std::string>());
+					for (const Json& color : found->second.value("colors", Json::array()))
+						m_expressionColors[{item.id, color.at("type").get<std::string>()}] =
+							color.at("color").get<std::string>();
+				}
 				for (const Json& note : part.at("notes"))
 					m_notes.push_back({item.id, note.at("id").get<uint64_t>(),
 						item.start + note.at("position").get<int64_t>(), note.at("length").get<int64_t>(),
@@ -885,7 +891,8 @@ namespace gnubase::ui
 				std::to_string(note.id) + R"(">)";
 			for (const char* type : engine::g_expressionNames)
 				if (expression && !expressionHidden(note.part, type))
-					rml += stepsRml(note.expressions, type, 0, note.length, note.length, pixel);
+					rml += stepsRml(
+						note.expressions, type, 0, note.length, note.length, pixel, expressionColor(note.part, type));
 			rml += "</div>";
 		}
 		// Compared with what was set last: the element's own RML has the classes set since.
@@ -1263,8 +1270,8 @@ namespace gnubase::ui
 		return width > 0.0F ? static_cast<int64_t>(static_cast<double>(m_to - m_from) / width) : 0;
 	}
 
-	std::string KeyEditor::stepsRml(
-		const Json& points, const std::string& type, int64_t offset, int64_t span, int64_t length, int64_t minimum)
+	std::string KeyEditor::stepsRml(const Json& points, const std::string& type, int64_t offset, int64_t span,
+		int64_t length, int64_t minimum, const std::string& color)
 	{
 		const auto [low, high] = expressionRange(type);
 		const auto percentOf = [span](int64_t ticks)
@@ -1291,7 +1298,9 @@ namespace gnubase::ui
 			if (start >= end)
 				continue;
 			rml += R"(<div class="key-expression-step" style="left: )" + percentOf(offset + start) +
-				"%; width: " + percentOf(end - start) + "%; top: " + std::to_string((1.0 - value) * 100.0) + R"(%;"/>)";
+				"%; width: " + percentOf(end - start) + "%; top: " + std::to_string((1.0 - value) * 100.0) + "%;" +
+				// The expression's Parameter Color (#2120), user data; without one the theme's.
+				(color.empty() ? "" : " background-color: " + color + ";") + R"("/>)";
 		}
 		return rml;
 	}
@@ -1314,6 +1323,12 @@ namespace gnubase::ui
 	bool KeyEditor::expressionHidden(uint64_t part, const std::string& type) const
 	{
 		return m_hiddenExpressions.count({part, type}) != 0;
+	}
+
+	std::string KeyEditor::expressionColor(uint64_t part, const std::string& type) const
+	{
+		const auto found = m_expressionColors.find({part, type});
+		return found != m_expressionColors.end() ? found->second : std::string();
 	}
 
 	void KeyEditor::renderExpression()
@@ -1374,7 +1389,7 @@ namespace gnubase::ui
 		const int64_t pixel = ticksPerPixel();
 		for (const Note* note : notes)
 			rml += stepsRml(m_gesture == Gesture::Expression ? edited(*note) : note->expressions, type,
-				note->start - from, to - from, note->length, pixel);
+				note->start - from, to - from, note->length, pixel, expressionColor(note->part, type));
 		// Compared with what was set last, as the notes are: the element's own RML never equals it, and rebuilding the
 		// lines would free one that a mouse event still goes through.
 		if (Rml::Element* area = editor->QuerySelector(".key-expression-area");

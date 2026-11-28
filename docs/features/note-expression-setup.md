@@ -2,15 +2,15 @@
 
 A MIDI or instrument track's settings for its notes' per-note expression ([note-expression.md](note-expression.md)),
 which the inspector's Note Expression section edits (#1513, reference manual pp. 1300-1302): its bypass, the input
-assignments of the expressions, each with its value range, and which expressions the editors show. They belong to the
-track and are saved with the project.
+assignments of the expressions, each with its value range, which expressions the editors show and in which colors.
+They belong to the track and are saved with the project.
 
 ## In the engine
 
 `noteExpression.set` changes them (MCP `noteExpression_set`, Lua `gnubase.noteExpression.set`), one undo step, "Change
 note expression setup"; what a call leaves out stays as it was. `project.get` lists them as the channel's
-`noteExpression`, `{bypass, inputs, hidden}`, and the project keeps them in its GNUbase entry (`NoteExpressionSetup`,
-the channel's `noteExpression` in `src/engine/document/document.h`).
+`noteExpression`, `{bypass, inputs, hidden, colors}`, and the project keeps them in its GNUbase entry
+(`NoteExpressionSetup`, the channel's `noteExpression` in `src/engine/document/document.h`).
 
 - **Bypass** (p. 1300) plays the track's notes without their expression points: the render snapshot leaves them out
   (`compilePart` in `src/engine/document/rendersnapshot.cpp`), so neither the instrument nor MIDI sends before the
@@ -44,6 +44,19 @@ the channel's `noteExpression` in `src/engine/document/document.h`).
   expressions that the track's notes have points of, which are marked with an asterisk (\*) whether it is on or not;
   Make all Expressions visible empties `hidden`, and Make only edited Expression visible hides all but the selected
   expression.
+- **Parameter Color** (p. 1301, #2120): `colors` lists the expressions that have a color of their own, `{type, color}`
+  with the color as `#rrggbb`, in the expressions' order; a call's empty color gives the expression the theme's again.
+  The key editor and the in-place editors draw the expression's lines over the notes and in the expression editor in
+  it: the themes draw a line as the step's background, which the color replaces (`KeyEditor::stepsRml`). A change
+  emits `noteExpression.changed` too, as one of `hidden` does. In the inspector's Parameter Details, the selected
+  expression's Color offers Default and the colors of the project's color set ([colors.md](colors.md)), and its swatch
+  shows the color; a color no longer in the set is listed by its value. Being user data, it is the one color the
+  inspector's and the key editor's code set (`tests/stylerules_tests.cpp`).
+- **Load and Save Input Assignment** (pp. 1302, 1304, #2120): `noteExpression.saveInputs` saves a track's input
+  assignments as a file at a path, JSON `{inputs}` as `project.get` lists them, and `noteExpression.loadInputs` gives
+  a track the file's assignments in place of its own, one undo step ("Load input assignment"), read as a project
+  file's are; the bypass, visibility and colors stay. Show Additional Functions' Load Input Assignment... and Save
+  Input Assignment... ask for the file (`.neinput`, GNUbase's own JSON, not the reference's format) and run them.
 - **Live input** (p. 1303): the track's MIDI input plays each assigned message as the expression of the notes the
   input holds on the message's channel, every one of them getting the same value, over the expression's range: the
   message's lowest value plays `min`, its highest `max`. The sequencer turns them into note expression events before
@@ -72,13 +85,15 @@ records an assigned controller into the notes that sound, and that `noteExpressi
 controllers into its notes' points, leaves the others and those no note sounds at, and undoes in one step.
 `tests/noteexpression_ui_tests.cpp` checks Convert to Note Expression in the MIDI menu on an editor's two parts;
 Parameter Selection and the lines over the notes without the hidden expressions but those a note uses; and the
-inspector's visibility buttons, the used expression's asterisk and Show Additional Functions' three items. The engine
-tests check `hidden` with its order, what a call leaves out, `noteExpression.changed`, saving, loading and undo.
+inspector's visibility buttons, the used expression's asterisk, Show Additional Functions' items with Load and Save
+Input Assignment through the file dialog, and Parameter Color with its swatch; and the key editor's lines in an
+expression's color. The engine tests check `hidden` and `colors` with their order, what a call leaves out,
+`noteExpression.changed`, saving, loading and undo, and an input assignment saved as a file and loaded into another
+track, and the files that `noteExpression.loadInputs` refuses.
 
 ## Not yet
 
-- In the inspector's Note Expression section, the parameter colors (p. 1301), which the key editor would draw the
-  expressions in, and Show Additional Functions' MIDI Controller Setup (pp. 1165, 1302, #737) (#2120).
-- Loading and saving input assignments as presets (p. 1304, #2120); Record MIDI as Note Expression, Overdub Note Exp.
-  and its Latch Buffer (p. 1302): recording into the notes of the parts that play, which the input doesn't hold (#1515);
-  the release phases of Convert to Note Expression (p. 1316, #1515).
+- Show Additional Functions' MIDI Controller Setup (pp. 1165, 1302), once the dialog exists (#737, #2120).
+- Record MIDI as Note Expression, Overdub Note Exp. and its Latch Buffer (p. 1302): recording into the notes of the
+  parts that play, which the input doesn't hold (#1515); the release phases of Convert to Note Expression (p. 1316,
+  #1515).

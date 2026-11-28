@@ -253,8 +253,8 @@ namespace gnubase::ui
 
 		// The Note Expression section (pp. 1300-1302, #1513): its bypass, a row per expression with its visibility
 		// (#2120) and its input's short name (the In column), of which a click selects one, that one's Parameter
-		// Details: its input (Input), MIDI Learn, and its range (Max. Value and Min. Value), and the Global section's
-		// Show Additional Functions.
+		// Details: its Parameter Color (#2120), a color of the project's color set, its input (Input), MIDI Learn, and
+		// its range (Max. Value and Min. Value), and the Global section's Show Additional Functions.
 		std::string noteExpressionRml()
 		{
 			std::string rml =
@@ -271,6 +271,8 @@ namespace gnubase::ui
 					name + "</span></div>";
 			}
 			rml += R"(<div class="inspector-list-title">Parameter Details</div>)";
+			rml += row("expressionColor", "Color",
+				R"(<span class="color-swatch"/><select control="noteExpression-color" title="Parameter Color"/>)");
 			rml += row("expressionInput", "Input", R"(<select control="noteExpression-input" title="Input"/>)");
 			rml += R"(<div class="inspector-buttons"><button type="toggle" class="toggle")"
 				   R"( control="noteExpression-learn" title="MIDI Learn">Learn</button></div>)";
@@ -661,7 +663,9 @@ namespace gnubase::ui
 				R"(<menu id="inspector-expression-menu">)"
 				R"(<menuitem type="toggle" class="expression-used">Show only used Expressions</menuitem>)"
 				R"(<menuitem class="expression-all-visible">Make all Expressions visible</menuitem>)"
-				R"(<menuitem class="expression-only-edited">Make only edited Expression visible</menuitem></menu>)");
+				R"(<menuitem class="expression-only-edited">Make only edited Expression visible</menuitem>)"
+				R"(<menuitem class="expression-load-inputs">Load Input Assignment...</menuitem>)"
+				R"(<menuitem class="expression-save-inputs">Save Input Assignment...</menuitem></menu>)");
 			for (Rml::ObserverPtr<Rml::Element>* kept : {&m_stepMenu, &m_retrospectiveMenu, &m_expressionMenu})
 			{
 				Rml::Element* menu = document->AppendChild(holder->RemoveChild(holder->GetFirstChild()));
@@ -1395,6 +1399,27 @@ namespace gnubase::ui
 		}
 		if (Rml::Element* input = control("input"))
 			widgets::fill(*input, expressionInputs(), selected.at("input").get<std::string>());
+		// Parameter Color (p. 1301): Default, the theme's, or a color of the project's color set, which the swatch
+		// shows; a color no longer in the set is listed as it is.
+		std::string color;
+		for (const Json& each : setup.value("colors", Json::array()))
+			if (each.at("type") == engine::g_expressionNames.at(m_expression))
+				color = each.at("color").get<std::string>();
+		Options colors = {{"", "Default"}};
+		for (const Json& each : m_project->value("colors", Json::array()))
+			colors.emplace_back(each.at("color").get<std::string>(), each.at("name").get<std::string>());
+		if (std::none_of(colors.begin(), colors.end(), [&color](const auto& option) { return option.first == color; }))
+			colors.emplace_back(color, color);
+		if (Rml::Element* select = control("color"))
+			widgets::fill(*select, colors, color);
+		if (Rml::Element* swatch =
+				m_root->QuerySelector("[section=noteExpression] [row=expressionColor] .color-swatch"))
+		{
+			if (color.empty())
+				swatch->RemoveProperty(Rml::PropertyId::BackgroundColor);
+			else
+				swatch->SetProperty("background-color", color); // the color the user picked, user data
+		}
 		for (const char* end : {"max", "min"})
 			if (Rml::Element* field = control(end))
 			{
@@ -1803,6 +1828,10 @@ namespace gnubase::ui
 			if (target->IsClassSet("inspector-expression-functions") && m_expressionMenu)
 				openMenu(*m_expressionMenu.get(),
 					{target->GetAbsoluteLeft(), target->GetAbsoluteTop() + target->GetOffsetHeight()});
+			// Load and Save Input Assignment (pp. 1302, 1304) ask for the file.
+			if (m_track != 0 && m_inputAssignmentFile &&
+				(target->IsClassSet("expression-load-inputs") || target->IsClassSet("expression-save-inputs")))
+				m_inputAssignmentFile(m_track, target->IsClassSet("expression-save-inputs"));
 			if (target->IsClassSet("expression-used") && m_channel.is_object())
 			{
 				m_onlyUsed = !m_onlyUsed;
@@ -2151,6 +2180,16 @@ namespace gnubase::ui
 			if (!event.GetParameter<bool>("value", false))
 				hidden.push_back(type);
 			m_binding.send("noteExpression.set", {{"track", m_track}, {"hidden", hidden}}, whenRefused());
+			return;
+		}
+		if (name == "noteExpression-color")
+		{
+			m_binding.send("noteExpression.set",
+				{{"track", m_track},
+					{"colors",
+						{{{"type", engine::g_expressionNames.at(m_expression)},
+							{"color", event.GetParameter<Rml::String>("value", "")}}}}},
+				whenRefused());
 			return;
 		}
 		if (name == "noteExpression-input")
