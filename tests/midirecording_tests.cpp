@@ -1333,7 +1333,10 @@ TEST_CASE("starts of playback after a stop without cycle mode start no cycle lap
 TEST_CASE("a note held when cycle playback stops ends where it stopped, with its lap (#2096)", "[integration]")
 {
 	// The note-off comes in stop mode, which Insert as Cycle Recording leaves out: the note and the lap end where
-	// playback stopped, not at the pass's last input.
+	// playback stopped, not at the pass's last input. Also after a pass in between that cycles without input on the
+	// track, played just to listen: where that one stopped doesn't count (#2157).
+	const bool listened = GENERATE(false, true);
+	INFO("with a pass to listen: " << listened);
 	Setup setup;
 	Client& client = setup.client;
 	run(client, "settings.set", {{"key", "midi.snapPartsToBars"}, {"value", false}});
@@ -1348,6 +1351,14 @@ TEST_CASE("a note held when cycle playback stops ends where it stopped, with its
 	now = run(client, "audio.get").at("position").get<int64_t>();
 	setup.inject({message(now + 10, {0x80, 60, 0})});
 	run(client, "audio.render", {{"frames", 64}});
+	if (listened) // it cycles and stops at beat 1
+	{
+		run(client, "transport.locate", {{"position", 0}});
+		run(client, "transport.play");
+		run(client, "audio.render", {{"frames", 5 * g_beat}});
+		run(client, "transport.stop");
+		run(client, "audio.render", {{"frames", 64}});
+	}
 	run(client, "transport.locate", {{"position", 0}});
 	now = run(client, "audio.get").at("position").get<int64_t>();
 	run(client, "transport.play");

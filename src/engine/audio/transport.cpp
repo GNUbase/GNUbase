@@ -559,7 +559,10 @@ namespace gnubase::engine
 			m_recording[(start + i) % size] = 0;
 		}
 		if (transport.segmentCount > 0 && !m_playing) // a pass starts: the one before stopped at m_played
+		{
+			m_stops[m_lap.pass % m_stops.size()] = {m_lap.pass, m_played, m_lap.lap, m_lap.right};
 			m_lap = {m_lap.lap, m_lap.pass + 1, -1, -1, m_played, m_lap.lap, m_lap.right, false};
+		}
 		m_playing = transport.segmentCount > 0;
 		m_lap.cycle = transport.cycle;
 		for (size_t s = 0; s < transport.segmentCount; ++s)

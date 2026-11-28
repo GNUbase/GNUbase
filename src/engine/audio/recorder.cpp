@@ -586,6 +586,7 @@ namespace gnubase::engine
 			chunk->frames = frames;
 			chunk->setup = m_latestSetup.load(std::memory_order_relaxed);
 			chunk->eventCount = 0;
+			chunk->stops = played.stops();
 			size_t index = 0;
 			for (const auto& [channel, sequencer] : sequencers)
 				for (const graph::ProcessEvent& event : sequencer->input())
@@ -914,7 +915,7 @@ namespace gnubase::engine
 			if (m_midiRecording)
 				endMidi();
 			for (size_t i = 0; i < chunk.eventCount; ++i)
-				keepRetrospective(chunk.events[i], chunk.deviceFrame);
+				keepRetrospective(chunk.events[i], chunk);
 			return;
 		}
 		if (!m_midiRecording)
@@ -946,7 +947,7 @@ namespace gnubase::engine
 			const bool chordsOnly = std::any_of(m_midiCurrent.midiTracks.begin(), m_midiCurrent.midiTracks.end(),
 				[&input](const MidiRecordTrack& track) { return track.channel == input.channel && track.chordsOnly; });
 			if (builder == m_midiBuilders.end() || chordsOnly)
-				keepRetrospective(input, chunk.deviceFrame);
+				keepRetrospective(input, chunk);
 			if (chordsOnly)
 				if (const auto kept = m_retrospective.find(input.channel); kept != m_retrospective.end())
 					kept->second.recorded = kept->second.events.size();
@@ -1030,8 +1031,9 @@ namespace gnubase::engine
 		return m_next.cycleLeft >= 0 && start == m_next.cycleLeft && end == m_next.cycleRight;
 	}
 
-	void Recorder::keepRetrospective(const MidiInput& input, uint64_t deviceFrame)
+	void Recorder::keepRetrospective(const MidiInput& input, const Chunk& chunk)
 	{
+		const uint64_t deviceFrame = chunk.deviceFrame;
 		// With midi.retrospectiveEvents 0 it keeps only the catch range's input, which retrospective() doesn't return.
 		if (m_next.retrospective == 0 && m_next.catchFrames == 0)
 			return;
@@ -1077,7 +1079,20 @@ namespace gnubase::engine
 				std::remove_if(buffer.events.begin(), buffer.events.end(), earlier), buffer.events.end());
 			buffer.stoppedBefore = 0;
 		}
-		buffer.events.push_back({frame, input.played, input.event, input.lap});
+		PlayedLap lap = input.lap;
+		// Passes without input in between, e.g. one played just to listen: the insert ends the input before where its
+		// own pass stopped, or at that input if it is no longer known (#2157).
+		const auto before = std::find_if(buffer.events.rbegin(), buffer.events.rend(),
+			[](const RetrospectiveEvent& kept) { return kept.position >= 0; });
+		if (input.played >= 0 && before != buffer.events.rend() && lap.pass > before->lap.pass + 1)
+		{
+			const PassStop& stop = chunk.stops[before->lap.pass % chunk.stops.size()];
+			const bool known = stop.pass == before->lap.pass;
+			lap.stopped = known ? stop.position : -1;
+			lap.stoppedLap = known ? stop.lap : before->lap.lap;
+			lap.stoppedRight = known ? stop.right : -1;
+		}
+		buffer.events.push_back({frame, input.played, input.event, lap});
 		const auto full = [&]
 		{
 			return m_next.retrospective > 0

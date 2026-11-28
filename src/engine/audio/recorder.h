@@ -259,7 +259,8 @@ namespace gnubase::engine
 			bool midi = false;          // MIDI input instead
 			std::vector<MidiInput> events;
 			size_t eventCount = 0;
-			uint64_t setup = 0; // the latest setup when it was sent (m_setupCount)
+			uint64_t setup = 0;           // the latest setup when it was sent (m_setupCount)
+			PlayedPositions::Stops stops; // MIDI: PlayedPositions::stops
 		};
 
 		// A file being written. A full one (AudioFileFull, at 4 GB) goes on in a file of its own (#580).
@@ -326,7 +327,7 @@ namespace gnubase::engine
 		void endMidi();
 		// Whether a take that starts at start after one that ended at end is a cycle lap, by the latest setup.
 		bool startsLap(time::Samples end, time::Samples start) const;
-		void keepRetrospective(const MidiInput& input, uint64_t deviceFrame);
+		void keepRetrospective(const MidiInput& input, const Chunk& chunk);
 		// Makes the latest setup up to number the next recording's.
 		void applySetups(uint64_t number);
 		// The device channels the next recording's tracks record, which the pre-record history keeps, sorted.
