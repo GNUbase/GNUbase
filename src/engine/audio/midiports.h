@@ -14,6 +14,7 @@
 
 #include <array>
 #include <atomic>
+#include <bitset>
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -78,10 +79,18 @@ namespace gnubase::engine
 		// opens the first time and stays open; -1 while no such port is there or if it doesn't open.
 		int outputSlot(const std::string& key);
 
+		// The notes a channel started on an output and hasn't ended there, by MIDI channel * 128 + pitch.
+		using HeldNotes = std::bitset<size_t{16} * 128>;
+
 		// Audio thread, after the graph processed the block: queues the events that a channel played in it for an
-		// output slot, each at time, the host time of the block's first frame, plus its offset at the sample rate.
-		// The sender thread passes them on to the port, which sends them then. What doesn't fit is dropped.
-		void send(int slot, const graph::EventBuffer& events, HostTime time, double sampleRate) noexcept;
+		// output slot, each at time, the host time of the block's first frame, plus its offset at the sample rate,
+		// and keeps the notes it holds there in held. The sender thread passes them on to the port, which sends them
+		// then. What doesn't fit is dropped.
+		void send(
+			int slot, const graph::EventBuffer& events, HostTime time, double sampleRate, HeldNotes& held) noexcept;
+		// Audio thread: a channel left the output slot. Queues note-offs at time for the notes in held that staying,
+		// those of the channels still playing there, doesn't hold, and forgets held's notes.
+		void release(int slot, HeldNotes& held, const HeldNotes& staying, HostTime time) noexcept;
 
 		// Any thread but an audio thread: a message from the on-screen keyboard (midi.keyboard), which belongs to all
 		// MIDI inputs and arrives now, as a port's would. False if the input queue is full.

@@ -104,7 +104,8 @@ namespace gnubase::engine
 		return -1;
 	}
 
-	void MidiPorts::send(int slot, const graph::EventBuffer& events, HostTime time, double sampleRate) noexcept
+	void MidiPorts::send(
+		int slot, const graph::EventBuffer& events, HostTime time, double sampleRate, HeldNotes& held) noexcept
 	{
 		std::array<audio::MidiMessage, 3> messages;
 		bool queued = false;
@@ -113,8 +114,37 @@ namespace gnubase::engine
 			const HostTime due = time + static_cast<HostTime>(std::llround(event.offset * 1e9 / sampleRate));
 			const size_t count = MidiTap::toMidi1(event, messages);
 			for (size_t i = 0; i < count; ++i)
-				if (m_outgoing.tryPush(Outgoing{slot, messages[i], due}))
-					queued = true;
+			{
+				const audio::MidiMessage& message = messages[i];
+				if (!m_outgoing.tryPush(Outgoing{slot, message, due}))
+					continue;
+				queued = true;
+				const auto status = message.bytes[0] & 0xF0;
+				const size_t note = ((message.bytes[0] & 0x0Fu) * 128u) + (message.bytes[1] & 0x7Fu);
+				if (status == 0x90 && message.bytes[2] != 0)
+					held.set(note);
+				else if (status == 0x80 || status == 0x90)
+					held.reset(note);
+			}
+		}
+		if (queued)
+			m_sendWake.release();
+	}
+
+	void MidiPorts::release(int slot, HeldNotes& held, const HeldNotes& staying, HostTime time) noexcept
+	{
+		const HeldNotes ending = held & ~staying;
+		held.reset();
+		bool queued = false;
+		for (size_t note = 0; note < ending.size(); ++note)
+		{
+			if (!ending.test(note))
+				continue;
+			audio::MidiMessage off;
+			off.size = 3;
+			off.bytes = {static_cast<uint8_t>(0x80 | (note / 128)), static_cast<uint8_t>(note % 128), 64};
+			if (m_outgoing.tryPush(Outgoing{slot, off, time}))
+				queued = true;
 		}
 		if (queued)
 			m_sendWake.release();

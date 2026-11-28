@@ -201,6 +201,14 @@ namespace gnubase::engine
 			std::vector<midi::LogicalRules> rules;
 		};
 
+		// A MIDI channel on a MIDI output port (Program::midiOutputs, Program::portReleases).
+		struct PortOutput
+		{
+			int node = -1; // the channel's graph node; -1 for a release
+			int slot = 0;
+			std::shared_ptr<MidiPorts::HeldNotes> held;
+		};
+
 		struct Program
 		{
 			Program(const graph::GraphDesc& desc, double sampleRate, uint32_t maxFrames)
@@ -225,14 +233,24 @@ namespace gnubase::engine
 			// Per sequencer, its input transformer, which changes its input after the MIDI thru.
 			std::vector<InputTransform> inputTransformers;
 			MidiTap::Instruments instruments; // for midi.capture
-			// The MIDI channels that play to a MIDI output port: their node and the port's slot (MidiPorts::send).
-			std::vector<std::pair<int, int>> midiOutputs;
-			uint32_t outputLatency = 0; // the device's, in frames: MIDI output goes out that far ahead
+			// The MIDI channels that play to a MIDI output port: their node, the port's slot and the notes they hold
+			// there (MidiPorts::send), in the order of the channels.
+			std::vector<PortOutput> midiOutputs;
+			// The channels that left a port, whose notes there end before the first block (MidiPorts::release).
+			std::vector<PortOutput> portReleases;
 			std::vector<int> mainPorts; // the main mix's device channels, for auditioning and listening
 			int mainOutput = -1;        // the main mix's index in outputs, or -1
 			int listenNode = -1;        // the listen bus (graph::NodeKind::ListenBus), or -1
 			bool listening = false;     // a channel listens; the listen bus may also have channels gliding out
 			ListenGains listen;
+		};
+
+		// A channel that left a port, waiting for the audio thread to start a program that releases its notes there.
+		struct PendingPortRelease
+		{
+			std::pair<ObjectId, int> channelAndSlot;
+			std::shared_ptr<MidiPorts::HeldNotes> held;
+			uint64_t generation = 0; // the first program that has it
 		};
 
 		// A release waiting for the audio thread to start a program that has it.
@@ -288,6 +306,8 @@ namespace gnubase::engine
 		void set(const Json& changes);              // audio.set
 		int64_t recordOffset() const;               // from the device's latency and the record shift
 		bool updateLatency(const Json& parameters); // audio.updateLatency; true if anything changed
+		// The MIDI channels of the program that play to MIDI output ports, and the releases of those that left one.
+		void attachPorts(const RenderSnapshot& snapshot, Program& program, uint64_t generation);
 		Json devices() const;
 		Json ports() const;                                    // audio.ports
 		Json setPort(Engine& engine, CommandContext& context); // audio.setPort
@@ -479,6 +499,9 @@ namespace gnubase::engine
 		// input + output latency - record shift, from 0 to g_maxRecordOffset. Written by the command thread, taken by
 		// the audio thread at the start of each block.
 		std::atomic<int64_t> m_recordOffset{0};
+		// The device's output latency in frames, for MIDI output, which goes out that far ahead. Written by the
+		// command thread with the record offset, read by the audio thread in each block.
+		std::atomic<uint32_t> m_outputLatency{0};
 		PlayedPositions m_played; // audio thread; for any record offset
 		bool m_directMonitoring = false;
 		std::string m_silenceReason;                   // the device's, as audio.changed last announced it
@@ -524,6 +547,10 @@ namespace gnubase::engine
 		};
 		std::map<ObjectId, RenderTap> m_renderTaps;
 		std::vector<PendingRelease> m_releases;
+		// By MIDI channel and output slot, the notes of the channels the newest program plays to MIDI output ports,
+		// and those of the channels that left a port, until the audio thread started a program that releases them.
+		std::map<std::pair<ObjectId, int>, std::shared_ptr<MidiPorts::HeldNotes>> m_portNotes;
+		std::vector<PendingPortRelease> m_portReleases;
 		uint64_t m_instrumentSerial = 0; // the last InstrumentChannel::serial given, counting up from 1
 
 		// The metronome lasts across rebuilds; its sounds are compiled again only when they change.

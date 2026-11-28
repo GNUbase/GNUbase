@@ -75,8 +75,9 @@ program and bank it sends to its instrument (#136, reference manual pp. 1108–1
 
 ## Not yet
 
-- Devices playing through a MIDI output port: MIDI tracks don't play to MIDI ports yet, so a device has no Output
-  and doesn't replace the track's output routing as in the reference (p. 1113); the track names it beside its output.
+- Devices playing through a MIDI output port: MIDI tracks play to MIDI ports ([midi-output.md](midi-output.md)), but a
+  device has no Output yet and doesn't replace the track's output routing as in the reference (p. 1113); the track
+  names it beside its output.
 - Preset events other than bank select MSB and LSB and program change (p. 1112), the reference's other device scripts
   (XG and the instruments'), device maps and device panels with their automation (pp. 1115–1117), and the program
   selector in the track list.

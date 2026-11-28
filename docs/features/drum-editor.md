@@ -183,7 +183,7 @@ content is `drum`. It is the key editor ([key-editor.md](key-editor.md)) with th
 ## Not yet
 
 Outputs per sound in playback and MIDI thru (the sounds play on the track's output), so also the setup's Output pop-up
-and auditioning there: MIDI tracks play only to instrument tracks yet, not to MIDI output ports; name lists other than
+and auditioning there: MIDI tracks play to a MIDI output port only as a whole yet ([midi-output.md](midi-output.md)), not per sound; name lists other than
 GM Default, such as a MIDI device's, and a drum track's pad names as its list without a map; Show Drum Sounds in Use by
 Instrument for plugin instruments, which needs a wrapper extension for the pads they play; showing drum notes in the
 project window's parts, once parts show their notes (#1313); Create Drum Map from Instrument (p. 1238); reordering the
