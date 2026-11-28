@@ -31,6 +31,9 @@ program and bank it sends to its instrument (#136, reference manual pp. 1108–1
   the device's patches by name ("Folder / Name", with the bank's name first when the device has several banks), each
   with its program and bank, and lists the track's own patch as "Program N" if no patch has it. Programs and banks
   show from 1, as in the reference; the engine counts from 0, as MIDI does. The inspector follows `settings.changed`.
+- **The track list's Programs** (p. 195, [track-list.md](track-list.md)): the track control `program`
+  (`select[control=program]`) on MIDI tracks, which the track controls settings dialog adds. It offers what the
+  inspector's program selector offers, from the same code (`src/ui/midipatches.h`), and follows `settings.changed`.
 - **The MIDI device manager** (pp. 1109–1113): `resources/ui/midi-devices.rml`, a modal dialog that the UI command
   `window.midiDeviceManager` opens, as Studio > More Options > MIDI Device Manager does ([main-menu.md](main-menu.md));
   running it again brings the open one to the front. It lists the installed devices and shows the selected one's patch
@@ -78,8 +81,7 @@ program and bank it sends to its instrument (#136, reference manual pp. 1108–1
 - Devices playing through a MIDI output port: MIDI tracks don't play to MIDI ports yet, so a device has no Output
   and doesn't replace the track's output routing as in the reference (p. 1113); the track names it beside its output.
 - Preset events other than bank select MSB and LSB and program change (p. 1112), the reference's other device scripts
-  (XG and the instruments'), device maps and device panels with their automation (pp. 1115–1117), and the program
-  selector in the track list.
+  (XG and the instruments'), and device maps and device panels with their automation (pp. 1115–1117).
 
 ## Checks
 
@@ -114,7 +116,8 @@ program and bank it sends to its instrument (#136, reference manual pp. 1108–1
   again at a locate past it; and at a cycle jump the value of the lane whose point lies latest.
 - `tests/mididevices_ui_tests.cpp` drives the app with `ui::Automation`: the inspector choosing a program and typing a
   bank, then with an installed device its patches by name, the bank row gone, the track's own patch listed, a patch
-  chosen and a removed device shown as not installed; the MIDI device manager installing a GM device with its bank,
+  chosen and a removed device shown as not installed; the track list's Programs on MIDI tracks only, choosing a
+  program that keeps the bank, then a device's patch by name; the MIDI device manager installing a GM device with its bank,
   folders and patches, defining a new one, refusing a taken name, removing the selected device and closing; following
   external installs, settings edits and removals while preserving selection, closing and reopening, interleaved folders
   shown once with all their patches, and Enable Edit creating, renaming and removing banks, folders and presets, editing

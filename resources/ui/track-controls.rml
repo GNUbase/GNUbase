@@ -87,8 +87,8 @@
 			audio = {"mute", "solo", "record", "monitor", "read", "timeBase"},
 			-- Edit In-Place: reference manual p. 194
 			instrument = {"mute", "solo", "record", "monitor", "read", "timeBase", "editInPlace"},
-			-- MIDI Channel: reference manual p. 349
-			midi = {"mute", "solo", "record", "monitor", "read", "timeBase", "midiChannel", "editInPlace"},
+			-- MIDI Channel: reference manual p. 349; Programs: p. 195
+			midi = {"mute", "solo", "record", "monitor", "read", "timeBase", "midiChannel", "program", "editInPlace"},
 			group = {"mute", "solo", "read", "timeBase"},
 			effect = {"mute", "solo", "read", "timeBase"},
 			folder = {"mute", "solo", "read", "groupEditing"}, -- reference manual p. 196
@@ -105,7 +105,7 @@
 			setTimeOffset = "Set Time Offset to Project Cursor Position", addPositionMarker = "Add Position Marker",
 			addCycleMarker = "Add Cycle Marker", activateMarkerTrack = "Activate Track", markerLocate = "Locate",
 			markerCycle = "Cycle", markerZoom = "Zoom", midiChannel = "MIDI Channel", groupEditing = "Group Editing",
-			editInPlace = "Edit In-Place"}
+			editInPlace = "Edit In-Place", program = "Programs"}
 		local always = {mute = true, solo = true} -- reference manual p. 190
 
 		local settings = {} -- the setting as the dialog edits it, by type

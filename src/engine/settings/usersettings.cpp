@@ -1025,7 +1025,8 @@ namespace gnubase::engine::settings
 					"(audio, instrument "
 					"and MIDI tracks), read (automation), timeBase, midiChannel (MIDI tracks: their channel.set "
 					"midiChannel, Any or "
-					"1 to 16), editInPlace (MIDI and instrument tracks: Edit In-Place, which opens and closes "
+					"1 to 16), program (MIDI tracks: Programs, their channel.set program and bank, by their device's "
+					"patches with one), editInPlace (MIDI and instrument tracks: Edit In-Place, which opens and closes "
 					"the track's in-place editor), on the tempo track tempoTrack (Activate Tempo "
 					"Track), currentTempo (Current Tempo) and tempoType (Type of New Tempo Points), for marker tracks "
 					"addPositionMarker (Add Position Marker), addCycleMarker (Add Cycle Marker), activateMarkerTrack "
@@ -1057,7 +1058,7 @@ namespace gnubase::engine::settings
 												"activateMarkerTrack", "markerLocate", "markerCycle", "markerZoom",
 												"groupEditing", "signatureLock", "signatureOptions", "arrangerChain",
 												"arrangerItem", "arrangerRepeat", "arrangerMode", "arrangerEditor",
-												"editInPlace"}}}}}}},
+												"editInPlace", "program"}}}}}}},
 					Json{{"audio", {"mute", "solo", "record", "monitor", "read"}},
 						{"instrument", {"mute", "solo", "record", "monitor", "read"}},
 						{"midi", {"mute", "solo", "record", "monitor", "read"}}, {"group", {"mute", "solo", "read"}},

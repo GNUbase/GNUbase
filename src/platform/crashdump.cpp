@@ -21,6 +21,8 @@ namespace
 {
 	using gnubase::logging::detail::CrashInfo;
 
+	constexpr int g_dumpAttempts = 3;
+
 	// Closes a handle when it goes out of scope.
 	class Handle
 	{
@@ -63,14 +65,19 @@ namespace
 		SIZE_T read = 0;
 		if (ReadProcessMemory(process, infoAddress, &info, sizeof(info), &read) == FALSE || read != sizeof(info))
 			info = CrashInfo{};
-		const Handle file(
-			CreateFileW(dumpFile, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr));
-		if (file.get() == INVALID_HANDLE_VALUE)
-			return;
 		// ClientPointers: the exception pointers are the crashed process's.
 		MINIDUMP_EXCEPTION_INFORMATION exception{info.threadId, static_cast<EXCEPTION_POINTERS*>(info.exception), TRUE};
-		MiniDumpWriteDump(process, processId, file.get(), MiniDumpNormal,
-			info.exception != nullptr ? &exception : nullptr, nullptr, nullptr);
+		// MiniDumpWriteDump of another process fails now and then, for instance with ERROR_PARTIAL_COPY while one of
+		// its threads starts or ends, and leaves an empty file: write it again from the start.
+		for (int attempt = 0; attempt < g_dumpAttempts; ++attempt)
+		{
+			const Handle file(
+				CreateFileW(dumpFile, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr));
+			if (file.get() != INVALID_HANDLE_VALUE &&
+				MiniDumpWriteDump(process, processId, file.get(), MiniDumpNormal,
+					info.exception != nullptr ? &exception : nullptr, nullptr, nullptr) != FALSE)
+				return;
+		}
 	}
 }
 

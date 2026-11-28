@@ -192,6 +192,8 @@ namespace gnubase::ui
 		void rulerChange(Rml::Element& control, const std::string& value);
 		// The MIDI channel a MIDI track's row chose (channel.set midiChannel).
 		void midiChannelChange(Rml::Element& control, const std::string& value);
+		// The patch a MIDI track's Programs chose (channel.set program and bank).
+		void programChange(Rml::Element& control, const std::string& value);
 		void step(int direction);
 		void reveal(uint64_t track); // scrolls the display so that the track's lane shows
 		void finishRename(bool keep);
@@ -282,6 +284,8 @@ namespace gnubase::ui
 		engine::Json m_widths = engine::Json::object();        // ui.trackWidths
 		engine::Json m_defaultWidths = engine::Json::object(); // ui.trackWidths defaults by type
 		std::string m_tempoType = "auto";                      // editing.tempoType
+		engine::Json m_devices = engine::Json::object();       // midi.devices, for Programs
+		bool m_devicesKnown = false;                           // settings.changed came before settings.get's answer
 		// The rows' Current Tempo and Type of New Tempo Points, kept by showState so that a frame doesn't search for
 		// them (#1406); one whose row went is null.
 		std::vector<Rml::ObserverPtr<Rml::Element>> m_tempoFields;
