@@ -14,6 +14,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace Rml
@@ -58,6 +59,14 @@ namespace gnubase::ui
 		// nothing while neither changed. The Track Versions section works on every one of the tracks that has versions.
 		// The project must stay until the next call.
 		void update(const std::vector<uint64_t>& tracks, const engine::Json& project, uint64_t loads, uint64_t read);
+
+		// What Load (save false) and Save Input Assignment of the Note Expression section's Show Additional Functions
+		// run for the track shown (reference manual p. 1304): asking for the file, then noteExpression.loadInputs or
+		// noteExpression.saveInputs.
+		void setInputAssignmentFile(std::function<void(uint64_t track, bool save)> choose)
+		{
+			m_inputAssignmentFile = std::move(choose);
+		}
 
 	private:
 		void ProcessEvent(Rml::Event& event) override;
@@ -128,6 +137,7 @@ namespace gnubase::ui
 		std::function<void(uint64_t track)> m_setupArticulations;
 		std::function<void(uint64_t track, bool project)> m_openInputTransformer;
 		std::function<void()> m_openArranger;
+		std::function<void(uint64_t track, bool save)> m_inputAssignmentFile;
 		uint64_t m_track = 0;
 		std::vector<uint64_t> m_selected; // the tracks the inspector shows, the first one's details
 		uint64_t m_loads = 0;

@@ -2,8 +2,9 @@
 // The key editor's expression editor (#1512, docs/features/note-expression.md) while the engine's answers come late:
 // edits made before the project read of the last one arrived (#1795). tests/keyeditor_ui_tests.cpp checks its
 // gestures, tests/noteexpression_tests.cpp the engine's note.replaceExpression. Also MIDI > Note Expression (#1515) and
-// the expressions the inspector hides (#2120).
+// the expressions the inspector hides, their Parameter Colors and Load and Save Input Assignment (#2120).
 #include "engine/time/tempomap.h"
+#include "testutils/testutils.h"
 #include "ui/automation.h"
 #include "ui/enginebinding.h"
 #include "ui/keyeditor.h"
@@ -22,6 +23,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <utility>
@@ -340,10 +342,34 @@ TEST_CASE("the key editor shows the expressions the tracks' setups hide only whe
 	CHECK(f.elements("menuitem[expression-type=tuning]").size() == 1);
 }
 
-TEST_CASE(
-	"the inspector's Note Expression section sets the expressions' visibility and shows only the used ones", "[ui]")
+TEST_CASE("the key editor draws an expression's lines in its Parameter Color", "[ui]")
 {
-	// #2120, reference manual pp. 1301-1302: the visibility column and Show Additional Functions.
+	// #2120, reference manual p. 1301: over the notes and in the expression editor, which shows tuning.
+	Fixture f;
+	f.app.call("editor.set", {{"editor", "window"}, {"showExpression", true}});
+	const auto style = [&](const std::string& selector)
+	{
+		const Json found = f.elements(selector);
+		return found.size() == 1 ? found.at(0).at("attributes").value("style", std::string()) : std::string("none");
+	};
+	const std::string over = ".key-editor-notes .key-expression-step";
+	const std::string inEditor = ".key-expression-area .key-expression-step";
+	REQUIRE(f.app.waitUntil([&] { return f.elements(over).size() == 1; }));
+	CHECK(style(over).find("background-color") == std::string::npos);
+	const Json project = f.app.call("project.get");
+	f.app.call("noteExpression.set",
+		{{"track", project.at("midiParts").at(0).at("track")},
+			{"colors", {{{"type", "tuning"}, {"color", "#20c040"}}}}});
+	REQUIRE(f.app.waitUntil([&] { return style(over).find("background-color: #20c040") != std::string::npos; }));
+	REQUIRE(f.app.waitUntil([&] { return style(inEditor).find("background-color: #20c040") != std::string::npos; }));
+}
+
+TEST_CASE("the inspector's Note Expression section sets the expressions' visibility and colors, shows only the used "
+		  "ones, and loads and saves input assignments",
+	"[ui]")
+{
+	// #2120, reference manual pp. 1301-1302, 1304: the visibility column, Parameter Color and Show Additional
+	// Functions.
 	test::UiApp app({1200, 600});
 	app.appUi().showProject();
 	app.setDpRatio(1.0F);
@@ -372,14 +398,15 @@ TEST_CASE(
 		const Json names = found.empty() ? Json::array() : found.at(0).value("classes", Json::array());
 		return std::find(names.begin(), names.end(), name) != names.end();
 	};
-	const auto hidden = [&]
+	const auto setup = [&]
 	{
 		const Json project = app.call("project.get");
 		for (const Json& channel : project.at("channels"))
 			if (channel.contains("noteExpression"))
-				return channel.at("noteExpression").at("hidden");
+				return channel.at("noteExpression");
 		return Json();
 	};
+	const auto hidden = [&] { return setup().at("hidden"); };
 	REQUIRE(app.waitUntil(
 		[&]
 		{
@@ -415,4 +442,47 @@ TEST_CASE(
 	click(section + ".inspector-expression-functions");
 	click("#inspector-expression-menu .expression-used");
 	REQUIRE(app.waitUntil([&] { return !has(section + "[expression=\"0\"]", "unavailable"); }));
+
+	// Parameter Color gives pan, the selected expression, the first color of the project's color set, which the
+	// swatch shows.
+	const Json first = app.call("project.get").at("colors").at(0);
+	click(section + "select[control=noteExpression-color]");
+	app.ui().key(std::nullopt, "Down");
+	click(section + "select[control=noteExpression-color]");
+	REQUIRE(
+		app.waitUntil([&] { return setup().at("colors") == Json{{{"type", "pan"}, {"color", first.at("color")}}}; }));
+	const auto swatch = [&]
+	{
+		Rml::Context& context = app.main().context();
+		for (int i = 0; i < context.GetNumDocuments(); ++i)
+			if (Rml::Element* found = context.GetDocument(i)->QuerySelector(section + ".color-swatch"))
+				return found->GetLocalProperty("background-color") != nullptr;
+		return false;
+	};
+	REQUIRE(app.waitUntil(swatch));
+
+	// Save Input Assignment saves pan's input as a file, which Load Input Assignment brings back.
+	const gnubase::test::TempDir dir;
+	const auto answer = [&](const std::filesystem::path& file)
+	{
+		REQUIRE(app.waitUntil([&] { return app.shell().fileDialogs().size() == 1; }));
+		app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {file});
+	};
+	app.call("noteExpression.set", {{"track", track}, {"inputs", {{{"type", "pan"}, {"input", "cc10"}}}}});
+	click(section + ".inspector-expression-functions");
+	click("#inspector-expression-menu .expression-save-inputs");
+	answer(dir.path() / "keyboard");
+	const std::filesystem::path saved = dir.path() / "keyboard.neinput";
+	REQUIRE(app.waitUntil([&] { return std::filesystem::exists(saved); }));
+	app.call("noteExpression.set", {{"track", track}, {"inputs", {{{"type", "pan"}, {"input", "none"}}}}});
+	REQUIRE(setup().at("inputs").empty());
+	click(section + ".inspector-expression-functions");
+	click("#inspector-expression-menu .expression-load-inputs");
+	answer(saved);
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			const Json inputs = setup().at("inputs");
+			return inputs.size() == 1 && inputs.at(0).at("input") == "cc10";
+		}));
 }

@@ -1047,8 +1047,8 @@
 	}
 	.key-expression-step
 	{
-		border-top-width: 1px;
-		border-top-color: #ffffff;
+		height: 1px;
+		background-color: #ffffff;
 	}
 	.key-expression-editor
 	{
@@ -1058,7 +1058,7 @@
 	}
 	.key-expression-editor .key-expression-step
 	{
-		border-top-color: #00ffff;
+		background-color: #00ffff;
 	}
 	.in-place-editor
 	{
