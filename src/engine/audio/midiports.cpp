@@ -7,6 +7,10 @@
 #include "platform/log.h"
 
 #include <algorithm>
+#include <array>
+#include <cmath>
+#include <exception>
+#include <stdexcept>
 #include <utility>
 
 namespace gnubase::engine
@@ -31,6 +35,13 @@ namespace gnubase::engine
 
 	MidiPorts::~MidiPorts()
 	{
+		if (m_sender.joinable())
+		{
+			m_stopSending.store(true, std::memory_order_relaxed);
+			m_sendWake.release();
+			m_sender.join();
+		}
+		m_outputs.clear(); // before their backends
 		for (Port& port : m_ports)
 			port.input.reset(); // before the queue their receivers push into
 	}
@@ -58,6 +69,73 @@ namespace gnubase::engine
 		catch (const std::exception& error)
 		{
 			logging::warning("Cannot open the MIDI input {}: {}", port.info.name, error.what());
+		}
+	}
+
+	int MidiPorts::outputSlot(const std::string& key)
+	{
+		listOnce();
+		if (const auto found = m_outputSlots.find(key); found != m_outputSlots.end())
+			return found->second;
+		// ponytail: an output stays open, also when its device goes and comes back; reopen it on hot-plug when a
+		// backend needs that.
+		for (const Port& port : m_ports)
+		{
+			if (port.info.input || !port.present || MidiPorts::key(port) != key)
+				continue;
+			std::unique_ptr<gnubase::midi::Output> output;
+			try
+			{
+				output = port.backend->openOutput(port.info.id);
+			}
+			catch (const std::runtime_error& error)
+			{
+				logging::warning("Cannot open the MIDI output {}: {}", port.info.name, error.what());
+				return -1;
+			}
+			const std::scoped_lock lock(m_outputMutex);
+			const auto slot = static_cast<int>(m_outputs.size());
+			m_outputs.push_back(std::move(output));
+			m_outputSlots[key] = slot;
+			if (!m_sender.joinable())
+				m_sender = std::thread([this] { sendQueued(); });
+			return slot;
+		}
+		return -1;
+	}
+
+	void MidiPorts::send(int slot, const graph::EventBuffer& events, HostTime time, double sampleRate) noexcept
+	{
+		std::array<audio::MidiMessage, 3> messages;
+		bool queued = false;
+		for (const graph::ProcessEvent& event : events)
+		{
+			const HostTime due = time + static_cast<HostTime>(std::llround(event.offset * 1e9 / sampleRate));
+			const size_t count = MidiTap::toMidi1(event, messages);
+			for (size_t i = 0; i < count; ++i)
+				if (m_outgoing.tryPush(Outgoing{slot, messages[i], due}))
+					queued = true;
+		}
+		if (queued)
+			m_sendWake.release();
+	}
+
+	void MidiPorts::sendQueued()
+	{
+		while (!m_stopSending.load(std::memory_order_relaxed))
+		{
+			m_sendWake.wait();
+			const std::scoped_lock lock(m_outputMutex);
+			Outgoing next;
+			while (m_outgoing.tryPop(next))
+				try
+				{
+					m_outputs.at(static_cast<size_t>(next.slot))->send(next.message, next.time);
+				}
+				catch (const std::exception& error)
+				{
+					logging::warning("A MIDI output didn't take a message: {}", error.what());
+				}
 		}
 	}
 

@@ -7,6 +7,7 @@
 #include "platform/audio/device.h"
 #include "platform/rt/spscqueue.h"
 
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -70,6 +71,9 @@ namespace gnubase::engine
 
 		// A MIDI 1.0 channel message as an event; a note-on of velocity 0 is a note-off of velocity 64.
 		static graph::ProcessEvent toEvent(const audio::MidiMessage& message, uint32_t offset) noexcept;
+		// An event as MIDI 1.0 messages, how many there are: none for SysEx and parameter changes, three for a
+		// program change with a bank (bank select MSB and LSB, then the program change), one for the others.
+		static size_t toMidi1(const graph::ProcessEvent& event, std::array<audio::MidiMessage, 3>& out) noexcept;
 
 		// Audio thread, after the graph processed the block at position: keeps what each instrument got.
 		void capture(uint64_t position, const Instruments& instruments) noexcept;

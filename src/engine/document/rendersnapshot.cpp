@@ -854,6 +854,7 @@ namespace gnubase::engine
 			render.program = channel.program;
 			render.bank = channel.bank;
 			render.midiChannel = static_cast<uint8_t>(channel.midiChannel.value_or(0));
+			render.midiPort = channel.midiPort;
 			render.inputChannel = static_cast<int8_t>(midi::trackMidiChannel(project, trackId).value_or(-1));
 			render.modifiers = channel.modifiers;
 			render.expressionBypass = channel.noteExpression.bypass;

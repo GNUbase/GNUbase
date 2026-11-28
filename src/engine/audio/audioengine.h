@@ -225,10 +225,13 @@ namespace gnubase::engine
 			// Per sequencer, its input transformer, which changes its input after the MIDI thru.
 			std::vector<InputTransform> inputTransformers;
 			MidiTap::Instruments instruments; // for midi.capture
-			std::vector<int> mainPorts;       // the main mix's device channels, for auditioning and listening
-			int mainOutput = -1;              // the main mix's index in outputs, or -1
-			int listenNode = -1;              // the listen bus (graph::NodeKind::ListenBus), or -1
-			bool listening = false;           // a channel listens; the listen bus may also have channels gliding out
+			// The MIDI channels that play to a MIDI output port: their node and the port's slot (MidiPorts::send).
+			std::vector<std::pair<int, int>> midiOutputs;
+			uint32_t outputLatency = 0; // the device's, in frames: MIDI output goes out that far ahead
+			std::vector<int> mainPorts; // the main mix's device channels, for auditioning and listening
+			int mainOutput = -1;        // the main mix's index in outputs, or -1
+			int listenNode = -1;        // the listen bus (graph::NodeKind::ListenBus), or -1
+			bool listening = false;     // a channel listens; the listen bus may also have channels gliding out
 			ListenGains listen;
 		};
 

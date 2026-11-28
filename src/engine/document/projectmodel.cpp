@@ -1201,6 +1201,17 @@ namespace gnubase::engine
 			{
 				changed.output = parameters.at("output").get<ObjectId>();
 				checkOutput(project, changed, changed.output);
+				if (changed.output != 0)
+					changed.midiPort.clear();
+			}
+			if (parameters.contains("midiPort"))
+			{
+				changed.midiPort = parameters.at("midiPort").get<std::string>();
+				require(type == TrackType::Midi || changed.midiPort.empty(), "only MIDI channels play to a MIDI port");
+				require(changed.midiPort.empty() || changed.output == 0 || !parameters.contains("output"),
+					"a MIDI channel plays to an instrument or to a MIDI port, not both");
+				if (!changed.midiPort.empty())
+					changed.output = 0;
 			}
 			if (parameters.contains("instrument"))
 			{
@@ -4774,7 +4785,11 @@ namespace gnubase::engine
 				"sent. midiChannel is the MIDI channel they go out on, 0 to 15, or null (Any, the default) for MIDI "
 				"channel 1. A MIDI track set to a channel also plays its parts' notes and controller events, what its "
 				"input plays and its MIDI automation on it; Any keeps their own channels. device names the "
-				"installed MIDI device (midiDevice.install) whose patches choose them, or is empty. monitor and "
+				"installed MIDI device (midiDevice.install) whose patches choose them, or is empty. midiPort is the "
+				"MIDI output port a MIDI channel plays to instead of an instrument, by its key in midi.portSettings "
+				"(backend/out/id, see midi.ports), or empty for none, the default: its events go there at the times "
+				"of their frames, one output latency ahead, and wait for a port that isn't connected; setting it "
+				"clears output, and an output clears it. monitor and "
 				"recordEnable are an audio track's buttons: monitor hears the input bus, recordEnable arms the track "
 				"for recording "
 				"and, by the user setting audio.autoMonitoring, monitors too: manual never, whileRecordEnabled always, "
@@ -4854,11 +4869,12 @@ namespace gnubase::engine
 						{"midiVolume", {{"type", {"integer", "null"}}}}, {"midiPan", {{"type", {"integer", "null"}}}},
 						{"program", {{"type", {"integer", "null"}}}}, {"bank", {{"type", {"integer", "null"}}}},
 						{"midiChannel", {{"type", {"integer", "null"}}}}, {"device", stringSchema},
-						{"volume", numberSchema}, {"pan", numberSchema}, {"monitor", booleanSchema},
-						{"recordEnable", booleanSchema}, {"midiInput", enumSchema({"all", "chordPads", "none"})},
-						{"mute", booleanSchema}, {"solo", booleanSchema}, {"exclusive", booleanSchema},
-						{"soloDefeat", booleanSchema}, {"listen", booleanSchema}, {"notes", stringSchema},
-						{"linked", booleanSchema}, {"pre", sections[0]}, {"eq", sections[1]}, {"strip", sections[2]},
+						{"midiPort", stringSchema}, {"volume", numberSchema}, {"pan", numberSchema},
+						{"monitor", booleanSchema}, {"recordEnable", booleanSchema},
+						{"midiInput", enumSchema({"all", "chordPads", "none"})}, {"mute", booleanSchema},
+						{"solo", booleanSchema}, {"exclusive", booleanSchema}, {"soloDefeat", booleanSchema},
+						{"listen", booleanSchema}, {"notes", stringSchema}, {"linked", booleanSchema},
+						{"pre", sections[0]}, {"eq", sections[1]}, {"strip", sections[2]},
 						{"modifiers", {{"type", "object"}}}, {"midiInserts", {{"type", "object"}}},
 						{"midiSends", {{"type", "object"}}}, {"inputTransformer", {{"type", "object"}}},
 						{"sends",

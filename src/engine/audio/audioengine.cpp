@@ -776,6 +776,10 @@ namespace gnubase::engine
 		program->sequencers.assign(m_sequencers.begin(), m_sequencers.end()); // ordered by channel id
 		for (const auto& [channel, instrument] : m_instruments)
 			program->instruments.emplace_back(channel, instrument.channel);
+		for (const RenderChannel& channel : snapshot.channels)
+			if (const int slot = channel.midiPort.empty() ? -1 : m_midi.outputSlot(channel.midiPort); slot >= 0)
+				program->midiOutputs.emplace_back(program->graph.find(channel.id), slot);
+		program->outputLatency = m_device->latency().output;
 		for (const auto& [channel, sequencer] : program->sequencers)
 		{
 			uint64_t destination = 0; // its own instrument, or the one it is routed to
@@ -1577,6 +1581,10 @@ namespace gnubase::engine
 		transport.tempo = program.tempo.bpmAt(program.tempo.toTicks(transport.position, program.sampleRate));
 		transport.tempoMap = &program.tempo;
 		program.graph.process(block.frames, transport, m_workers.get());
+		// In the order of the channels, so that the ports get the same for any number of threads.
+		const auto ahead = static_cast<HostTime>(std::llround(program.outputLatency * 1e9 / format.sampleRate));
+		for (const auto& [node, slot] : program.midiOutputs)
+			m_midi.send(slot, program.graph.eventsOut(node), block.time + ahead, format.sampleRate);
 		// After the graph: the MIDI inserts above the divider played the input there, with their automation, before
 		// it is recorded (MidiSequencer::process).
 		m_recorder.process(block, m_played, m_recordOffset.load(std::memory_order_relaxed), program.sequencers);

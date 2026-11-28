@@ -159,6 +159,8 @@ namespace gnubase::engine::graph
 		// Audio thread. Events for the node in the next block, at offsets below the block's frames. Process uses them
 		// up.
 		EventBuffer& events(int node) const;
+		// Audio thread, after process: the events the node sent in the block.
+		const EventBuffer& eventsOut(int node) const { return m_eventsOut[static_cast<size_t>(node)]; }
 
 		// Audio thread. Processes a block of up to maxFrames frames, which plays where transport says, with subnormal
 		// numbers flushed to zero on every thread. With workers, the nodes are tasks on the pool, which lends at most

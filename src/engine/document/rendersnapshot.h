@@ -225,6 +225,7 @@ namespace gnubase::engine
 		std::optional<int> program; // MIDI channels: the program change to send, with bank select if bank is set
 		std::optional<int> bank;
 		uint8_t midiChannel = 0;   // MIDI channels: the MIDI channel the above go out on, 0 to 15 (Any: 0)
+		std::string midiPort;      // MIDI channels: the MIDI output port they play to (Channel::midiPort), or empty
 		int8_t inputChannel = -1;  // MIDI channels: the one the events played into it go out on, -1 (Any) for theirs
 		midi::Modifiers modifiers; // MIDI and instrument channels: notes has them applied, live notes get them
 		bool expressionBypass = false; // MIDI and instrument channels: the notes play without their expression (#1513)
