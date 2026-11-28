@@ -588,8 +588,14 @@ namespace gnubase::engine::settings
 					"Use Drum Editor when Drum Map is assigned (reference manual p. 1603): a closed editor opens the "
 					"parts of a track with a drum map in the drum editor (editor.open).",
 					Json{{"type", "boolean"}}, true, true},
+				{"meter.alignmentLevel",
+					"Alignment level (reference manual p. 534): where the meter display's broadcast scales "
+					"(meter.scale "
+					"din, ebu, british and nordic) put their alignment level, -30 to -6 dBFS.",
+					Json{{"type", "number"}, {"minimum", -30}, {"maximum", -6}}, -18.0},
 				{"meter.fallback",
-					"Meters' Fallback (reference manual p. 1614): how fast the channel meters' bars fall after a "
+					"Meters' Fallback (reference manual p. 1614): how fast the channel meters' and the master meter's "
+					"bars fall after a "
 					"peak, 1 to 100 dB per second.",
 					Json{{"type", "number"}, {"minimum", 1}, {"maximum", 100}}, 20.0, true},
 				{"meter.holdForever",
@@ -656,6 +662,16 @@ namespace gnubase::engine::settings
 					"Resolution (reference manual p. 540): how much of the signal the master meter's RMS level "
 					"averages, 1 to 1000 ms (see meter.get).",
 					Json{{"type", "integer"}, {"minimum", 1}, {"maximum", 1000}}, 300},
+				{"meter.scale",
+					"The master meter's Peak Program Meter scale (reference manual p. 534): digital (-60 to 0 dBFS), "
+					"din, ebu, british and nordic (the broadcast scales, at meter.alignmentLevel), k20, k14 and k12 "
+					"(the K-System), or digital3, digital6 and digital12 (up to +3, +6 and +12 dBFS). Its headroom is "
+					"a red line.",
+					Json{{"type", "string"},
+						{"enum",
+							{"digital", "din", "ebu", "british", "nordic", "k20", "k14", "k12", "digital3", "digital6",
+								"digital12"}}},
+					"digital"},
 				{"meter.shortTermReference",
 					"Short-Term threshold (reference manual p. 539): the meter display's Short-Term readout turns red "
 					"above "

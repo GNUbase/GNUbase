@@ -981,8 +981,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".mixer-channel", {"border-right-width": f"{widths['hairline']}dp", "border-right-color": c["border"]}),
         (".mixer-channel-name.colored", {"color": "#ffffff", "border-radius": f"{theme['radii']['small']}dp"}),
         (".mixer-channel-name.colored.bright", {"color": "#000000"}),
-        # The channel meters' scale marks, small enough that each fits between its neighbors
-        (".mixer-meter-scale span", {"font-size": "8dp"}),
+        # The meter scales' marks, small enough that each fits between its neighbors
+        (".mixer-meter-scale span, .meter-display .meter-scale span", {"font-size": "8dp"}),
         # The MIDI editors (docs/features/midi-editors.md): parts outside the part editing mode dimmed, the active part
         # and track lit, and the Visibility tab's checks: a check mark, or a rectangle while some parts show
         (".midi-editor .editor-part, .in-place-editor .editor-part",
@@ -1198,6 +1198,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".status-line .mismatch, #silent-device", {"color": c["warning"]}),
         ("#lost-device", {"color": c["danger"]}),
         (".meter-display .meter-values span.over", {"color": c["danger"]}),
+        # A meter scale's headroom (reference manual p. 534): a red line
+        (".meter-headroom", {"background-color": c["danger"]}),
         # The info line and the inspector (docs/features/inspector.md): the info line's values in another color with
         # several events selected, bypassed and deactivated inserts dimmed
         (".info-line.multiple .info-field", {"color": c["accent"]}),

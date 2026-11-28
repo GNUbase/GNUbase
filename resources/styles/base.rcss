@@ -2845,13 +2845,54 @@ splitter.column .splitter-grip-horizontal
 .meter-display .meter-bars
 {
 	display: block;
-	height: 160dp;
+	height: 144dp;
+	margin-bottom: 6dp;
 }
 
 .meter-display .meter-bars meter
 {
-	height: 160dp;
+	height: 144dp;
 	margin-right: 2dp;
+}
+
+/* A page's scale (reference manual p. 534) left of its bars: its marks, whose middles code places at their levels'
+   heights, and its headroom's line. The scale switches above the master meter's bars. */
+.meter-display .meter-scale
+{
+	float: left;
+	position: relative;
+	width: 22dp;
+	height: 144dp;
+	margin-right: 4dp;
+}
+
+.meter-display .meter-scale span
+{
+	position: absolute;
+	right: 0;
+	height: 10dp;
+	margin-top: -5dp;
+	line-height: 10dp;
+}
+
+.meter-headroom
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	height: 1px;
+}
+
+.meter-display .meter-scales, .meter-display .meter-unit
+{
+	display: block;
+	margin-bottom: 8dp;
+}
+
+.meter-display .meter-scales select
+{
+	width: 96dp;
+	margin-right: 4dp;
 }
 
 .meter-display .meter-values div
