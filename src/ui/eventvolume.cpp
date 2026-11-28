@@ -6,6 +6,7 @@
 #include "engine/document/document.h"
 #include "engine/document/serialize.h"
 #include "ui/eventdisplay.h"
+#include "ui/eventwaveforms.h"
 
 #include <RmlUi/Core/Element.h>
 
@@ -15,8 +16,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <map>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace gnubase::ui
@@ -359,20 +362,38 @@ namespace gnubase::ui
 		return true;
 	}
 
-	void EventDisplay::showVolume(FadeLines::Lane& lane, const Shown& shown) const
+	std::optional<VolumeLine> EventDisplay::volumeLine(const Shown& shown) const
 	{
 		const AudioFades& fades = m_fades.at(shown.id);
 		const bool selected = std::binary_search(m_selection.begin(), m_selection.end(), shown.id);
-		if (const std::optional<double> fader = faderOf(shown); selected && fader)
-			lane.faders.push_back(*fader);
 		const double volume = draggedVolume(shown.id);
 		const std::vector<engine::VolumePoint> curve = draggedCurve(shown.id);
 		// Events at 0 dB without a curve show no line, unless the volume is being dragged.
 		const bool dragging = selected && m_drag == Drag::Volume && m_dragMoved;
 		if (curve.empty() && volume == 0.0 && !dragging)
-			return;
-		lane.volumes.push_back(
-			{shown.start, shown.end, fades.timeRate, fades.offset, gain(volume), engine::gainPoints(curve), selected});
+			return std::nullopt;
+		return VolumeLine{
+			shown.start, shown.end, fades.timeRate, fades.offset, gain(volume), engine::gainPoints(curve), selected};
+	}
+
+	void EventDisplay::showVolume(FadeLines::Lane& lane, const Shown& shown) const
+	{
+		const bool selected = std::binary_search(m_selection.begin(), m_selection.end(), shown.id);
+		if (const std::optional<double> fader = faderOf(shown); selected && fader)
+			lane.faders.push_back(*fader);
+		if (std::optional<VolumeLine> line = volumeLine(shown))
+			lane.volumes.push_back(std::move(*line));
+	}
+
+	void EventDisplay::showWaveVolumes()
+	{
+		// The waveforms stay where the events are while a drag moves them, and so do the volumes they're drawn with.
+		std::map<uint64_t, VolumeLine> volumes;
+		for (const Shown& shown : m_events)
+			if (const auto fades = m_fades.find(shown.id); fades != m_fades.end() && fades->second.rate > 0.0)
+				if (std::optional<VolumeLine> line = volumeLine(shown))
+					volumes[shown.id] = std::move(*line);
+		m_waveforms->setVolumes(std::move(volumes));
 	}
 
 	void EventDisplay::addVolumeActions()

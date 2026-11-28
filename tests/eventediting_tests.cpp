@@ -3536,6 +3536,46 @@ TEST_CASE(
 	CHECK(eventVolume(f.audioEvents()[0]) == 0.0);
 }
 
+TEST_CASE(
+	"an audio event's waveform is drawn with its volume and volume curve, also while the volume is dragged", "[unit]")
+{
+	// Reference manual pp. 399, 402: the waveform image changes with the volume.
+	Fixture f;
+	const auto waveVolume = [&f]() -> const ui::VolumeLine*
+	{
+		Rml::ElementList waves;
+		f.document.QuerySelectorAll(waves, ".waveforms waveform");
+		const auto* wave = waves.size() == 1 ? dynamic_cast<ui::Waveform*>(waves[0]) : nullptr;
+		return wave != nullptr ? &wave->volume() : nullptr;
+	};
+	f.call("audioEvent.set", {{"event", f.event}, {"volume", -6.0}});
+	f.call("audioEvent.setVolumeCurve",
+		{{"event", f.event}, {"points", {{{"position", 100}, {"volume", -6.0}, {"curve", 0.0}}}}});
+	REQUIRE(f.waitUntil(
+		[&]
+		{
+			const ui::VolumeLine* volume = waveVolume();
+			return volume != nullptr && volume->points.size() == 1 && std::abs(volume->gain - 0.5) < 0.01;
+		}));
+	CHECK(std::abs(waveVolume()->points[0].gain - 0.5) < 0.01);
+	CHECK(waveVolume()->rate > 0.0);
+	// At 0 dB without a curve, it is drawn as the peaks are.
+	f.call("history.undo");
+	f.call("history.undo");
+	REQUIRE(f.waitUntil([&] { return waveVolume() != nullptr && waveVolume()->rate == 0.0; }));
+
+	// While the event volume control is dragged 10 dp down the 40 dp lane, it follows: -6 dB.
+	f.display.select({f.event});
+	f.step();
+	f.automation.press(std::nullopt, f.at(216, 36), ui::MouseButton::Left);
+	f.automation.move(std::nullopt, f.at(216, 46));
+	f.step();
+	CHECK(std::abs(waveVolume()->gain - 0.5) < 0.01);
+	f.automation.release(std::nullopt, f.at(216, 46), ui::MouseButton::Left);
+	REQUIRE(f.waitUntil([&f] { return std::abs(eventVolume(f.audioEvents()[0]) + 6.0) < 0.1; }));
+	CHECK(f.waitUntil([&] { return std::abs(waveVolume()->gain - 0.5) < 0.01; }));
+}
+
 TEST_CASE("a selected audio event too narrow for its volume control shows none", "[unit]")
 {
 	// The control sits 16 dp in from the start, so an event under 32 dp has no room for it beside its edges: 30 dp

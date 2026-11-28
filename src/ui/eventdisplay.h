@@ -814,6 +814,8 @@ namespace gnubase::ui
 		std::optional<size_t> curvePointAt(const Shown& shown, double x, double y) const;
 		bool eraseCurvePoint(const Shown& shown, double x, double y);     // the erase tool, on a point
 		void showVolume(FadeLines::Lane& lane, const Shown& shown) const; // its line and volume control
+		std::optional<VolumeLine> volumeLine(const Shown& shown) const;   // as the volume lines draw it, or none
+		void showWaveVolumes(); // the volumes the waveforms are drawn with (p. 399)
 
 		// The time warp tool, Process Tempo, Process Bars, Set Definition from Tempo and copying warp markers
 		// (eventtimewarp.cpp, #159).

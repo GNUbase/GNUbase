@@ -93,6 +93,17 @@ namespace gnubase::ui
 			update(wave);
 	}
 
+	void EventWaveforms::setVolumes(std::map<uint64_t, VolumeLine> volumes)
+	{
+		m_volumes = std::move(volumes);
+		for (const Wave& wave : m_waves)
+			if (wave.element != nullptr)
+			{
+				const auto found = m_volumes.find(wave.event.id);
+				wave.element->setVolume(found != m_volumes.end() ? found->second : VolumeLine());
+			}
+	}
+
 	void EventWaveforms::update(Wave& wave)
 	{
 		if (!m_container)
@@ -123,6 +134,8 @@ namespace gnubase::ui
 				return; // <waveform> isn't registered: nothing to draw with
 			m_container->AppendChild(std::move(element));
 			wave.placed.reset();
+			if (const auto found = m_volumes.find(wave.event.id); found != m_volumes.end())
+				wave.element->setVolume(found->second);
 		}
 		wave.element->SetAttribute("media", static_cast<int64_t>(wave.event.media)); // for the UI tools
 		wave.element->SetAttribute("start", view.start);

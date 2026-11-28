@@ -7,6 +7,7 @@
 #include <RmlUi/Core/ObserverPtr.h>
 
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <optional>
 #include <utility>
@@ -60,6 +61,9 @@ namespace gnubase::ui
 		// The project's audio events. Waveforms of events that didn't change keep their columns.
 		void setEvents(const std::vector<Event>& events);
 		void show(const View& view);
+		// The volume each audio event's waveform is drawn with, by event id (Waveform::setVolume); events not in it
+		// are drawn as their peaks are.
+		void setVolumes(std::map<uint64_t, VolumeLine> volumes);
 
 	private:
 		// A media.peaks question: the seconds from and to, at a zoom and dp ratio.
@@ -94,6 +98,7 @@ namespace gnubase::ui
 		Rml::ObserverPtr<Rml::Element> m_container;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers after it went
 		std::vector<Wave> m_waves;
+		std::map<uint64_t, VolumeLine> m_volumes;
 		View m_view;
 		std::vector<Subscription> m_subscriptions;
 	};
