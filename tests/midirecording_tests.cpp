@@ -747,12 +747,14 @@ TEST_CASE("MIDI and instrument tracks play all MIDI inputs while they monitor or
 
 TEST_CASE("turning MIDI thru off releases the keys and pedals it holds", "[integration]")
 {
-	// Record enable, monitor or the MIDI input going off while a key and the sustain pedal are held (#641).
-	const std::string off = GENERATE("recordEnable", "monitor", "midiInput");
+	// Record enable, monitor or the MIDI input going off while a key and the sustain pedal are held, or the MIDI input
+	// changing from all MIDI inputs or a port to another port, which leaves thru on (#641).
+	const std::string off = GENERATE("recordEnable", "monitor", "midiInput", "allToPort", "portToPort");
 	INFO(off);
 	auto dummy = std::make_unique<gnubase::midi::DummyBackend>();
 	gnubase::midi::DummyBackend& backend = *dummy;
 	backend.addLoopback("Keys");
+	backend.addLoopback("Other");
 	std::vector<std::unique_ptr<gnubase::midi::Backend>> midi;
 	midi.push_back(std::move(dummy));
 	Setup setup(64, std::move(midi));
@@ -761,6 +763,8 @@ TEST_CASE("turning MIDI thru off releases the keys and pedals it holds", "[integ
 	const auto keys = backend.openOutput("Keys");
 	if (off == "monitor")
 		run(client, "channel.set", {{"channel", setup.channel}, {"recordEnable", false}, {"monitor", true}});
+	if (off == "portToPort")
+		run(client, "channel.set", {{"channel", setup.channel}, {"midiInput", "dummy/in/Keys"}});
 	run(client, "audio.render", {{"frames", 64}}); // the new graph
 	constexpr gnubase::HostTime second = 1000000000;
 	for (const std::array<uint8_t, 3>& bytes : {std::array<uint8_t, 3>{0x90, 60, 100}, {0xB0, 64, 127}})
@@ -772,7 +776,11 @@ TEST_CASE("turning MIDI thru off releases the keys and pedals it holds", "[integ
 	}
 	run(client, "audio.render", {{"frames", 64}});
 	run(client, "midi.capture", {{"start", true}});
-	run(client, "channel.set", {{"channel", setup.channel}, {off, off == "midiInput" ? Json("none") : Json(false)}});
+	if (off == "recordEnable" || off == "monitor")
+		run(client, "channel.set", {{"channel", setup.channel}, {off, false}});
+	else
+		run(client, "channel.set",
+			{{"channel", setup.channel}, {"midiInput", off == "midiInput" ? "none" : "dummy/in/Other"}});
 	run(client, "audio.render", {{"frames", 128}});
 	std::vector<std::vector<int>> played;
 	const Json capture = run(client, "midi.capture");
@@ -1371,9 +1379,10 @@ TEST_CASE("a note held when cycle playback stops ends where it stopped, with its
 {
 	// The note-off comes in stop mode, which Insert as Cycle Recording leaves out: the note and the lap end where
 	// playback stopped, not at the pass's last input. Also after a pass in between that cycles without input on the
-	// track, played just to listen: where that one stopped doesn't count (#2157).
-	const bool listened = GENERATE(false, true);
-	INFO("with a pass to listen: " << listened);
+	// track, played just to listen: where that one stopped doesn't count (#2157). After more passes in between than
+	// the stops kept, where the pass before stopped is no longer known: the note and the lap end at its last input.
+	const int listened = GENERATE(0, 1, 16);
+	INFO("passes to listen: " << listened);
 	Setup setup;
 	Client& client = setup.client;
 	run(client, "settings.set", {{"key", "midi.snapPartsToBars"}, {"value", false}});
@@ -1388,7 +1397,7 @@ TEST_CASE("a note held when cycle playback stops ends where it stopped, with its
 	now = run(client, "audio.get").at("position").get<int64_t>();
 	setup.inject({message(now + 10, {0x80, 60, 0})});
 	run(client, "audio.render", {{"frames", 64}});
-	if (listened) // it cycles and stops at beat 1
+	for (int i = 0; i < listened; ++i) // each cycles and stops at beat 1
 	{
 		run(client, "transport.locate", {{"position", 0}});
 		run(client, "transport.play");
@@ -1411,8 +1420,10 @@ TEST_CASE("a note held when cycle playback stops ends where it stopped, with its
 	std::vector<std::vector<int64_t>> notes = notesOf(parts[0]);
 	for (std::vector<int64_t>& each : notes)
 		each[0] += start;
-	CHECK(notes == std::vector<std::vector<int64_t>>{{g_beatTicks, 2 * g_beatTicks, 60}});
-	CHECK(start + parts[0].at("length").get<int64_t>() == 3 * g_beatTicks);
+	// Past 16 passes: a sample after its input, the shortest note.
+	const int64_t end = listened < 16 ? 3 * g_beatTicks : g_beatTicks + ((g_beatTicks + (g_beat / 2)) / g_beat);
+	CHECK(notes == std::vector<std::vector<int64_t>>{{g_beatTicks, end - g_beatTicks, 60}});
+	CHECK(start + parts[0].at("length").get<int64_t>() == end);
 }
 
 TEST_CASE(

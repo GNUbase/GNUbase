@@ -229,9 +229,9 @@ namespace gnubase::engine
 		uint64_t droppedMidi() const { return m_droppedMidi.load(std::memory_order_relaxed); }
 
 		// Command thread: what the retrospective buffer of the channel holds, oldest first; channel 0 for all MIDI
-		// inputs. Doesn't wait while the disk
-		// thread lists the record folder and creates a recording's files, and leaves a recording's start to it: the
-		// input sent after the chunk that starts the recording isn't in it yet then.
+		// inputs. Doesn't wait while the disk thread lists the record folder and creates a recording's files, and
+		// leaves a recording's start to it: the input sent after the chunk that starts the recording isn't in it yet
+		// then.
 		std::vector<RetrospectiveEvent> retrospective(ObjectId channel);
 		// Command thread: the channel's buffer was inserted up to the event at this device frame
 		// (RetrospectiveEvent::deviceFrame): the next input to it starts it afresh after that event.

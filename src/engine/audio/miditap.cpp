@@ -265,7 +265,9 @@ namespace gnubase::engine
 		for (size_t i = 0; i < sequencers.size(); ++i)
 		{
 			const uint8_t from = i < thru.size() ? thru[i] : 0;
-			sequencers[i].second->thru(from >= 2 ? ports.events.at(from - 2U) : input, from != 0);
+			// By the port's hash, not its index, which moves when other tracks change their input.
+			sequencers[i].second->thru(
+				from >= 2 ? ports.events.at(from - 2U) : input, from != 0, from >= 2 ? ports.hashes.at(from - 2U) : 0);
 		}
 	}
 

@@ -613,16 +613,24 @@ namespace gnubase::ui
 		  m_transportChanged(
 			  binding.on("transport.changed", [this](const engine::Event& event) { followArranger(event.data); })),
 		  // MIDI Learn assigns the next controller, pitch bend or aftertouch the track receives (p. 1304): from the
-		  // MIDI inputs among all MIDI inputs while its MIDI input is All MIDI Inputs, else none.
+		  // MIDI inputs among all MIDI inputs while its MIDI input is All MIDI Inputs, from its port while that is a
+		  // single port (#641), else none.
 		  m_activity(binding.on("midi.activity",
 			  [this](const engine::Event& event)
 			  {
-				  if (!m_learning || m_channel.value("midiInput", std::string("all")) != "all")
+				  if (!m_learning)
 					  return;
+				  const std::string from = m_channel.value("midiInput", std::string("all"));
+				  const auto received = [&](const Json& message)
+				  {
+					  const std::string backend = message.value("backend", std::string());
+					  const std::string id = message.value("id", std::string());
+					  return from == "all" ? m_notInAllInputs.count(backend + " " + id) == 0
+										   : from == backend + "/in/" + id;
+				  };
 				  for (const Json& message : event.data.at("received"))
-					  if (const std::string input = learnedInput(message.at("bytes")); m_learning && !input.empty() &&
-						  m_notInAllInputs.count(
-							  message.value("backend", std::string()) + " " + message.value("id", std::string())) == 0)
+					  if (const std::string input = learnedInput(message.at("bytes"));
+						  m_learning && !input.empty() && received(message))
 					  {
 						  learn(false);
 						  sendExpressionInput({{"input", input}});

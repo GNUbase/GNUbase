@@ -3080,4 +3080,18 @@ TEST_CASE("the inspector's Note Expression section shows and changes the track's
 	CHECK_FALSE(hasClass(window.app, section + "button[control=noteExpression-learn]", "checked"));
 	window.call("history.undo");
 	REQUIRE(window.app.waitUntil([&] { return setup().at("inputs") == Json::array({tuning}); }));
+
+	// With a single port as the track's MIDI input, Learn takes the controllers of that port only, also of one outside
+	// all MIDI inputs (#641).
+	window.call("channel.set", {{"channel", window.channel(keys).at("id")}, {"midiInput", "dummy/in/" + pads}});
+	window.click(section + "button[control=noteExpression-learn]");
+	REQUIRE(window.app.waitUntil(
+		[&] { return hasClass(window.app, section + "button[control=noteExpression-learn]", "checked"); }));
+	REQUIRE(send(*keysOut, 23));
+	for (int i = 0; i < 3; ++i)
+		window.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(setup().at("inputs").size() == 1);
+	REQUIRE(send(*padsOut, 24));
+	REQUIRE(window.app.waitUntil([&] { return setup().at("inputs").size() == 2; }));
+	CHECK(setup().at("inputs").at(1).at("input") == "cc24");
 }

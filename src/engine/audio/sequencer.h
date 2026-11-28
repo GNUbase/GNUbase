@@ -336,9 +336,10 @@ namespace gnubase::engine
 		// playing, and the notes play with the selected slot's MIDI modifiers before the track's (#175). The audio
 		// engine fills them before the graph processes a block.
 		graph::EventBuffer& input() noexcept { return m_input; }
-		// Audio thread, after the injected events: the block's events from all MIDI inputs go to input while on is
-		// (MIDI thru, MidiTap::thru). When it goes off, the keys and pedals they hold are released there instead.
-		void thru(const graph::EventBuffer& events, bool on) noexcept;
+		// Audio thread, after the injected events: the block's events from the track's MIDI input go to input while on
+		// is (MIDI thru, MidiTap::thru); port is the single port's hash they come from, 0 for all MIDI inputs. When it
+		// goes off or the source changes, the keys and pedals they hold are released there instead.
+		void thru(const graph::EventBuffer& events, bool on, uint64_t port) noexcept;
 		// Audio thread: an event of midi.inject's into input through an MPE setup (midi::MpeSetup::pack), as from a
 		// port with it: the track keeps the state of the notes' channels while the setup stays. False, adding nothing,
 		// if input has no room for all that the event adds (midi::MpeInput::maxEvents).
@@ -388,6 +389,7 @@ namespace gnubase::engine
 		void assignExpression(const MidiSequence& sequence) noexcept;
 		// Forgets the notes the inserts and the sends to the track's output hold.
 		void forgetEffects() noexcept;
+		void releaseThru() noexcept; // ends what MIDI thru holds (thru)
 		// An event of its input as the modifiers play it, on the track's MIDI channel if it has one
 		// (MidiSequence::inputChannel); false if left out. A second note-on for a held key whose
 		// note goes elsewhere this time sets ends to where the first one went, which still sounds: that note ends
@@ -491,6 +493,7 @@ namespace gnubase::engine
 		std::array<bool, g_notes> m_thruDown{};          // the keys MIDI thru holds (thru)
 		std::array<bool, size_t{16} * 3> m_thruPedals{}; // the pedals it holds, per channel (graph::holdsNotes)
 		bool m_thruHolds = false;                        // any of them
+		uint64_t m_thruPort = 0;                         // the source they come from (thru)
 		// Notes the inserts above the divider played a note-on for and no note-off since, before the modifiers.
 		std::array<bool, g_notes> m_inputPlayed{};
 		// Where each note of its input went after the modifiers, as channel * 128 + pitch; g_notes: left out, or no

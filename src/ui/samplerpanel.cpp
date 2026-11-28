@@ -880,18 +880,22 @@ namespace gnubase::ui
 				m_notInAllInputs.insert(port.value("backend", std::string()) + " " + port.value("id", std::string()));
 	}
 
-	// Lights the indicator at a note-on or a controller that the track's MIDI input, all MIDI inputs, receives.
+	// Lights the indicator at a note-on or a controller that the track's MIDI input, all MIDI inputs or a single port
+	// (#641), receives.
 	void SamplerPanel::received(const Json& activity)
 	{
-		if (m_track == 0 || m_channel.value("midiInput", std::string("all")) != "all")
+		if (m_track == 0)
 			return;
+		const std::string from = m_channel.value("midiInput", std::string("all"));
 		for (const Json& message : activity.value("received", Json::array()))
 		{
 			const auto bytes = message.value("bytes", std::vector<int>());
 			const int status = bytes.empty() ? 0 : bytes[0] & 0xF0;
 			const bool lights = status == 0xB0 || (status == 0x90 && bytes.size() > 2 && bytes[2] > 0);
-			const std::string port = message.value("backend", std::string()) + " " + message.value("id", std::string());
-			if (!lights || m_notInAllInputs.count(port) != 0)
+			const std::string backend = message.value("backend", std::string());
+			const std::string id = message.value("id", std::string());
+			if (!lights ||
+				(from == "all" ? m_notInAllInputs.count(backend + " " + id) != 0 : from != backend + "/in/" + id))
 				continue;
 			m_received = true;
 			m_receivedAt = now();
