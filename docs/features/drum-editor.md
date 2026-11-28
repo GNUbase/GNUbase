@@ -31,7 +31,7 @@ saved before #129 get it when they load.
 | `drumMap.export` | Saves a map as a drum map file (`.drm`) | p. 1236 |
 | `drumMap.import` | Loads a drum map file into the project as a new map | p. 1236 |
 | `track.set drumMap` | The map a MIDI or instrument track's notes play through, 0 for none | p. 1239 |
-| `track.set gmNames` | The track's name list while it has no map: `true` for GM Default (General MIDI's percussion names), `false` for No Names; saved with the project and an undo step | p. 1239 |
+| `track.set nameList` | The track's name list while it has no map: `gm` for GM Default (General MIDI's percussion names), `pads` for the names of the pads of the drum machine it plays (#1838), `none` for No Names; saved with the project and an undo step | p. 1239 |
 | `midi.oNoteConversion` | O-Note Conversion: the notes of tracks with a map (`parts`, `notes`) get their sound's O-note as their pitch | p. 1240 |
 
 They emit `drumMap.added`, `drumMap.changed` and `drumMap.removed` with the map (its id for removed).
@@ -88,8 +88,11 @@ They emit `drumMap.added`, `drumMap.changed` and `drumMap.removed` with the map 
   (Grid Type, p. 1227): `quantize` (Use Quantize), `zoom` (Adapt to Zoom, a note value the editor's zoom chooses), or
   `drumMap` (Use Snap from Drum Map), each note snapping to its sound's snap.
 - **Sound names** (p. 1239): every editor view has `soundNames`, the names of its active track's drum sounds by pitch:
-  its map's, else with the GM Default name list (`track.set gmNames`) General MIDI's, else `null`. The editors show
-  these, so an MCP or Lua client reads the same names.
+  its map's, else by its name list (`track.set nameList`): General MIDI's with GM Default, or with the pads' names
+  those of the pads that play something on the built-in drum machine the track plays, a drum track's own or the one a
+  MIDI track plays to, as the pattern editor names them ([drum-track.md](drum-track.md)), the other pitches unnamed;
+  else `null`, also for the pads' names without a drum machine. The editors show these, so an MCP or Lua client reads
+  the same names.
 
 ## In the UI
 
@@ -131,8 +134,8 @@ content is `drum`. It is the key editor ([key-editor.md](key-editor.md)) with th
   Use by Instrument those of `soundsInUse`, an option the menu disables while the instrument can't tell. The notes of
   sounds the list hides aren't shown, neither in the note display nor in the controller lanes, leave the selection,
   and the editor's edits leave them out. The first scroll goes to the middle of the rows of the notes the list shows.
-- **Names** (p. 1239): the Names menu chooses the active track's name list, No Names or GM Default (`track.set
-  gmNames`). Without a map GM Default names the list's sounds; the key editor's keys show the active track's drum sound
+- **Names** (p. 1239): the Names menu chooses the active track's name list, No Names, GM Default or Pad Names
+  (`track.set nameList`). Without a map the name list names the list's sounds; the key editor's keys show the active track's drum sound
   names (the view's `soundNames`) as their text and title, and the keyboard is wider then (`.key-editor.named-keys`,
   with the parts' row and the controller lanes' header as wide, so that they line up with the notes). In the drum
   editor the parts' row and the controller lanes' header are as wide as the drum sound list.
@@ -184,7 +187,7 @@ content is `drum`. It is the key editor ([key-editor.md](key-editor.md)) with th
 
 Outputs per sound in playback and MIDI thru (the sounds play on the track's output), so also the setup's Output pop-up
 and auditioning there: MIDI tracks play only to instrument tracks yet, not to MIDI output ports; name lists other than
-GM Default, such as a MIDI device's, and a drum track's pad names as its list without a map; Show Drum Sounds in Use by
+GM Default and the pads' names, such as a MIDI device's; Show Drum Sounds in Use by
 Instrument for plugin instruments, which needs a wrapper extension for the pads they play; showing drum notes in the
 project window's parts, once parts show their notes (#1313); Create Drum Map from Instrument (p. 1238); reordering the
 list by dragging; the score settings (Display Note, Noteheads, Voice, Instrument Type, Technique); importing the
@@ -207,8 +210,9 @@ reference's own drum map files.
   through the I-notes soloed too but the auditions not, and `updateSoloNotes` asking the views once; `visibleSounds` and
   the grid type `zoom`, refusing other values; `soundsInUse` null without a drum machine, a drum track's kit, and a MIDI
   track's sounds through its map's O-notes to the drum track it plays to, and the selection leaving out the notes of the
-  sounds it hides; `gmNames` saved and loaded, undone and refused for audio tracks; the view's `soundNames`, null
-  without a map or name list, General MIDI's with GM Default and the map's with one.
+  sounds it hides; `nameList` saved and loaded, undone, refused for audio tracks and for other lists; the view's
+  `soundNames`, null without a map or name list and for the pads' names without a drum machine, General MIDI's with GM
+  Default, the map's with one, and the pads' names of a drum track and of the MIDI track playing to it.
 - `tests/articulationmaps_tests.cpp`: the notes of a drum sound that Solo Instrument silences sending no output events
   of their sound slot, as a muted sound's.
 - `tests/midieffects_tests.cpp`: the sequencer clearing `drumSound` on the notes it maps, so that the inserts below the
@@ -232,7 +236,7 @@ reference's own drum map files.
   and Save... and Load... through the file dialogs; the MIDI menu's Drum Map Setup and O-Note Conversion; Show Drum
   Sounds with Events listing and gridding only the notes' sounds, the notes on their rows and the drumstick inserting on
   one, Solo Instrument's button, disabled and unlit without a map, and the Names menu's GM Default naming the list's
-  sounds without a map and the key editor's keys; Show Drum Sounds in Use by Instrument disabled without a drum machine
+  sounds without a map and the key editor's keys, and its Pad Names naming none without a drum machine; Show Drum Sounds in Use by Instrument disabled without a drum machine
   and listing a drum track's kit, the editor opening scrolled to the rows of the notes the list shows, not to a note of
   a sound it hides, hiding the notes of the other sounds from the note display and the velocity lane and
   the transposition palette leaving them as they were; Adapt to Zoom snapping the drumstick to the note value that the

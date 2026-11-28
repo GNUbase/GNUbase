@@ -344,7 +344,8 @@ namespace gnubase::engine
 		{
 			const Track& track = project.trackById.at(id);
 			Json value = toJson(track);
-			for (const char* key : {"name", "color", "picture", "gmNames", "groupEditing", "versions", "activeVersion"})
+			for (const char* key :
+				{"name", "color", "picture", "nameList", "groupEditing", "versions", "activeVersion"})
 				value.erase(key);
 			input["tracks"].push_back(value);
 			Json channel = toJson(project.channels.at(track.channel));

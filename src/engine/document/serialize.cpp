@@ -559,7 +559,7 @@ namespace gnubase::engine
 			{"color", colorJson(track.color)}, {"timeBase", timeBaseName(track.timeBase)}, {"parent", track.parent},
 			{"channel", track.channel}, {"autoFades", track.autoFades ? toJson(*track.autoFades) : Json(nullptr)},
 			{"enabled", track.enabled}, {"picture", track.picture}, {"frozen", nullptr}, {"drumMap", track.drumMap},
-			{"articulationMap", track.articulationMap}, {"gmNames", track.gmNames},
+			{"articulationMap", track.articulationMap}, {"nameList", track.nameList},
 			{"groupEditing", track.groupEditing}, {"lock", track.lock}};
 		if (track.frozen)
 			json["frozen"] = {{"path", track.frozen->path}, {"sampleRate", track.frozen->sampleRate},
@@ -2297,7 +2297,10 @@ namespace gnubase::engine
 			track.picture = item.value("picture", std::string());               // files from before #106 have none
 			track.drumMap = item.value("drumMap", ObjectId{0});                 // and before #129 none
 			track.articulationMap = item.value("articulationMap", ObjectId{0}); // and before #175 none
-			track.gmNames = item.value("gmNames", false);                       // and before #1493 No Names
+			// Before #1838 the name list was gmNames, before #1493 No Names.
+			track.nameList = item.value("nameList", std::string(item.value("gmNames", false) ? "gm" : "none"));
+			if (track.nameList != "none" && track.nameList != "gm" && track.nameList != "pads")
+				throw std::invalid_argument("unknown name list " + track.nameList);
 			track.groupEditing = track.type == TrackType::Folder && item.value("groupEditing", false); // #1579
 			track.lock = track.type == TrackType::Signature && item.value("lock", false);              // and #729
 			if (const Json frozen = item.value("frozen", Json()); !frozen.is_null()) // and before #116 none

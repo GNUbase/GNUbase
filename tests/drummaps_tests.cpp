@@ -666,21 +666,22 @@ TEST_CASE("Pitch Visibility's Show Drum Sounds with Events and a track's GM name
 	CHECK_FALSE(f.client.call("editor.set", {{"editor", "window"}, {"visibleSounds", "used"}}).ok());
 
 	// GM Default names the pitches without a drum map (p. 1239); saved with the project, undone like the map.
-	CHECK(f.trackJson().at("gmNames") == false);
-	f.call("track.set", {{"track", f.track}, {"gmNames", true}});
-	CHECK(f.trackJson().at("gmNames") == true);
+	CHECK(f.trackJson().at("nameList") == "none");
+	f.call("track.set", {{"track", f.track}, {"nameList", "gm"}});
+	CHECK(f.trackJson().at("nameList") == "gm");
 	const test::TempDir dir;
 	const std::string file = (dir.path() / "names.dawproject").u8string();
 	f.call("project.save", {{"path", file}});
 	f.call("project.new");
 	f.call("project.load", {{"path", file}});
 	f.track = f.call("project.get").at("tracks").at(0).at("id").get<uint64_t>();
-	CHECK(f.trackJson().at("gmNames") == true);
-	f.call("track.set", {{"track", f.track}, {"gmNames", false}});
+	CHECK(f.trackJson().at("nameList") == "gm");
+	f.call("track.set", {{"track", f.track}, {"nameList", "none"}});
 	f.call("history.undo");
-	CHECK(f.trackJson().at("gmNames") == true);
+	CHECK(f.trackJson().at("nameList") == "gm");
+	CHECK_FALSE(f.client.call("track.set", {{"track", f.track}, {"nameList", "device"}}).ok());
 	const auto audio = f.call("track.add", {{"type", "audio"}}).at("track").at("id").get<uint64_t>();
-	CHECK_THAT(f.fails("track.set", {{"track", audio}, {"gmNames", true}}), ContainsSubstring("name list"));
+	CHECK_THAT(f.fails("track.set", {{"track", audio}, {"nameList", "gm"}}), ContainsSubstring("name list"));
 }
 
 TEST_CASE("Show Drum Sounds in Use by Instrument has the sounds whose pads the drum machine plays", "[unit]")
@@ -851,7 +852,7 @@ TEST_CASE("the editor view names the active track's drum sounds", "[unit]")
 	// p. 1239: the names the editors show, so that an MCP or Lua client has them too.
 	Fixture f;
 	CHECK(f.call("editor.open", {{"editor", "window"}, {"parts", {f.part}}}).at("soundNames").is_null());
-	f.call("track.set", {{"track", f.track}, {"gmNames", true}});
+	f.call("track.set", {{"track", f.track}, {"nameList", "gm"}});
 	Json names = f.call("editor.get", {{"editor", "window"}}).at("soundNames");
 	REQUIRE(names.size() == 128);
 	CHECK(names.at(36) == "Bass Drum 1");
@@ -860,4 +861,26 @@ TEST_CASE("the editor view names the active track's drum sounds", "[unit]")
 	f.call("track.set", {{"track", f.track}, {"drumMap", map}});
 	names = f.call("editor.get", {{"editor", "window"}}).at("soundNames");
 	CHECK(names.at(36) == "Sound 37");
+
+	// The pads' names (#1838, p. 1239): those of the drum machine the track plays, for the pads that play something;
+	// null for an instrument without pads.
+	f.call("track.set", {{"track", f.track}, {"drumMap", 0}, {"nameList", "pads"}});
+	CHECK(f.call("editor.get", {{"editor", "window"}}).at("soundNames").is_null());
+	const Json drums = f.call("drum.create");
+	const auto drumTrack = drums.at("track").at("id").get<uint64_t>();
+	f.call("drum.setPad", {{"track", drumTrack}, {"pad", 38}, {"name", "Snare"}});
+	const Json midi = f.call("track.add", {{"type", "midi"}}).at("track");
+	f.call("channel.set", {{"channel", midi.at("channel")}, {"output", drums.at("channel").at("id")}});
+	f.call("track.set", {{"track", midi.at("id")}, {"nameList", "pads"}});
+	f.call("track.set", {{"track", drumTrack}, {"nameList", "pads"}});
+	for (const uint64_t track : {drumTrack, midi.at("id").get<uint64_t>()})
+	{
+		const auto part = f.call("midiPart.add", {{"track", track}, {"position", 0}, {"length", g_bar}}).at("part");
+		f.call("editor.open", {{"editor", "window"}, {"parts", {part.at("id")}}});
+		names = f.call("editor.get", {{"editor", "window"}}).at("soundNames");
+		REQUIRE(names.size() == 128);
+		CHECK(names.at(38) == "Snare");
+		CHECK(names.at(36) == "Bass Drum 1"); // the default kit's pads go by their General MIDI sounds
+		CHECK(names.at(37) == "");            // plays nothing
+	}
 }

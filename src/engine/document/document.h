@@ -928,8 +928,9 @@ namespace gnubase::engine
 		ObjectId drumMap = 0;         // MIDI and instrument tracks: the drum map their notes play through, or 0 (#129)
 		ObjectId articulationMap = 0; // MIDI and instrument tracks: their articulation map, or 0 (#175)
 		// MIDI and instrument tracks: the name list that names their pitches as drum sounds without a drum map
-		// (reference manual p. 1239): false for No Names, true for GM Default, General MIDI's percussion names.
-		bool gmNames = false;
+		// (reference manual p. 1239): "none" for No Names, "gm" for GM Default, General MIDI's percussion names, or
+		// "pads" for the names of the pads of the drum machine they play (#1838).
+		std::string nameList = "none";
 		// Audio, instrument and MIDI tracks: their versions in the order they were made; none for a track that has
 		// only its first one, v1 with ID 1 (versionsOf). Initialized like picture.
 		// NOLINTNEXTLINE(readability-redundant-member-init): see above
@@ -2183,10 +2184,10 @@ namespace gnubase::engine
 	{
 		return std::tie(a.id, a.type, a.name, a.color, a.timeBase, a.parent, a.channel, a.children, a.groupEditing,
 				   a.autoFades, a.timeFormat, a.enabled, a.picture, a.timeOffset, a.timeOffsetOn, a.frozen, a.drumMap,
-				   a.articulationMap, a.gmNames, a.versions, a.activeVersion, a.lock) ==
+				   a.articulationMap, a.nameList, a.versions, a.activeVersion, a.lock) ==
 			std::tie(b.id, b.type, b.name, b.color, b.timeBase, b.parent, b.channel, b.children, b.groupEditing,
 				b.autoFades, b.timeFormat, b.enabled, b.picture, b.timeOffset, b.timeOffsetOn, b.frozen, b.drumMap,
-				b.articulationMap, b.gmNames, b.versions, b.activeVersion, b.lock);
+				b.articulationMap, b.nameList, b.versions, b.activeVersion, b.lock);
 	}
 	// Where an audio event plays, in the project's samples (fadeedits.cpp).
 	struct EventSpan

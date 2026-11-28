@@ -426,8 +426,9 @@ namespace gnubase::ui
 						R"(<menuitem type="toggle" grid-type="drumMap">Use Snap from Drum Map</menuitem></menu>)"
 						R"(<menu id="drum-names-menu)" +
 						m_menuSuffix +
-						R"("><menuitem type="toggle" gm-names="false">No Names</menuitem>)"
-						R"(<menuitem type="toggle" gm-names="true">GM Default</menuitem></menu>)"
+						R"("><menuitem type="toggle" name-list="none">No Names</menuitem>)"
+						R"(<menuitem type="toggle" name-list="gm">GM Default</menuitem>)"
+						R"(<menuitem type="toggle" name-list="pads">Pad Names</menuitem></menu>)"
 				  : R"(<menu id="key-expression-menu)" + m_menuSuffix + R"(">)" + expressions + "</menu>") +
 			// The Event Colors menu (pp. 1133-1134).
 			R"(<menu id="key-event-colors-menu)" + m_menuSuffix +
@@ -991,13 +992,15 @@ namespace gnubase::ui
 						item->SetAttribute("disabled", "");
 				}
 			}
-		const bool gmNames = activeTrack().value("gmNames", false);
-		setInner(root->QuerySelector("#drum-names"), gmNames ? "GM Default" : "No Names");
+		const std::string nameList = activeTrack().value("nameList", std::string("none"));
+		setInner(root->QuerySelector("#drum-names"),
+			nameList == "gm" ? "GM Default" : (nameList == "pads" ? "Pad Names" : "No Names"));
 		for (const auto& [index, selector, on] :
 			{std::make_tuple(size_t{4}, "menuitem[visible-sounds=withEvents]", visibleSounds == "withEvents"),
 				std::make_tuple(size_t{4}, "menuitem[visible-sounds=inUse]", visibleSounds == "inUse"),
-				std::make_tuple(size_t{6}, "menuitem[gm-names=true]", gmNames),
-				std::make_tuple(size_t{6}, "menuitem[gm-names=false]", !gmNames)})
+				std::make_tuple(size_t{6}, "menuitem[name-list=none]", nameList == "none"),
+				std::make_tuple(size_t{6}, "menuitem[name-list=gm]", nameList == "gm"),
+				std::make_tuple(size_t{6}, "menuitem[name-list=pads]", nameList == "pads")})
 			if (Rml::Element* menu = m_drum && m_menus.size() > index ? m_menus[index].get() : nullptr)
 				if (Rml::Element* item = menu->QuerySelector(selector);
 					item != nullptr && on != item->HasAttribute("checked"))
@@ -1887,10 +1890,10 @@ namespace gnubase::ui
 			const std::string shown = attribute(target, "visible-sounds");
 			setView({{"visibleSounds", m_view.value("visibleSounds", std::string("all")) == shown ? "all" : shown}});
 		}
-		else if (target.HasAttribute("gm-names"))
+		else if (target.HasAttribute("name-list"))
 		{
 			if (const Json track = m_view.value("activeTrack", Json(0)); track != 0)
-				m_binding.send("track.set", {{"track", track}, {"gmNames", attribute(target, "gm-names") == "true"}});
+				m_binding.send("track.set", {{"track", track}, {"nameList", attribute(target, "name-list")}});
 		}
 		else if (target.HasAttribute("line-mode"))
 		{

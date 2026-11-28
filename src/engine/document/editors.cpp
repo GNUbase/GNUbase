@@ -346,7 +346,9 @@ namespace gnubase::engine
 		// Show Drum Sounds in Use by Instrument (#1493, p. 1234): the pitches of the track's drum sounds whose pads its
 		// instrument plays, the built-in drum machine of a drum track or of the instrument track a MIDI track plays to,
 		// through the track's drum map's O-notes; null for an instrument that can't tell.
-		Json soundsInUse(const Project& project, ObjectId track)
+		// The channel of the built-in drum machine the track plays: a drum track's own, or the instrument track's that
+		// a MIDI track plays to; null for none.
+		const Channel* playedDrums(const Project& project, ObjectId track)
 		{
 			const Channel* drums = drumChannelOf(project, track);
 			if (const auto found = project.trackById.find(track); drums == nullptr && found != project.trackById.end())
@@ -355,6 +357,12 @@ namespace gnubase::engine
 					if (const auto output = project.channels.find(own->second.output);
 						output != project.channels.end() && output->second.instrument == "drumMachine")
 						drums = &output->second;
+			return drums;
+		}
+
+		Json soundsInUse(const Project& project, ObjectId track)
+		{
+			const Channel* drums = playedDrums(project, track);
 			if (drums == nullptr)
 				return nullptr;
 			const std::vector<int> pads = playingDrumPads(*drums);
@@ -367,8 +375,9 @@ namespace gnubase::engine
 			return pitches;
 		}
 
-		// The names of the track's drum sounds by pitch (p. 1239), as the editors show them: its drum map's, else with
-		// the GM Default name list General MIDI's; null for neither.
+		// The names of the track's drum sounds by pitch (p. 1239), as the editors show them: its drum map's, else by
+		// its name list, General MIDI's with GM Default or with the pads' names (#1838) those of the pads that play
+		// something on the drum machine it plays; null for none.
 		Json soundNames(const Project& project, ObjectId track)
 		{
 			static const DrumMap gm = midi::gmDrumMap();
@@ -376,7 +385,19 @@ namespace gnubase::engine
 			if (map == nullptr)
 			{
 				const auto found = project.trackById.find(track);
-				if (found == project.trackById.end() || !found->second.gmNames)
+				const std::string list = found == project.trackById.end() ? "none" : found->second.nameList;
+				const Channel* drums = list == "pads" ? playedDrums(project, track) : nullptr;
+				if (drums != nullptr)
+				{
+					Json names = Json::array();
+					for (int pitch = 0; pitch < g_drumSounds; ++pitch)
+						names.push_back("");
+					for (const int pad : playingDrumPads(*drums))
+						if (pad < g_drumSounds)
+							names[static_cast<size_t>(pad)] = drumPadName(project, *drums, pad);
+					return names;
+				}
+				if (list != "gm")
 					return nullptr;
 				map = &gm;
 			}
@@ -836,7 +857,8 @@ namespace gnubase::engine
 			"track (drum.create) or of the instrument track a MIDI track plays to, null for an instrument that can't "
 			"tell; with inUse the selection leaves out the notes of the sounds it hides. soundNames: the names of the "
 			"active track's drum sounds by pitch (p. 1239), its drum map's, else with its GM Default name list "
-			"(track.set gmNames) General MIDI's, else null; the editors show them. soloInstrument (Solo Instrument, "
+			"(track.set nameList) General MIDI's or the names of the pads that play something on the drum machine "
+			"it plays, else null; the editors show them. soloInstrument (Solo Instrument, "
 			"p. 1223) plays, of the tracks with a drum map "
 			"that its selected notes are on, only the notes of the selected notes' sounds, while it is open with "
 			"content drum, also of the sounds played in through the I-notes (midi.inject without drumSounds), while "

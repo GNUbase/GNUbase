@@ -1576,10 +1576,11 @@ namespace gnubase::engine
 				require(track.drumMap == 0 || project.drumMaps.count(track.drumMap) != 0,
 					"no drum map " + std::to_string(track.drumMap));
 			}
-			if (parameters.contains("gmNames"))
+			if (parameters.contains("nameList"))
 			{
-				track.gmNames = parameters.at("gmNames").get<bool>();
-				require(!track.gmNames || track.type == TrackType::Midi || track.type == TrackType::Instrument,
+				track.nameList = parameters.at("nameList").get<std::string>();
+				require(
+					track.nameList == "none" || track.type == TrackType::Midi || track.type == TrackType::Instrument,
 					"only MIDI and instrument tracks have a name list");
 			}
 			if (parameters.contains("articulationMap"))
@@ -4691,16 +4692,18 @@ namespace gnubase::engine
 				"(articulationMap.add), or 0 for none, whose remote triggers also select the sound slot of the notes "
 				"played into the track (midi.inject, its MIDI input): a trigger key or program doesn't play but sends "
 				"the slot's output events, and the notes after it get the slot's channel, transpose and velocity. "
-				"gmNames, for a MIDI or instrument track, is its name list (reference manual p. 1239): true for GM "
-				"Default, which names its pitches by General MIDI's percussion sounds in the editors while it has no "
-				"drum map, false for No Names. lock, for the signature track, is its Lock (reference manual p. 163): "
+				"nameList, for a MIDI or instrument track, is its name list (reference manual p. 1239), which names "
+				"its "
+				"pitches in the editors while it has no drum map: gm for GM Default, General MIDI's percussion sounds, "
+				"pads for the names of the pads of the drum machine it plays (drum.create), none for No Names. lock, "
+				"for the signature track, is its Lock (reference manual p. 163): "
 				"while it is on, signature.add, signature.set and signature.remove are refused.",
 				objectSchema(
 					{{"track", idSchema}, {"name", stringSchema}, {"color", color}, {"timeBase", timeBases},
 						{"timeFormat", timeFormats}, {"timeOffset", positionSchema}, {"timeOffsetOn", booleanSchema},
 						{"enabled", booleanSchema}, {"groupChannel", booleanSchema}, {"groupEditing", booleanSchema},
 						{"picture", stringSchema}, {"drumMap", idSchema}, {"articulationMap", idSchema},
-						{"gmNames", booleanSchema}, {"lock", booleanSchema}},
+						{"nameList", {{"type", "string"}, {"enum", {"none", "gm", "pads"}}}}, {"lock", booleanSchema}},
 					{"track"}),
 				resultSchema({"track"}), false},
 			setTrack);

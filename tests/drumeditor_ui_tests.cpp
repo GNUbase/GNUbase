@@ -1046,8 +1046,8 @@ TEST_CASE("Pitch Visibility shows the drum sounds with events, Solo Instrument a
 		[&] { return f.elements(".key-input[setting=soloInstrument]").at(0).at("attributes").contains("disabled"); }));
 	CHECK_FALSE(f.has(".key-input[setting=soloInstrument]", "checked"));
 	f.click(of("#drum-names"));
-	f.click(of("#drum-names-menu menuitem[gm-names=true]"));
-	REQUIRE(f.app.waitUntil([&] { return f.app.call("project.get").at("tracks").at(0).at("gmNames") == true; }));
+	f.click(of("#drum-names-menu menuitem[name-list=gm]"));
+	REQUIRE(f.app.waitUntil([&] { return f.app.call("project.get").at("tracks").at(0).at("nameList") == "gm"; }));
 	REQUIRE(f.app.waitUntil([&] { return !f.elements(sound(36) + " .drum-sound-name").empty(); }));
 	CHECK(f.elements(sound(36) + " .drum-sound-name").at(0).at("text") == "Bass Drum 1");
 	CHECK(f.elements("#drum-names").at(0).at("text") == "GM Default");
@@ -1055,9 +1055,18 @@ TEST_CASE("Pitch Visibility shows the drum sounds with events, Solo Instrument a
 	REQUIRE(f.app.waitUntil([&] { return !f.elements(".key-editor-key.black").empty(); }));
 	REQUIRE(f.app.waitUntil([&] { return f.has(".key-editor", "named-keys"); }));
 	CHECK(f.elements(".key-editor-key[pitch=\"36\"]").at(0).at("attributes").at("title") == "Bass Drum 1");
-	f.app.call("track.set", {{"track", f.track}, {"gmNames", false}});
+	f.app.call("track.set", {{"track", f.track}, {"nameList", "none"}});
 	REQUIRE(f.app.waitUntil([&] { return !f.has(".key-editor", "named-keys"); }));
 	CHECK(f.elements(".key-editor-key[pitch=\"36\"]").at(0).at("attributes").value("title", "x").empty());
+
+	// The menu's third name list, the pads' names of the drum machine the track plays (#1838): none here.
+	f.app.call("editor.set", {{"editor", "window"}, {"content", "drum"}});
+	REQUIRE(f.app.waitUntil([&] { return !f.elements("#drum-names").empty(); }));
+	f.click(of("#drum-names"));
+	f.click(of("#drum-names-menu menuitem[name-list=pads]"));
+	REQUIRE(f.app.waitUntil([&] { return f.app.call("project.get").at("tracks").at(0).at("nameList") == "pads"; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements("#drum-names").at(0).at("text") == "Pad Names"; }));
+	CHECK(f.elements(".drum-sound-name").empty());
 }
 
 TEST_CASE("with the grid type Adapt to Zoom the drumstick snaps to a note value the zoom chooses", "[ui]")
