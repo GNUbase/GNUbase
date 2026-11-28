@@ -138,6 +138,19 @@ namespace gnubase::engine::settings
 				{"required", Json::array({"keyCommands", "macros"})}};
 		}
 
+		// ui.eventColors: a fixed number of #rrggbb colors per scheme.
+		Json eventColorsSchema()
+		{
+			const auto colors = [](int count)
+			{
+				return Json{{"type", "array"}, {"minItems", count}, {"maxItems", count},
+					{"items", {{"type", "string"}, {"pattern", "^#[0-9A-Fa-f]{6}$"}, {"maxLength", 7}}}};
+			};
+			return {{"type", "object"},
+				{"properties", {{"velocity", colors(8)}, {"pitch", colors(12)}, {"channel", colors(16)}}},
+				{"required", {"velocity", "pitch", "channel"}}, {"additionalProperties", false}};
+		}
+
 		Json markerColumnsSchema()
 		{
 			const Json column = {
@@ -841,6 +854,21 @@ namespace gnubase::engine::settings
 					Json{{"type", "string"},
 						{"enum", {"auto", "selection", "playbackStart", "cursor", "project", "display"}}},
 					"auto"},
+				{"ui.eventColors",
+					"The colors of the MIDI editors' Event Colors schemes, which their setup dialogs set (reference "
+					"manual pp. 1133-1136): velocity, 8 colors for the velocities 0-15 up to 112-127; pitch, 12 for "
+					"the "
+					"pitch classes from C; channel, 16 for the MIDI channels from 1. Colors are #rrggbb.",
+					eventColorsSchema(),
+					Json{{"velocity",
+							 {"#3050c0", "#3080d0", "#30b0b0", "#40c050", "#a0c830", "#e0c030", "#e08030", "#e03030"}},
+						{"pitch",
+							{"#e03838", "#e08c38", "#e0e038", "#8ce038", "#38e038", "#38e08c", "#38e0e0", "#388ce0",
+								"#3838e0", "#8c38e0", "#e038e0", "#e0388c"}},
+						{"channel",
+							{"#e64545", "#e68145", "#e6bd45", "#d1e645", "#95e645", "#59e645", "#45e66d", "#45e6a9",
+								"#45e6e6", "#45a9e6", "#456de6", "#5945e6", "#9545e6", "#d145e6", "#e645bd",
+								"#e64581"}}}},
 				{"ui.folderData",
 					"When folder tracks show the events and parts of the tracks inside them as data blocks in the "
 					"event display: always, never, or hideWhenExpanded (only while the folder is folded).",
