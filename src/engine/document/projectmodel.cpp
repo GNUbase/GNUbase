@@ -620,6 +620,7 @@ namespace gnubase::engine
 					point.position = time::rebase(point.position, base, project.tempo, project.sampleRate);
 				context.emit("automationLane.changed", {{"lane", toJson(lane)}});
 			}
+		syncStashedSharedParts(track);
 		track.timeOffset =
 			time::rebase({track.timeBase, track.timeOffset}, base, project.tempo, project.sampleRate).value;
 		track.timeBase = base;
@@ -671,12 +672,15 @@ namespace gnubase::engine
 				context->emit("automationLane.changed", {{"lane", toJson(lane)}});
 		}
 		for (auto& [id, track] : project.trackById)
+		{
+			syncStashedSharedParts(track);
 			if (track.type == TrackType::Ruler && track.timeBase == time::TimeBase::Linear)
 			{
 				track.timeOffset = rescale(track.timeOffset, factor);
 				if (context != nullptr)
 					context->emit("track.changed", {{"track", toJson(track)}});
 			}
+		}
 		project.sampleRate = sampleRate;
 		// At a lower rate, a short cycle marker may become shorter than a sample, in either time base.
 		for (auto& [id, marker] : project.markers)

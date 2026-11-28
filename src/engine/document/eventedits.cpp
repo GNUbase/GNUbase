@@ -3697,6 +3697,32 @@ namespace gnubase::engine
 		}
 	}
 
+	void syncStashedSharedParts(Track& track)
+	{
+		for (TrackVersion& version : track.versions)
+		{
+			std::map<ObjectId, AudioEvent> events;
+			for (const AudioEvent& event : version.audioEvents)
+				events[event.id] = event;
+			std::map<ObjectId, const AudioPart*> sources; // the copy with the lowest id of each group
+			for (const AudioPart& part : version.audioParts)
+				if (part.shared != 0)
+					if (const AudioPart*& source = sources[part.shared]; source == nullptr || part.id < source->id)
+						source = &part;
+			for (const AudioPart& part : version.audioParts)
+			{
+				if (part.shared == 0 || sources.at(part.shared) == &part)
+					continue;
+				const AudioPart& source = *sources.at(part.shared);
+				for (const auto& [from, to] : pairedEvents(events, source, events, part))
+					events.at(to).position.value =
+						part.position.value + events.at(from).position.value - source.position.value;
+			}
+			for (AudioEvent& event : version.audioEvents)
+				event = events.at(event.id);
+		}
+	}
+
 	SharedParts sharedPartsOf(const Project& project)
 	{
 		SharedParts shared;

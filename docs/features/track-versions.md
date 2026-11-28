@@ -47,7 +47,9 @@ and activating versions across tracks.
   get a group of their own as `trackVersion.duplicate` gives them (its copies of the parts that play stay in their
   group, as those play together), `track.removeEmpty` keeps a track with more than one version, and the track list's warning
   before Remove Selected Tracks counts them too. A new time base or sample rate moves inactive versions' events and
-  parts as it moves the active ones. A tempo change retimes notes and controllers in their linear MIDI parts, and
+  parts as it moves the active ones, rounding each position by itself; then each of a version's shared audio copies
+  gets its events where the copy with the lowest id has them from its start (`syncStashedSharedParts`, #2148), as
+  `syncSharedParts` makes the copies that play alike again after the command. A tempo change retimes notes and controllers in their linear MIDI parts, and
   separates a version's shared copies whose notes it retimes apart, as it separates those that play
   ([time-base.md](time-base.md)). A MIDI or audio part that goes into an inactive version stops being a shared copy of
   the parts that play, since only the active parts are edited together ([parts-and-events.md](parts-and-events.md)); a
@@ -71,7 +73,9 @@ activated, across two tracks with one ID, and checks duplicating, names, deletin
 that a tempo change retimes apart, an inactive version's group that a tempo change splits into sets of several copies
 (the largest keeps the group and its note ids, the other shares new ids in a new group), a tempo change that splits a
 playing group and an inactive one at once, with `midiPart.changed` for the playing copies only, the shared copies a
-version keeps, the group of its own that a duplicated version's shared copies get, and the tracks a command skips.
+version keeps, the group of its own that a duplicated version's shared copies get, the tracks a command skips, and an
+inactive version's shared audio copies alike as those that play after a new sample rate or a new time base across a
+tempo change.
 
 ## UI
 

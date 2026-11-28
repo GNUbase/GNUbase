@@ -690,3 +690,64 @@ TEST_CASE("a tempo change that splits a playing group and an inactive one report
 		CHECK(f.part(id).at("shared") == 0);
 	CHECK(f.part(stashed.back()).at("notes").at(0).at("position") == g_quarter / 2);
 }
+
+TEST_CASE("an inactive version's shared audio copies stay alike on a new time base or sample rate", "[integration]")
+{
+	Fixture f;
+	constexpr int64_t quarterSamples = 24000; // at 48 kHz and 120 BPM
+	f.call("project.set", {{"tempoTrackActive", true}});
+	const int64_t clip = f.clip();
+	// An audio part with two events and a shared copy of it a little over eight quarters later, so that each position
+	// rounds by itself.
+	const auto copies = [&f, clip](int64_t track)
+	{
+		const int64_t first = f.event(track, clip, 1001, 0, 1000);
+		const int64_t second = f.event(track, clip, 30001, 1000, 1000);
+		const int64_t part = f.call("event.toPart", {{"events", {first, second}}}).at("events").at(0).get<int64_t>();
+		const int64_t copy =
+			f.call("event.copy", {{"events", {part}}, {"delta", (8 * quarterSamples) + 7}, {"shared", true}})
+				.at("events")
+				.at(0)
+				.get<int64_t>();
+		return std::vector<int64_t>{part, copy};
+	};
+	const int64_t versioned = f.track("audio");
+	const int64_t plain = f.track("audio");
+	const std::vector<int64_t> stashed = copies(versioned);
+	const std::vector<int64_t> playing = copies(plain);
+	f.call("trackVersion.add", {{"tracks", {versioned}}});
+
+	// Where each copy's events are from its start, and its group.
+	const auto contents = [&f](int64_t part)
+	{
+		const Json project = f.call("project.get");
+		std::vector<int64_t> found;
+		for (const Json& item : project.at("audioParts"))
+			if (item.at("id") == part)
+			{
+				found.push_back(item.at("shared") != 0 ? 1 : 0);
+				for (const Json& event : project.at("audioEvents"))
+					if (event.at("part") == part)
+						found.push_back(event.at("position").get<int64_t>() - item.at("position").get<int64_t>());
+			}
+		return found;
+	};
+	SECTION("a new sample rate")
+	{
+		f.call("project.set", {{"sampleRate", 44100}});
+	}
+	SECTION("a new time base across a tempo change")
+	{
+		f.call("tempo.add", {{"position", 6 * g_quarter}, {"bpm", 60.0}, {"ramp", false}});
+		for (const int64_t track : {versioned, plain})
+			f.call("track.set", {{"track", track}, {"timeBase", "musical"}});
+	}
+	// The copies that play are alike again after the command; those of the inactive version are too, the same way.
+	f.call("trackVersion.activate", {{"tracks", {versioned}}, {"version", 1}});
+	const std::vector<int64_t> alike = contents(playing.front());
+	REQUIRE(alike.size() == 3);
+	CHECK(alike.at(0) == 1);
+	CHECK(contents(playing.back()) == alike);
+	CHECK(contents(stashed.front()) == alike);
+	CHECK(contents(stashed.back()) == alike);
+}

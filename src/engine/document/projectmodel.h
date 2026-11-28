@@ -101,6 +101,11 @@ namespace gnubase::engine
 	// part copies of its events, and a copy without others is no longer shared.
 	void syncSharedParts(const SharedParts& before, Project& project, CommandContext& context);
 
+	// After a rewrite of every position, such as a new time base or sample rate, which rounds each one by itself
+	// (eventedits.cpp): the shared audio copies an inactive version of the track holds become alike again, as
+	// syncSharedParts makes those that play, each copy's events where the first copy's are from its start (#2148).
+	void syncStashedSharedParts(Track& track);
+
 	// What range.copy and range.cut keep for range.paste (eventedits.cpp): the events, parts and automation of a
 	// selection range, cut at its edges, or the events and parts they name whole, where they were. Not part of the
 	// project or of undo.
