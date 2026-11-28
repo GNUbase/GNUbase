@@ -9,17 +9,40 @@
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/ObserverPtr.h>
 
+#include <chrono>
 #include <cstdint>
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace gnubase::ui
 {
 	// A level as a <meter> shows it: in dB with one decimal, or below every scale for silence.
 	std::string meterValue(float level);
+
+	// A level meter's scale (reference manual pp. 534 and 1614): its bars' range, its marks, each a level and its
+	// label, and where its headroom starts, all in dBFS; aligned for the broadcast scales, which an alignment level
+	// moves.
+	struct MeterScale
+	{
+		float min;
+		float max;
+		float headroom;
+		bool aligned;
+		std::vector<std::pair<float, std::string>> marks;
+	};
+
+	// A Peak Program Meter standard's scale by the user setting meter.scale's names: digital, din, ebu, british,
+	// nordic, k20, k14, k12, digital3 (the channel meters'), digital6 and digital12; Digital for others. Broadcast
+	// scales put their alignment level (meter.alignmentLevel) at alignment dBFS.
+	MeterScale meterScale(const std::string& name, float alignment = -18.0F);
+
+	// A scale's marks beside its bars, each at its level's height, and its headroom's line (.meter-headroom).
+	std::string meterScaleMarks(const MeterScale& scale);
 
 	// The UI's one reader of the meters (Engine::readMeters, docs/features/metering.md), which every view that shows
 	// meters shares, since a second reader would take the first one's peaks: while any view shows meters, it reads
@@ -59,8 +82,11 @@ namespace gnubase::ui
 	// Meter Settings and Configure Loudness Settings open the meter settings pane (pp. 538-540) with the user settings
 	// meter.loudnessUnit, meter.loudnessScale, meter.resetOnStart, meter.holdOnStop, meter.rmsAes17 and
 	// meter.rmsResolution, and the thresholds above which Momentary Max., Short-Term, Integrated and True Peak turn red
-	// (.over); Measure Loudness switches meter.measureLoudness. It reads the meters once a frame through
-	// the reader. Use it on the UI thread; the reader and the binding must outlive it.
+	// (.over), and the measurement presets of those (meter.presets); Measure Loudness switches meter.measureLoudness,
+	// the unit switch meter.loudnessUnit. The master meter's scale (meter.scale, meter.alignmentLevel, p. 534) and the
+	// loudness meter's are left of the bars, and the master meter's bars fall back by meter.fallback (p. 1614). It
+	// reads the meters once a frame through the reader. Use it on the UI thread; the reader and the binding must
+	// outlive it.
 	class MeterPanel final : private Rml::EventListener
 	{
 	public:
@@ -78,6 +104,11 @@ namespace gnubase::ui
 		void show(const std::vector<std::string>& shown);
 		// A user setting's value in the meter settings pane.
 		void showSetting(const std::string& key, const engine::Json& value);
+		// The pages' scales, by the settings meter.scale, meter.alignmentLevel, meter.loudnessScale and
+		// meter.loudnessUnit.
+		void showScales();
+		// The measurement presets in their list (the setting meter.presets).
+		void showPresets(const engine::Json& presets);
 
 		MeterReader& m_reader;
 		EngineBinding& m_binding;
@@ -87,7 +118,15 @@ namespace gnubase::ui
 		std::optional<Subscription> m_settings;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(); // for the answers to settings.get
 		bool m_showing = false;                                   // while showSetting sets a control
-		bool m_lu = false;                                        // the user setting meter.loudnessUnit is lu
-		std::map<std::string, double> m_thresholds; // the settings meter.<name>Reference and meter.<name>Tolerance
+		std::set<std::string> m_shown;   // the settings whose values arrived: their lists send only after that
+		bool m_lu = false;               // the user setting meter.loudnessUnit is lu
+		bool m_wide = false;             // meter.loudnessScale is ebu18
+		std::string m_scale = "digital"; // meter.scale
+		float m_alignment = -18.0F;      // meter.alignmentLevel, in dBFS
+		double m_fallback = 20.0;        // meter.fallback, in dB per second
+		std::vector<float> m_bars;       // the master meter's bars as they fall back
+		std::chrono::steady_clock::time_point m_read;    // when read() read the meters last
+		engine::Json m_presets = engine::Json::object(); // meter.presets
+		std::map<std::string, double> m_thresholds;      // the settings meter.<name>Reference and meter.<name>Tolerance
 	};
 }

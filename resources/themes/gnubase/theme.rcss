@@ -950,7 +950,7 @@
 	{
 		color: #000000;
 	}
-	.mixer-meter-scale span
+	.mixer-meter-scale span, .meter-display .meter-scale span
 	{
 		font-size: 8dp;
 	}
@@ -1564,6 +1564,10 @@
 	.meter-display .meter-values span.over
 	{
 		color: #ff5270;
+	}
+	.meter-headroom
+	{
+		background-color: #ff5270;
 	}
 	.info-line.multiple .info-field
 	{

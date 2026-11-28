@@ -2825,11 +2825,18 @@ splitter.column .splitter-grip-horizontal
 }
 
 /* The meter display (ui/meterpanel.h): the master meter's page, or with .loudness the loudness meter's, each with
-   its reset under its values, over the buttons that switch between them; the selected one is .checked. */
+   its reset under its values, over the buttons that switch between them; the selected one is .checked. It fills its
+   panel and scrolls when the meter settings pane makes it taller. */
 .meter-display
 {
 	display: block;
+	position: absolute;
+	left: 0;
+	top: 0;
+	right: 0;
+	bottom: 0;
 	padding: 6dp;
+	overflow-y: auto;
 }
 
 .meter-display .meter-loudness, .meter-display.loudness .meter-master
@@ -2845,13 +2852,54 @@ splitter.column .splitter-grip-horizontal
 .meter-display .meter-bars
 {
 	display: block;
-	height: 160dp;
+	height: 144dp;
+	margin-bottom: 6dp;
 }
 
 .meter-display .meter-bars meter
 {
-	height: 160dp;
+	height: 144dp;
 	margin-right: 2dp;
+}
+
+/* A page's scale (reference manual p. 534) left of its bars: its marks, whose middles code places at their levels'
+   heights, and its headroom's line. The scale switches above the master meter's bars. */
+.meter-display .meter-scale
+{
+	float: left;
+	position: relative;
+	width: 22dp;
+	height: 144dp;
+	margin-right: 4dp;
+}
+
+.meter-display .meter-scale span
+{
+	position: absolute;
+	right: 0;
+	height: 10dp;
+	margin-top: -5dp;
+	line-height: 10dp;
+}
+
+.meter-headroom
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	height: 1px;
+}
+
+.meter-display .meter-scales, .meter-display .meter-unit
+{
+	display: block;
+	margin-bottom: 8dp;
+}
+
+.meter-display .meter-scales select
+{
+	width: 96dp;
+	margin-right: 4dp;
 }
 
 .meter-display .meter-values div
@@ -2901,6 +2949,23 @@ splitter.column .splitter-grip-horizontal
 .meter-display .meter-settings select
 {
 	width: 84dp;
+}
+
+/* The measurement presets (p. 539): under their list, the name to save under, Save and Remove. */
+.meter-display .meter-preset input
+{
+	width: 100dp;
+}
+
+.meter-display .meter-settings select.meter-presets
+{
+	width: 120dp;
+}
+
+.meter-display .meter-preset button
+{
+	min-width: 0;
+	margin-left: 4dp;
 }
 
 /* A threshold's reference and tolerance (p. 539), after its name. */
