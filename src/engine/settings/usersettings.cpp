@@ -822,8 +822,10 @@ namespace gnubase::engine::settings
 					Json{{"type", "boolean"}}, true},
 				{"render.options",
 					"The Render Tracks and Render Selection dialogs' options (reference manual pp. 1471-1477), which "
-					"Render (with Current Settings) renders with too: track.renderInPlace's mode, processing, tail, "
-					"sampleFormat, sourceTracks, hideSourceTracks, sourceEvents and name.",
+					"Render (with Current Settings) renders with too: track.renderInPlace's mode, processing, tail "
+					"(Tail Mode Seconds) or tailBars (Bars & Beats; neither is Off), sampleFormat, sourceTracks, "
+					"hideSourceTracks, sourceEvents, name, folder (File Path) and mixdown (Mix down to One Audio "
+					"File, for several tracks that don't render dry).",
 					Json{{"type", "object"}, {"additionalProperties", false},
 						{"properties",
 							{{"mode", {{"type", "string"}, {"enum", {"oneEvent", "separateEvents", "blockEvents"}}}},
@@ -835,7 +837,10 @@ namespace gnubase::engine::settings
 								{"sourceTracks", {{"type", "string"}, {"enum", {"keep", "mute", "disable", "remove"}}}},
 								{"hideSourceTracks", {{"type", "boolean"}}},
 								{"sourceEvents", {{"type", "string"}, {"enum", {"keep", "mute"}}}},
-								{"name", {{"type", "string"}, {"minLength", 1}}}}}},
+								{"name", {{"type", "string"}, {"minLength", 1}}},
+								{"tailBars", {{"type", "number"}, {"minimum", 0}, {"maximum", 16}}},
+								{"folder", {{"type", "string"}, {"minLength", 1}}},
+								{"mixdown", {{"type", "boolean"}}}}}},
 					Json::object()},
 				{"transport.cycleFollowsMarkers",
 					"Locating to a marker sets the left and right locators to it (marker.locate, marker.locateNext, "

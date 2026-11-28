@@ -56,11 +56,16 @@ namespace gnubase::ui
 				{"render-source", "sourceTracks"}, {"render-source-events", "sourceEvents"}}};
 
 		// track.renderInPlace's parameters for what Render renders (target) with options (render.options): a
-		// selection leaves its tracks as they are, and only selected events and parts can be muted (reference manual
-		// pp. 1473, 1476).
+		// selection leaves its tracks as they are, only selected events and parts can be muted, and only several tracks
+		// that don't render dry mix down, into one event (reference manual pp. 1473, 1476).
 		Json renderParameters(Json target, const Json& options)
 		{
 			target.update(options);
+			if (target.value("mixdown", false) &&
+				(target.at("tracks").size() < 2 || target.value("processing", std::string()) == "dry"))
+				target.erase("mixdown");
+			if (target.value("mixdown", false))
+				target.erase("mode");
 			if (target.contains("events") || target.contains("start"))
 			{
 				target.erase("sourceTracks");
@@ -2536,8 +2541,20 @@ namespace gnubase::ui
 				if (auto* select = dynamic_cast<Rml::ElementFormControlSelect*>(dialog->GetElementById(id));
 					select != nullptr && options.contains(key))
 					select->SetValue(options.at(key).get<std::string>());
-			if (Rml::Element* tail = dialog->GetElementById("render-tail"); tail != nullptr && options.contains("tail"))
-				tail->SetAttribute("value", options.at("tail").get<double>());
+			// Tail Mode: tailBars in bars and beats, tail in seconds, neither off.
+			const char* tailMode = options.contains("tailBars") ? "bars" : options.contains("tail") ? "seconds" : "off";
+			if (auto* mode = dynamic_cast<Rml::ElementFormControlSelect*>(dialog->GetElementById("render-tail-mode")))
+				mode->SetValue(tailMode);
+			if (Rml::Element* tail = dialog->GetElementById("render-tail"); tail != nullptr && tailMode[0] != 'o')
+				tail->SetAttribute("value", options.value("tailBars", options.value("tail", 0.0)));
+			if (auto* folder = dynamic_cast<Rml::ElementFormControlInput*>(dialog->GetElementById("render-folder")))
+				folder->SetValue(options.value("folder", std::string()));
+			if (Rml::Element* row = dialog->GetElementById("render-mixdown-row");
+				row != nullptr && target.at("tracks").size() < 2)
+				row->GetParentNode()->RemoveChild(row);
+			else if (Rml::Element* mixdown = dialog->GetElementById("render-mixdown");
+				mixdown != nullptr && options.value("mixdown", false))
+				mixdown->SetAttribute("checked", "");
 			if (options.contains("name"))
 			{
 				if (Rml::Element* custom = dialog->GetElementById("render-custom-name"))
@@ -2550,15 +2567,31 @@ namespace gnubase::ui
 		m_renderOptions = options;
 		m_renderDialog = dialog->GetObserverPtr();
 		dialog->AddEventListener(g_dialogCloseEvent, this);
+		dialog->AddEventListener(Rml::EventId::Click, this);
 		dialog->Show(Rml::ModalFlag::Modal);
 	}
 
 	void TrackList::closedRenderDialog(Rml::Event& event)
 	{
+		// File Path's button chooses the folder in a file dialog.
+		if (event.GetId() == Rml::EventId::Click && event.GetTargetElement()->GetId() == "render-folder-choose" &&
+			m_chooseFolder)
+		{
+			Rml::Element* field = m_renderDialog->GetElementById("render-folder");
+			m_chooseFolder(
+				[field = field != nullptr ? field->GetObserverPtr() : Rml::ObserverPtr<Rml::Element>()](
+					const std::string& folder)
+				{
+					if (auto* input = dynamic_cast<Rml::ElementFormControlInput*>(field.get()))
+						input->SetValue(folder);
+				});
+			return;
+		}
 		if (event.GetType() != g_dialogCloseEvent)
 			return;
 		Rml::Element* dialog = m_renderDialog.get();
 		dialog->RemoveEventListener(g_dialogCloseEvent, this);
+		dialog->RemoveEventListener(Rml::EventId::Click, this);
 		m_renderDialog.reset();
 		Json parameters = std::exchange(m_renderTarget, Json());
 		Json options = std::exchange(m_renderOptions, Json());
@@ -2581,8 +2614,23 @@ namespace gnubase::ui
 				options[key] = select->GetValue();
 		if (const Rml::Element* hide = dialog->GetElementById("render-hide"))
 			options["hideSourceTracks"] = hide->HasAttribute("checked");
-		if (const Rml::Element* tail = dialog->GetElementById("render-tail"))
-			options["tail"] = tail->GetAttribute<double>("value", 0.0);
+		options.erase("tail");
+		options.erase("tailBars");
+		const auto* tailMode = dynamic_cast<Rml::ElementFormControlSelect*>(dialog->GetElementById("render-tail-mode"));
+		if (const Rml::Element* tail = dialog->GetElementById("render-tail"); tail != nullptr && tailMode != nullptr)
+		{
+			const auto size = tail->GetAttribute<double>("value", 0.0);
+			if (tailMode->GetValue() == "seconds")
+				options["tail"] = size;
+			else if (tailMode->GetValue() == "bars")
+				options["tailBars"] = std::min(size, 16.0); // track.renderInPlace's limit
+		}
+		options.erase("folder");
+		if (const auto* folder = dynamic_cast<Rml::ElementFormControlInput*>(dialog->GetElementById("render-folder"));
+			folder != nullptr && !folder->GetValue().empty())
+			options["folder"] = folder->GetValue();
+		if (const Rml::Element* mixdown = dialog->GetElementById("render-mixdown"))
+			options["mixdown"] = mixdown->HasAttribute("checked");
 		const Rml::Element* custom = dialog->GetElementById("render-custom-name");
 		const auto* name = dynamic_cast<Rml::ElementFormControlInput*>(dialog->GetElementById("render-name"));
 		options.erase("name");

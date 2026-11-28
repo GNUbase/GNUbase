@@ -46,9 +46,12 @@ changes on the audio thread otherwise, and no graph but the export's has a tap.
   plugin slots: in the strip that runs the source, the source node's on a channel with slots.
 - `inserts`: after the slots, before the strip's other sections (gate, compressor, EQ, limiter).
 - `strip`: after those, before the fader: where pre-fader sends take the audio.
+- `panner`: after the panner, without the fader and the mute (a mixdown with Channel Settings): the fader node's
+  `ChannelFader` pans a copy of the strip's audio into the tap with the panner's gains alone, frame by frame as it pans
+  the channel, so pan automation plays in it too.
 
-Files from a point are in the channel's format, so a mono track gives a mono file; from `output`, in the format the
-panner makes. `tail` renders up to that many seconds after the range, as quick export does: the file ends after the last
+Files from a point are in the channel's format, so a mono track gives a mono file; from `panner` and `output`, in the
+format the panner makes. `tail` renders up to that many seconds after the range, as quick export does: the file ends after the last
 sample a 24-bit file doesn't hold as silence, or at the range's end.
 
 ## Freeze
@@ -117,9 +120,12 @@ track below the track, named after it with "(Rendered)", in its folder, time bas
   can't have turned into "_" ("AC/DC: live" writes "AC_DC_ live.wav"): each track renders alone from the start of the earliest range
   to the end of the latest, in 32-bit float, and the job sums the files in the tracks' order into the file, in
   `sampleFormat` (integer formats rounded, without dither), as long as the longest, then removes them. The source
-  options apply to every track. It renders the complete signal path only, so it needs `completeSignalPath`, `oneEvent`
-  and tracks that play through one output, whose format the file has (tested: the file is the sum of the tracks'
-  renders, and the main mix stays as it was with the sources muted).
+  options apply to every track. It needs `oneEvent`, tracks that play through one output, whose format the file has,
+  and processing that isn't `dry` (p. 280). With `completeSignalPath` the file is the sum of the tracks' renders, and
+  the main mix stays as it was with the sources muted (tested). With `channelSettings` one new track can't take the
+  fader and pan of several tracks: each track renders at `panner`, after its panner without its fader and mute, and the
+  new track gets no settings of its own, centred at 0 dB without sends (tested: the same as the complete signal paths
+  with the faders at 0 dB). While it renders, the tracks' pans are locked too.
 - `mode` (pp. 1472, 1475): `oneEvent` (the default) combines the input into one file; `separateEvents` writes a file per
   audio event, audio part or MIDI part; `blockEvents` combines adjacent or overlapping events and parts into one file
   per block. All files of a source go onto one destination track, in time order, each at its source range's start. Parts
@@ -160,11 +166,15 @@ track below the track, named after it with "(Rendered)", in its folder, time bas
   `.frozen`.
 - Edit > Render in Place > Render Settings... (`track.renderSettings`, pp. 1471-1477) opens Render Selection for
   selected events and parts or a selection range, else Render Tracks (`render-settings.rml`), with Mode, Processing,
-  Tail Size in seconds, Bit Depth, Use Custom Name and Name, in Render Tracks Source Tracks and Hide Source Tracks,
+  Tail Mode (Bars & Beats is `tailBars`, Seconds `tail`, Off neither; Off at first) and Tail Size, Bit Depth, Use
+  Custom Name and Name, File Path (`folder`, empty for the media folder; its button chooses one in a folder dialog),
+  for several tracks Mix down to One Audio File (`mixdown`), in Render Tracks Source Tracks and Hide Source Tracks,
   and in Render Selection of events and parts Source Events. Render saves them in `render.options` and renders. A
   selection never changes its tracks: Render Selection has no Source Tracks and Hide Source Tracks, and Render (with
   Current Settings) leaves out the saved ones for a selection, and the saved Source Events for anything but selected
-  events and parts (tested).
+  events and parts (tested). A mixdown renders one event, so it renders without the saved Mode, and only several
+  tracks that don't render dry mix down (p. 1473): for one track, or with Dry, the saved Mix down to One Audio File is
+  left out (tested).
 - Edit > Freeze/Unfreeze > Selected Tracks... (`track.freezeSelectedSettings`, p. 992), which is also Freeze/Unfreeze
   Selected Tracks in the track list's context menu (pp. 219-220, [track-list.md](track-list.md)), opens Freeze Channel
   Options (`freeze-options.rml`) with Tail Size and Include Inserts for Instrument Tracks for the selected tracks that
@@ -178,9 +188,7 @@ track below the track, named after it with "(Rendered)", in its folder, time bas
 
 ## Not yet
 
-- The dialogs' Tail Mode, File Path and Mix down to One Audio File (pp. 1473, 1476), which `track.renderInPlace` has
-  as `tailBars`, `folder` and `mixdown`; Mix down to One Audio File with Channel Settings, whose new track can't take
-  the fader and pan of several tracks; Mute Source Events for a selection range; the Unfreeze Channel Options dialog;
+- Mute Source Events for a selection range; the Unfreeze Channel Options dialog;
   Render Tracks for MIDI tracks (pp. 1471, 1474), which Render skips; Freeze Channel in the inspector and the mixer,
   and the lit freeze buttons.
 - Unload Instruments When Frozen (p. 993) as an option: a frozen track's channel has no instrument in the render
@@ -205,10 +213,12 @@ live render, plays its slot on the freeze file and keeps `inserts` in the projec
 Source Tracks are checked with their undo. A tail in bars is as long as the same tail in seconds in 4/4 and follows a
 3/4 signature, a folder of its own that isn't there yet gets the file, and a mixdown is the sum of the tracks'
 complete signal paths, on one track, without the tracks' own files, in float32 and in int24 within its rounding, and
-named after its name made a file name. `tests/tracklist_tests.cpp` renders a selected MIDI part, a selection
+named after its name made a file name; with Channel Settings, it holds the pans, not the faders and mutes, and its track
+is centred at 0 dB without sends. `tests/tracklist_tests.cpp` renders a selected MIDI part, a selection
 range and, with neither, the selected track through the Edit menu's Render, and checks that the render and freeze
 dialogs' options reach the commands, are saved for the commands with current settings, and leave a selection's tracks
-as they are. `tests/mixdown_ui_tests.cpp` uses the real app's automation API to check the rendering state class,
+as they are; Tail Mode in bars, a File Path chosen in the folder dialog and Mix down to One Audio File render one file
+there, and one track renders without the mixdown. `tests/mixdown_ui_tests.cpp` uses the real app's automation API to check the rendering state class,
 progress and Cancel for all three background render commands.
 
 A shutdown regression in `tests/renderinplace_tests.cpp` stops command posting during an active multi-track freeze or

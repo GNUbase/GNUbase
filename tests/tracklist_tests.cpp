@@ -3,6 +3,7 @@
 // UI tools drive it: every control changes the engine's project, every change from elsewhere shows, and tracks are
 // selected, renamed, moved, sized, folded, duplicated, disabled and removed.
 #include "testutils/commandholds.h"
+#include "testutils/testutils.h"
 #include "uiapp.h"
 
 #include "engine/document/serialize.h"
@@ -26,6 +27,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <filesystem>
 #include <mutex>
 #include <optional>
 #include <set>
@@ -2174,6 +2176,7 @@ TEST_CASE("The render and freeze dialogs render and freeze with their options an
 	choose("#render-mode", "Up");
 	choose("#render-format", "Down");
 	choose("#render-source", "Down");
+	choose("#render-tail-mode", "Up"); // Seconds
 	type("#render-tail", 2, "1");
 	tracks.click("#render-custom-name");
 	type("#render-name", 1, "Bounce");
@@ -2223,6 +2226,87 @@ TEST_CASE("The render and freeze dialogs render and freeze with their options an
 	tracks.rows(4, rendering);
 	CHECK(ran("track.renderInPlace").back() == expected);
 	CHECK(tracks.channel(synth).at("mute") == false);
+}
+
+TEST_CASE("The render dialog's Tail Mode, File Path and Mix down to One Audio File reach the render (#760)", "[ui]")
+{
+	// Reference manual pp. 1473, 1476: the tail in bars and beats, a folder of its own, and one file of several
+	// tracks, which is there only for several tracks and renders them only while they don't render dry.
+	Tracks tracks;
+	tracks.app.call("audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}});
+	std::vector<uint64_t> synths;
+	for (const char* name : {"One", "Two"})
+	{
+		synths.push_back(
+			tracks.add({{"type", "instrument"}, {"instrument", "testSynth"}, {"timeBase", "linear"}, {"name", name}}));
+		const Json part =
+			tracks.app.call("midiPart.add", {{"track", synths.back()}, {"position", 0}, {"length", 4800}});
+		tracks.app.call("note.add",
+			{{"part", part.at("part").at("id")},
+				{"notes", {{{"position", 0}, {"length", 100000}, {"pitch", 60}, {"velocity", 0.8}}}}});
+	}
+	tracks.rows(2);
+	const auto ran = [&tracks]
+	{
+		Json found = Json::array();
+		const Json log = tracks.app.call("engine.commandLog");
+		for (const Json& each : log.at("commands"))
+			if (each.at("command") == "track.renderInPlace")
+				found.push_back(each.at("parameters"));
+		return found;
+	};
+	const auto run = [&tracks](const char* command)
+	{ tracks.app.keys().run(command, Json::object(), tracks.app.main(), nullptr); };
+	const auto shown = [&tracks](const char* selector)
+	{ return tracks.app.waitUntil([&] { return elements(tracks.app, selector).size() == 1; }); };
+	const std::chrono::seconds rendering(60);
+	const gnubase::test::TempDir folder;
+
+	// Off, the default, renders without a tail.
+	tracks.list.select(synths);
+	run("track.renderSettings");
+	REQUIRE(shown("#render-settings-dialog"));
+	tracks.click("#render-tail-mode");
+	tracks.app.ui().key(std::nullopt, "Up");
+	tracks.app.ui().key(std::nullopt, "Up"); // Bars & Beats
+	tracks.click("#render-tail-mode");
+	tracks.click("#render-tail", {}, 2);
+	tracks.app.ui().key(std::nullopt, "Mod+A");
+	tracks.app.ui().text(std::nullopt, "2");
+	tracks.app.ui().key(std::nullopt, "Enter");
+	tracks.click("#render-folder-choose");
+	REQUIRE(tracks.app.waitUntil([&tracks] { return tracks.app.shell().fileDialogs().size() == 1; }));
+	const auto [dialog, chooser] = *tracks.app.shell().fileDialogs().begin();
+	CHECK(chooser.kind == ui::FileDialogKind::Folder);
+	tracks.app.shell().answerFileDialog(dialog, {folder.path()});
+	REQUIRE(tracks.app.waitUntil(
+		[&] { return elements(tracks.app, "#render-folder").at(0).at("value") == folder.path().u8string(); }));
+	tracks.click("#render-mixdown");
+	tracks.click("#render-settings-render");
+	tracks.rows(3, rendering);
+	const Json options = {{"mode", "oneEvent"}, {"processing", "channelSettings"}, {"sampleFormat", "float32"},
+		{"sourceTracks", "keep"}, {"hideSourceTracks", false}, {"tailBars", 2.0}, {"folder", folder.path().u8string()},
+		{"mixdown", true}};
+	CHECK(tracks.app.call("settings.get", {{"key", "render.options"}}).at("value") == options);
+	Json expected = options;
+	expected.erase("mode"); // a mixdown is one event
+	expected["tracks"] = synths;
+	CHECK(ran().back() == expected);
+	CHECK(std::filesystem::exists(folder.path() / "Mixdown.wav"));
+
+	// One track has nothing to mix down with, in the dialog nor with the current settings.
+	tracks.list.select({synths.front()});
+	run("track.renderSettings");
+	REQUIRE(shown("#render-settings-dialog"));
+	CHECK(elements(tracks.app, "#render-mixdown").empty());
+	CHECK(elements(tracks.app, "#render-folder").at(0).at("value") == folder.path().u8string());
+	tracks.click("#render-settings-render");
+	tracks.rows(4, rendering);
+	expected = options;
+	expected["tracks"] = Json::array({synths.front()});
+	expected.erase("mixdown");
+	CHECK(ran().back() == expected);
+	CHECK(tracks.app.call("settings.get", {{"key", "render.options"}}).at("value") == options);
 }
 
 TEST_CASE(

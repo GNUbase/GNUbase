@@ -2119,6 +2119,22 @@ namespace gnubase::app
 			});
 		if (m_trackList)
 			m_trackList->onArrangerEditor([this] { m_shell.post([this] { openArranger(); }); });
+		// The render dialog's File Path (reference manual p. 1473).
+		if (m_trackList)
+			m_trackList->onChooseFolder(
+				[this](std::function<void(const std::string&)> chosen)
+				{
+					ui::FileDialog dialog;
+					dialog.kind = ui::FileDialogKind::Folder;
+					dialog.title = "File Path";
+					dialog.parent = m_main.id();
+					m_shell.showFileDialog(dialog,
+						[chosen = std::move(chosen)](const ui::FileDialogResult& result)
+						{
+							if (!result.files.empty())
+								chosen(result.files.front().u8string());
+						});
+				});
 		// The marker tracks' Locate menus select the marker, Shift-click on Add Cycle Marker names the new one.
 		if (m_trackList)
 			m_trackList->onMarker(

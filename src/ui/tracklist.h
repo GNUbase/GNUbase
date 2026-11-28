@@ -121,6 +121,11 @@ namespace gnubase::ui
 		void onMarker(std::function<void(uint64_t marker, bool rename)> listener) { m_onMarker = std::move(listener); }
 		// The arranger track's Open Arranger Editor (arrangerEditor, reference manual p. 164) calls the listener.
 		void onArrangerEditor(std::function<void()> listener) { m_onArrangerEditor = std::move(listener); }
+		// How the render dialog's File Path chooses a folder: in a file dialog, then calls back with it.
+		void onChooseFolder(std::function<void(std::function<void(const std::string&)>)> chooser)
+		{
+			m_chooseFolder = std::move(chooser);
+		}
 
 	private:
 		// A track as the list shows it, from the event display's project.
@@ -330,6 +335,7 @@ namespace gnubase::ui
 		std::map<std::string, std::function<void()>> m_actions;
 		std::function<void(uint64_t, bool)> m_onMarker;
 		std::function<void()> m_onArrangerEditor;
+		std::function<void(std::function<void(const std::string&)>)> m_chooseFolder;
 		std::vector<Subscription> m_subscriptions;
 		std::optional<Subscription> m_playback; // while playing, Current Tempo follows the cursor (#831)
 		bool m_playing = false;                 // the transport status followTransport last heard

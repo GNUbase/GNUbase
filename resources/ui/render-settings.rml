@@ -2,8 +2,9 @@
 <!-- The Render Tracks and Render Selection dialog (docs/features/render-in-place.md, reference manual pp. 1471-1477):
      ui::TrackList opens it with Edit > Render in Place > Render Settings, titled Render Selection for selected events
      and parts or a selection range, else Render Tracks, with the options of the user setting render.options: Source
-     Tracks and Hide Source Tracks only in Render Tracks, Source Events only for selected events and parts. Render
-     saves them there, for Render (with Current Settings) too, and renders with track.renderInPlace. -->
+     Tracks and Hide Source Tracks only in Render Tracks, Source Events only for selected events and parts, Mix down to
+     One Audio File only for several tracks. Render saves them there, for Render (with Current Settings) too, and
+     renders with track.renderInPlace. -->
 <rml>
 <head>
 	<title>Render Settings</title>
@@ -28,6 +29,17 @@
 		.row select, #render-name
 		{
 			width: 170dp;
+		}
+
+		#render-folder
+		{
+			width: 140dp;
+		}
+
+		#render-folder-choose
+		{
+			width: 26dp;
+			margin-left: 4dp;
 		}
 
 		.buttons
@@ -61,7 +73,15 @@
 			</select>
 		</div>
 		<div class="row">
-			<label for="render-tail">Tail Size (Seconds)</label>
+			<label for="render-tail-mode">Tail Mode</label>
+			<select id="render-tail-mode">
+				<option value="bars">Bars &amp; Beats</option>
+				<option value="seconds">Seconds</option>
+				<option value="off" selected="">Off</option>
+			</select>
+		</div>
+		<div class="row">
+			<label for="render-tail">Tail Size</label>
 			<valuefield id="render-tail" value="0" min="0" max="60" step="0.5" decimals="1"/>
 		</div>
 		<div class="row">
@@ -81,6 +101,15 @@
 		<div class="row">
 			<label for="render-name">Name</label>
 			<input type="text" id="render-name" value=""/>
+		</div>
+		<div class="row">
+			<label for="render-folder">File Path</label>
+			<input type="text" id="render-folder" value=""/>
+			<button id="render-folder-choose">...</button>
+		</div>
+		<div class="row" id="render-mixdown-row">
+			<label for="render-mixdown">Mix down to One Audio File</label>
+			<input type="checkbox" id="render-mixdown"/>
 		</div>
 		<div class="row" id="render-source-row">
 			<label for="render-source">Source Tracks</label>
