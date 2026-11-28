@@ -2508,7 +2508,7 @@ TEST_CASE("the editor window's key editor and the in-place editor keep their con
 TEST_CASE("the event colors menu colors the notes by their part's color, its own or else its track's", "[ui]")
 {
 	// The Event Colors menu's Part (reference manual pp. 1133-1134): notes in the color of their part, which is its
-	// own or its track's; selected notes keep the style sheets' look, and Default gives every note the theme's again.
+	// own or its track's; selected notes keep the style sheets' look, and Velocity gives them their velocities' again.
 	Fixture f;
 	const std::vector<uint64_t> first = f.add({{0, 60, g_quarter}, {g_quarter, 62, g_quarter}});
 	f.app.call("track.set", {{"track", f.track}, {"color", "#2040e0"}});
@@ -2533,7 +2533,7 @@ TEST_CASE("the event colors menu colors the notes by their part's color, its own
 		const Json found = f.elements(noteSelector(note));
 		return found.empty() ? std::string("none") : found.at(0).at("attributes").value("color", std::string());
 	};
-	CHECK(f.elements(".key-note[color]").empty());
+	CHECK(f.view().at("eventColors") == "velocity");
 
 	f.click(of("#key-event-colors"));
 	f.click(of("#key-event-colors-menu menuitem[event-colors=part]"));
@@ -2557,9 +2557,10 @@ TEST_CASE("the event colors menu colors the notes by their part's color, its own
 	CHECK(color(first[1]) == "#2040e0");
 
 	f.click(of("#key-event-colors"));
-	f.click(of("#key-event-colors-menu menuitem[event-colors=default]"));
-	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note[color]").empty(); }));
-	CHECK(f.view().at("eventColors") == "default");
+	f.click(of("#key-event-colors-menu menuitem[event-colors=velocity]"));
+	const Json velocity = f.app.call("settings.get", {{"key", "ui.eventColors"}}).at("value").at("velocity");
+	REQUIRE(f.app.waitUntil([&] { return color(own) == velocity.at(4); })); // velocity 64
+	CHECK(f.view().at("eventColors") == "velocity");
 }
 
 TEST_CASE("the drum editor and the in-place editor color notes through their event colors menu", "[ui]")
@@ -2615,7 +2616,6 @@ TEST_CASE("the drum editor and the in-place editor color notes through their eve
 	REQUIRE(f.app.waitUntil([&] { return f.elements(triangle).at(0).at("visible") == true; }));
 	f.click(of(triangle));
 	REQUIRE(f.app.waitUntil([&] { return f.elements(editor + "#key-event-colors").at(0).at("visible") == true; }));
-	CHECK(f.elements(editor + ".key-note[color]").empty());
 	f.click(of(editor + "#key-event-colors"));
 	f.click(of("#key-event-colors-menu-inPlace-" + std::to_string(f.track) + " menuitem[event-colors=part]"));
 	REQUIRE(f.app.waitUntil([&] { return color(editor, own) == "#c04020"; }));
@@ -2626,6 +2626,81 @@ TEST_CASE("the drum editor and the in-place editor color notes through their eve
 	f.app.call("editor.set", {{"editor", view}, {"activePart", f.part}});
 	REQUIRE(f.app.waitUntil([&] { return color(editor, first[0]) == "#2040e0"; }));
 	CHECK(color(editor, own).empty());
+}
+
+TEST_CASE("the event colors menu colors notes by velocity, pitch or channel as their setup dialogs set", "[ui]")
+{
+	// Velocity, the scheme at first, Pitch and Channel (reference manual pp. 1133-1136): each note in the color of its
+	// velocity's range, its pitch class or its channel (ui.eventColors). Setup opens the scheme's dialog of colors,
+	// whose OK keeps the picker's changes and Cancel drops them; Part and Sound Slot have no Setup. There is no
+	// Default.
+	Fixture f;
+	const std::vector<uint64_t> ids = f.add({{0, 60, g_quarter}, {g_quarter, 61, g_quarter}});
+	f.app.call("note.set", {{"part", f.part}, {"notes", {{{"id", ids[1]}, {"velocity", 1.0}, {"channel", 2}}}}});
+	const Json colors = f.app.call("settings.get", {{"key", "ui.eventColors"}}).at("value");
+	const auto color = [&](uint64_t note)
+	{
+		const Json found = f.elements(noteSelector(note));
+		return found.empty() ? std::string("none") : found.at(0).at("attributes").value("color", std::string());
+	};
+	const auto choose = [&](const std::string& item)
+	{
+		f.click(of("#key-event-colors"));
+		f.click(of("#key-event-colors-menu menuitem" + item));
+	};
+	REQUIRE(f.app.waitUntil([&] { return color(ids[1]) == colors.at("velocity").at(7); }));
+	CHECK(color(ids[0]) == colors.at("velocity").at(4));
+	CHECK(f.elements("#key-event-colors-menu menuitem[event-colors=default]").empty());
+	choose("[event-colors=pitch]");
+	REQUIRE(f.app.waitUntil([&] { return color(ids[1]) == colors.at("pitch").at(1); }));
+	CHECK(color(ids[0]) == colors.at("pitch").at(0));
+	choose("[event-colors=channel]");
+	REQUIRE(f.app.waitUntil([&] { return color(ids[1]) == colors.at("channel").at(2); }));
+	CHECK(color(ids[0]) == colors.at("channel").at(0));
+
+	// Channel's setup: a color per channel; the picker recolors the selected one, and OK keeps it.
+	const auto open = [&f] { return !f.elements("#event-colors-dialog").empty(); };
+	const auto recolor = [&f](const std::string& value)
+	{
+		Rml::Element* picker = nullptr;
+		ui::Window* window = f.app.shell().find(f.app.appUi().editorWindowId());
+		for (int i = 0; window != nullptr && i < window->context().GetNumDocuments() && picker == nullptr; ++i)
+			picker = window->context().GetDocument(i)->QuerySelector("#event-colors-picker");
+		REQUIRE(picker != nullptr);
+		picker->SetAttribute("value", value);
+		Rml::Dictionary parameters;
+		parameters["value"] = Rml::String(value);
+		picker->DispatchEvent(Rml::EventId::Change, parameters);
+	};
+	choose("[event-colors-setup]");
+	REQUIRE(f.app.waitUntil(open));
+	CHECK(f.elements("#event-colors-dialog .dialog-titlebar").at(0).value("text", "") == "Channel Colors Setup");
+	REQUIRE(f.elements("#event-colors-list > listitem").size() == 16);
+	f.click(of("#event-colors-list > listitem[value=\"3\"]"));
+	recolor("#123456");
+	f.click(of("#event-colors-ok"));
+	REQUIRE(f.app.waitUntil([&] { return !open(); }));
+	REQUIRE(f.app.waitUntil([&] { return color(ids[1]) == "#123456"; }));
+	Json changed = colors;
+	changed["channel"][2] = "#123456";
+	CHECK(f.app.call("settings.get", {{"key", "ui.eventColors"}}).at("value") == changed);
+
+	// Pitch's setup lists the 12 pitch classes; Cancel drops the change.
+	choose("[event-colors=pitch]");
+	choose("[event-colors-setup]");
+	REQUIRE(f.app.waitUntil(open));
+	REQUIRE(f.elements("#event-colors-list > listitem").size() == 12);
+	recolor("#654321");
+	f.click(of("#event-colors-cancel"));
+	REQUIRE(f.app.waitUntil([&] { return !open(); }));
+	CHECK(f.app.call("settings.get", {{"key", "ui.eventColors"}}).at("value") == changed);
+	CHECK(color(ids[0]) == colors.at("pitch").at(0));
+
+	// Part has no setup.
+	choose("[event-colors=part]");
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("eventColors") == "part"; }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.elements("#key-event-colors-menu menuitem[event-colors-setup][disabled]").size() == 1);
 }
 
 TEST_CASE("Indicate Transpositions shows the notes at the pitches they play", "[ui]")

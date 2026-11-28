@@ -194,8 +194,8 @@ the notes, not the project window's selected events.
   opens nothing yet, as the key editor has no context menu: the grid's `contextmenu` or `modifiercontextmenu` is
   empty. A right click doesn't change the selection.
 - **Event Colors** (pp. 1133-1134, [colors.md](colors.md)): the toolbar's `#key-event-colors` opens
-  `#key-event-colors-menu`, which sets the view's `eventColors`: Default (the style sheets' note colors), Part or Sound
-  Slot. The drum editor and the in-place editor have it too.
+  `#key-event-colors-menu`, which sets the view's `eventColors`: Velocity (at first), Pitch, Channel, Part or Sound
+  Slot, and Setup for the first three's colors. The drum editor and the in-place editor have it too.
 - **Clicking a part** in the row of parts activates it, as `MidiEditor` handles clicks on `[part]` (p. 1152); a click
   on a note activates its part too.
 

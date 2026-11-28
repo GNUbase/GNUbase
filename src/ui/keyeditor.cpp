@@ -23,6 +23,7 @@
 #include <array>
 #include <cmath>
 #include <exception>
+#include <filesystem>
 #include <limits>
 #include <map>
 #include <tuple>
@@ -429,11 +430,14 @@ namespace gnubase::ui
 						R"("><menuitem type="toggle" gm-names="false">No Names</menuitem>)"
 						R"(<menuitem type="toggle" gm-names="true">GM Default</menuitem></menu>)"
 				  : R"(<menu id="key-expression-menu)" + m_menuSuffix + R"(">)" + expressions + "</menu>") +
-			// The Event Colors menu (pp. 1133-1134).
+			// The Event Colors menu (pp. 1133-1134), and Setup for the schemes with colors of their own.
 			R"(<menu id="key-event-colors-menu)" + m_menuSuffix +
-			R"("><menuitem type="toggle" event-colors="default">Default</menuitem>)"
+			R"("><menuitem type="toggle" event-colors="velocity">Velocity</menuitem>)"
+			R"(<menuitem type="toggle" event-colors="pitch">Pitch</menuitem>)"
+			R"(<menuitem type="toggle" event-colors="channel">Channel</menuitem>)"
 			R"(<menuitem type="toggle" event-colors="part">Part</menuitem>)"
-			R"(<menuitem type="toggle" event-colors="soundSlot">Sound Slot</menuitem></menu>)"
+			R"(<menuitem type="toggle" event-colors="soundSlot">Sound Slot</menuitem>)"
+			R"(<menuitem event-colors-setup="">Setup...</menuitem></menu>)"
 			// The info line's attributes (renderInfo), the last menu.
 			R"(<menu id="key-articulations-menu)" +
 			m_menuSuffix + R"("/>)");
@@ -465,7 +469,15 @@ namespace gnubase::ui
 					m_toolboxKnown = true;
 					showToolbox();
 				}
+				if (const auto colors = values.find("ui.eventColors"); colors != values.end())
+					showSchemeColors(*colors);
 			}));
+		m_binding.send("settings.get", {{"key", "ui.eventColors"}},
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (!alive.expired() && result.ok() && m_schemeColors.empty()) // newer changes win
+					showSchemeColors(result.value.at("value"));
+			});
 		m_binding.send("settings.get", {{"key", "ui.toolboxOnRightClick"}},
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
@@ -475,6 +487,14 @@ namespace gnubase::ui
 				showToolbox();
 			});
 		showToolbox();
+	}
+
+	void KeyEditor::showSchemeColors(const Json& colors)
+	{
+		m_schemeColors = colors;
+		const Json project = m_project;
+		const Json view = m_view;
+		show(project, view, m_read);
 	}
 
 	void KeyEditor::showToolbox()
@@ -588,7 +608,7 @@ namespace gnubase::ui
 				hidden[channel.at("id").get<uint64_t>()] = channel.at("noteExpression").value("hidden", Json::array());
 		const Json& editable = m_view.at("editable");
 		m_noteColors.clear();
-		const std::string colors = m_view.value("eventColors", std::string("default"));
+		const std::string colors = m_view.value("eventColors", std::string("velocity"));
 		std::map<uint64_t, const Json*> maps;
 		if (const auto found = m_project.find("articulationMaps"); found != m_project.end())
 			for (const Json& map : *found)
@@ -802,12 +822,27 @@ namespace gnubase::ui
 		}
 	}
 
-	// The colors of a part's notes for the Event Colors menu (pp. 1133-1134, 1269): part, the part's own color or else
-	// its track's; soundSlot, the color of the slot of its track's articulation map that each note plays.
+	// The colors of a part's notes for the Event Colors menu (pp. 1133-1134, 1269): velocity, pitch and channel, the
+	// color ui.eventColors gives each note's velocity range of 16, pitch class or channel; part, the part's own color
+	// or else its track's; soundSlot, the color of the slot of its track's articulation map that each note plays.
 	void KeyEditor::noteColors(
 		const std::string& colors, const Json& part, const Json& track, const std::map<uint64_t, const Json*>& maps)
 	{
 		const auto id = part.at("id").get<uint64_t>();
+		if (const auto scheme = m_schemeColors.find(colors); scheme != m_schemeColors.end())
+		{
+			for (const Json& note : part.at("notes"))
+			{
+				auto index = note.at("channel").get<size_t>();
+				if (colors == "velocity")
+					index = static_cast<size_t>(std::lround(note.at("velocity").get<double>() * 127.0)) / 16;
+				else if (colors == "pitch")
+					index = note.at("pitch").get<size_t>() % 12;
+				if (index < scheme->size())
+					m_noteColors[{id, note.at("id").get<uint64_t>()}] = scheme->at(index).get<std::string>();
+			}
+			return;
+		}
 		if (colors == "part")
 		{
 			Json own = part.value("color", Json());
@@ -826,6 +861,24 @@ namespace gnubase::ui
 		for (const auto& [note, slot] : engine::midi::soundSlots(*map->second, part))
 			if (slot < slots.size() && !slots.at(slot).value("color", std::string()).empty())
 				m_noteColors[{id, note}] = slots.at(slot).at("color").get<std::string>();
+	}
+
+	void KeyEditor::openColorsSetup()
+	{
+		const Rml::Element* root = m_root.get();
+		if (root == nullptr || root->GetContext() == nullptr)
+			return;
+		const std::string path = std::filesystem::u8path(root->GetOwnerDocument()->GetSourceURL())
+									 .replace_filename("event-colors.rml")
+									 .generic_u8string();
+		Rml::ElementDocument* dialog = root->GetContext()->LoadDocument(path);
+		if (dialog == nullptr)
+		{
+			logging::warning("The key editor can't open the dialog {}", path);
+			return;
+		}
+		dialog->SetAttribute("scheme", m_view.value("eventColors", std::string("velocity")));
+		dialog->Show(Rml::ModalFlag::Modal);
 	}
 
 	// The parts by track, a row per track in the editor's order (the reference's track display, p. 1154): each part
@@ -1035,10 +1088,19 @@ namespace gnubase::ui
 			// width.
 			setClass(root, "named-keys", any);
 		}
-		const std::string colors = m_view.value("eventColors", std::string("default"));
+		const std::string colors = m_view.value("eventColors", std::string("velocity"));
 		for (const Rml::ObserverPtr<Rml::Element>& menu : m_menus)
 			if (Rml::Element* element = menu.get())
 			{
+				// Part and Sound Slot have no setup (p. 1134).
+				if (Rml::Element* setup = element->QuerySelector("menuitem[event-colors-setup]");
+					setup != nullptr && (colors == "part" || colors == "soundSlot") != setup->HasAttribute("disabled"))
+				{
+					if (setup->HasAttribute("disabled"))
+						setup->RemoveAttribute("disabled");
+					else
+						setup->SetAttribute("disabled", "");
+				}
 				Rml::ElementList items;
 				element->QuerySelectorAll(items, "menuitem[event-colors]");
 				for (Rml::Element* item : items)
@@ -1877,6 +1939,10 @@ namespace gnubase::ui
 		else if (target.HasAttribute("event-colors"))
 		{
 			setView({{"eventColors", attribute(target, "event-colors")}});
+		}
+		else if (target.HasAttribute("event-colors-setup") && !target.HasAttribute("disabled"))
+		{
+			openColorsSetup();
 		}
 		else if (target.HasAttribute("grid-type"))
 		{

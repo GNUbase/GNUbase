@@ -83,22 +83,26 @@ its track's.
   drops the changes. The Options tab (p. 118): Save Color Set as Default (`#colors-save-default`) saves the set being
   edited, not yet applied, in `editing.defaultColors` for new projects; Reset Color Set to Default
   (`#colors-reset-default`) puts that set, or the factory set while none is saved, in place of the set being edited.
-- **The MIDI editors' Event Colors** (pp. 1133-1134, 1269): the key, drum and in-place editors' toolbar button
-  `#key-event-colors` opens a menu that sets the editor view's `eventColors` (`editor.set`, view state): `default`,
-  the style sheets' note colors; `part`, each note in its part's color, its own or else its track's; `soundSlot`, in
-  the color of the sound slot of its track's articulation map that it plays (`midi::soundSlots`,
-  [articulation-maps.md](articulation-maps.md)). Notes without such a color, selected notes and those of parts that
-  aren't editable keep the style sheets' look. A colored note has the color as `background-color` and in its
-  attribute `color`.
+- **The MIDI editors' Event Colors** (pp. 1133-1136, 1269): the key, drum and in-place editors' toolbar button
+  `#key-event-colors` opens a menu that sets the editor view's `eventColors` (`editor.set`, view state): `velocity`,
+  the default, `pitch` and `channel`, each note in the color the user setting `ui.eventColors` gives its velocity's
+  range (8 of 16 velocities each, 0-15 to 112-127), its pitch class (12, from C) or its MIDI channel (16); `part`,
+  each note in its part's color, its own or else its track's; `soundSlot`, in the color of the sound slot of its
+  track's articulation map that it plays (`midi::soundSlots`, [articulation-maps.md](articulation-maps.md)). There is
+  no item for the style sheets' colors, as in the reference. Notes without such a color, selected notes and those of
+  parts that aren't editable keep the style sheets' look. A colored note has the color as `background-color` and in
+  its attribute `color`. The menu's Setup (disabled for Part and Sound Slot, p. 1134) opens the scheme's setup dialog,
+  `resources/ui/event-colors.rml` (Velocity, Pitch or Channel Colors Setup, pp. 1134-1136): a row per color with its
+  swatch and what it is for, and the color picker for the selected one; OK sets `ui.eventColors`, which the editors
+  follow at once, and Cancel drops the changes. The colors are the user's, not the project's.
 - **Styling.** The swatches and the color strip get `background-color` from code because the color is user data
   (CLAUDE.md, UI conventions); `tests/stylerules_tests.cpp` lists those files, and checks the documents' Lua too.
 
 ## Not yet
 
-The Options tab's Select Colors by Name (p. 118), colorizing track
-controls and mixer channels with their track's color (p. 1621, with the mixer, #106, and the inspector, #89), the Event
-Colors menu's Velocity, Pitch, Channel, Grid Match, Voice and Scale/Chords with their Setup dialogs (p. 1134), and the
-list editor's event colors.
+The Options tab's Select Colors by Name (p. 118), colorizing track controls and mixer channels with their track's color
+(p. 1621, with the mixer, #106, and the inspector, #89), the Event Colors menu's Grid Match, Voice and Scale/Chords
+with their Setup dialogs (pp. 1134-1136), and the list editor's event colors.
 
 ## Checks
 
@@ -118,9 +122,11 @@ list editor's event colors.
   tint as the factory set and 24 applied; the missing project colors of 8 basic colors, the mouse over one
   highlighting its replacement, and Apply replacing them in tracks and parts but not other colors, undone in one step;
   a color recolored in the picker listed as missing and replaced in its track by its new color.
-- `tests/keyeditor_tests.cpp`: `eventColors` as view state, refused values; `tests/keyeditor_ui_tests.cpp`: the
-  Event Colors menu's Part and Default, a selected note keeping its look, the drum and in-place editors' menus and the
-  notes of a part that isn't editable keeping their look; `tests/articulationmaps_ui_tests.cpp`: Sound Slot, a slot
+- `tests/keyeditor_tests.cpp`: `eventColors` as view state, Velocity at first, refused values; `ui.eventColors`, its
+  sizes and refused colors; `tests/keyeditor_ui_tests.cpp`: the Event Colors menu's Velocity, Pitch, Channel and Part,
+  no Default, a selected note keeping its look, the drum and in-place editors' menus and the notes of a part that
+  isn't editable keeping their look; the Channel and Pitch setup dialogs, OK keeping a recolored channel and Cancel
+  dropping a change, and Part without Setup; `tests/articulationmaps_ui_tests.cpp`: Sound Slot, a slot
   without a color, and the slot following a note's attributes.
 - `tests/eventediting_tests.cpp`: the color tool coloring an event and the selection, Alt taking an event's own
   color, its track's, or none from a track with the default color, the wheel's steps and Ctrl asking for the pane.

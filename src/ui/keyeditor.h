@@ -271,6 +271,8 @@ namespace gnubase::ui
 		void editSound(int pitch, const std::string& field, const std::string& text);
 		void place(Rml::Element& element, int64_t start, int64_t length, int pitch) const;
 		std::string partsRml() const;
+		void showSchemeColors(const engine::Json& colors); // ui.eventColors, and the notes in them
+		void openColorsSetup(); // the Event Colors menu's Setup (pp. 1134-1136): resources/ui/event-colors.rml
 		void noteColors(const std::string& colors, const engine::Json& part, const engine::Json& track,
 			const std::map<uint64_t, const engine::Json*>& maps);
 
@@ -359,7 +361,8 @@ namespace gnubase::ui
 		// The notes' colors that the Event Colors menu chooses (pp. 1133-1134), by part and note: none for the style
 		// sheets' color.
 		std::map<std::pair<uint64_t, uint64_t>, std::string> m_noteColors;
-		std::string m_expressionRml;                                    // the expression editor's lines as last set
+		engine::Json m_schemeColors = engine::Json::object(); // ui.eventColors: velocity, pitch and channel colors
+		std::string m_expressionRml;                          // the expression editor's lines as last set
 		std::set<std::pair<uint64_t, std::string>> m_hiddenExpressions; // by part, as its track's setup hides them
 		std::string m_expressionItems;                                  // Parameter Selection's items as last set
 
