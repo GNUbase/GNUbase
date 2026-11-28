@@ -851,6 +851,37 @@ TEST_CASE("Merge MIDI in Loop moves poly pressure with the notes as they play (#
 	CHECK(merge(true) == std::vector<int>{64, 68});
 }
 
+TEST_CASE("Merge MIDI in Loop puts poly pressure into the new part of the note it presses (#2158)", "[integration]")
+{
+	ModifiedTrack track;
+	track.add({{60, 100}});
+	press(track, track.part, {{0, 60}});
+	// The later part's velocity stays on a part of its own for its note's velocity variance.
+	const ObjectId later = track.addPart(4 * g_beatTicks);
+	run(track.client, "midiPart.set", {{"part", later}, {"velocity", 20}});
+	run(track.client, "note.add",
+		{{"part", later},
+			{"notes",
+				{{{"position", 0}, {"length", g_beatTicks / 2}, {"pitch", 64}, {"velocity", 0.5},
+					{"velocityVariance", -1.0}}}}});
+	press(track, later, {{0, 64}});
+
+	const Json merged = run(track.client, "midi.merge", {{"start", 0}, {"end", 8 * g_beat}, {"tracks", {track.track}}});
+	const auto destination = merged.at("tracks").at(0).get<ObjectId>();
+	// The keys of each new part's poly pressure, by its part velocity.
+	std::map<int, std::vector<int>> pressedIn;
+	const Json project = run(track.client, "project.get");
+	for (const Json& part : project.at("midiParts"))
+		if (part.at("track") == destination)
+		{
+			std::vector<int>& keys = pressedIn[part.at("velocity").get<int>()];
+			for (const Json& controller : part.at("controllers"))
+				if (controller.at("type") == "polyPressure")
+					keys.push_back(controller.at("number").get<int>());
+		}
+	CHECK(pressedIn == std::map<int, std::vector<int>>{{0, {60}}, {20, {64}}});
+}
+
 TEST_CASE("glued poly pressure moves by the difference at its note's position, which the octave-range fold can change",
 	"[integration]")
 {
