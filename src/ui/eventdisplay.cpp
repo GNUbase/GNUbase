@@ -872,6 +872,8 @@ namespace gnubase::ui
 			if (std::any_of(m_events.begin(), m_events.end(), [id](const Shown& shown) { return shown.id == id; }))
 				selection.push_back(id);
 		m_selection = std::move(selection);
+		if (!std::binary_search(m_selection.begin(), m_selection.end(), m_curveEvent))
+			m_curvePoints.clear(); // the selected curve points go with their event
 		setLanes();
 		showSelection();
 		m_length = project.value("length", g_defaultProjectLength);

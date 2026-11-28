@@ -1063,7 +1063,7 @@ namespace gnubase::ui
 		double m_volumeDy = 0.0;           // dp from the press to the mouse, dragging the event volume
 		std::optional<size_t> m_dragPoint; // the curve point dragged, none for a new one
 		// The selected volume curve points (reference manual p. 400) of the event m_curveEvent, as they were: they
-		// count while it is selected and has them.
+		// count while it is selected and has them, and go when it leaves the selection.
 		uint64_t m_curveEvent = 0;
 		std::vector<engine::VolumePoint> m_curvePoints;
 		std::vector<std::pair<double, double>> m_drawnCurve; // with Ctrl: where the drag went, in dp (#670)

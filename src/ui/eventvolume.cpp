@@ -350,10 +350,7 @@ namespace gnubase::ui
 		if (const auto fades = m_fades.find(m_dragEvent); fades != m_fades.end())
 		{
 			const std::vector<engine::VolumePoint> curve = draggedCurve(m_dragEvent);
-			const auto same = [](const engine::VolumePoint& a, const engine::VolumePoint& b)
-			{ return a.position == b.position && a.volume == b.volume && a.curve == b.curve; };
-			const bool changed =
-				!std::equal(curve.begin(), curve.end(), fades->second.curve.begin(), fades->second.curve.end(), same);
+			const bool changed = curve != fades->second.curve;
 			// A click on a point selects it, with Shift adds it to the selected ones or takes it out again (p. 400).
 			if (m_dragPoint && *m_dragPoint < fades->second.curve.size() && !changed)
 			{

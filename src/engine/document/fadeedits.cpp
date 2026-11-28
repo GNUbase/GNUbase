@@ -141,6 +141,9 @@ namespace gnubase::engine
 				return false;
 			const EventSpan out = eventSpan(project, from);
 			const EventSpan in = eventSpan(project, to);
+			// A range lengthens them only where it reaches across where they meet, or the gap between them.
+			if (range && (range->first > in.start || range->second < out.end))
+				return false;
 			const auto media = static_cast<double>(project.media.at(project.clips.at(from.clip).media).length);
 			const time::Samples first = std::max<time::Samples>(
 				out.start + 1, in.start + std::llround(eventSamples(project, to, -static_cast<double>(to.offset))));
@@ -686,9 +689,10 @@ namespace gnubase::engine
 				"overlap within the range instead gets its fade in up to the range's end and its fade out from the "
 				"range's start, and its events' own fades stay. Shapes stay; a fade that no longer fits next to the "
 				"one set gets shorter. crossfade (Crossfade): the events on the tracks where the range touches their "
-				"overlap, as event.crossfade does it with them (events that don't overlap are lengthened over the "
-				"range), with the crossfades fitted to the range as adjust does it; a range that touches no overlap "
-				"is refused. remove (Remove Fades): the crossfades that play "
+				"overlap, as event.crossfade does it with them (events next to each other that don't overlap but "
+				"whose clips do, unlocked and in the same part and lane, are lengthened over a range that reaches "
+				"across where they meet), with the crossfades fitted to the range as adjust does it; a range that "
+				"touches no overlap is refused. remove (Remove Fades): the crossfades that play "
 				"within the range. Returns the events changed, for crossfade and remove those that fade in.",
 				object({{"start", integer}, {"end", integer}, {"tracks", ids},
 						   {"fade", {{"type", "string"}, {"enum", {"in", "out", "adjust", "crossfade", "remove"}}}}},

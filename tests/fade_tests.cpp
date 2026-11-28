@@ -1145,9 +1145,15 @@ TEST_CASE("event.crossfade lengthens events whose clips overlap", "[unit]")
 	CHECK_THAT(reject(client, "event.crossfade", {{"events", {e, f}}}), ContainsSubstring("overlap"));
 	CHECK(span(e) == std::tuple{12000, 19000, 1000});
 
-	// On a range, the events are lengthened over the range.
+	// On a range, the events are lengthened over the range, if it reaches across where they meet: not over one
+	// inside a next to b.
 	run(client, "history.undo");
 	run(client, "history.undo");
+	CHECK_THAT(
+		reject(client, "range.fades", {{"start", 100}, {"end", 200}, {"tracks", {track}}, {"fade", "crossfade"}}),
+		ContainsSubstring("overlap"));
+	CHECK(span(a) == std::tuple{0, 0, 3000});
+	CHECK(span(b) == std::tuple{3000, 5000, 3000});
 	CHECK(run(client, "range.fades", {{"start", 2900}, {"end", 3300}, {"tracks", {track}}, {"fade", "crossfade"}})
 			  .at("events") == Json{b});
 	CHECK(span(a) == std::tuple{0, 0, 3300});
