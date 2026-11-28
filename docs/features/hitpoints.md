@@ -111,7 +111,8 @@ outside 0.1 to 10 or a project changed during rendering. It also checks jobs tha
 reached the UI. While a job started in the project window runs, the shared Rendering Audio dialog shows its progress and
 detail, titled Close Gaps (Time Stretch), and asks the user to wait before editing. Cancel or closing the dialog sends
 `job.cancel`; the job removes its rendered files. Completion, cancellation and failure close the display. Jobs started
-by other clients do not open it.
+by other clients do not open it. Once a `job.progress` has come, the dialog's progress no longer goes back to the older
+answer of its `job.get` check (#2172).
 
 The sample editor's inspector has the Hitpoints section, and its display shows the hitpoints that count and the
 disabled ones.
@@ -165,6 +166,10 @@ onsets (room sound, bleed, flams) are yet to come.
 - `tests/mainmenu_tests.cpp`: Close Gaps jobs held after rendering one slice show nonzero progress and detail. Cancel
   sends `job.cancel` without changing the project or history and removes that rendered file. Completion closes the
   display with one undoable edit, and failed jobs close it without opening a second error dialog.
+
+- `tests/mainmenu_tests.cpp`: Close Gaps progress doesn't go back to what an older `job.get` answer tells. The test uses
+  `Engine::setCommandRanHook` to let the job go on between `job.get`'s read and its answer, so a newer `job.progress`
+  reaches the UI before that answer every time (#2172).
 
 - `tests/hitpoints_tests.cpp`: held time-stretch jobs keep commands responsive, cancel without files, reject edits, undo
   and project replacement, and refuse transactions. Flatten clears slice and quantize origins with undo/redo and removes

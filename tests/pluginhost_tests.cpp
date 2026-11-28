@@ -1512,18 +1512,21 @@ TEST_CASE("an offline block that misses its deadline makes the plugin hang at on
 	CHECK(manager.hosts().at(0).state == "hung");
 }
 
-TEST_CASE("a host whose main thread answers nothing for longer than any job gets no new plugins until it answers",
+TEST_CASE("a host whose main thread answers nothing for longer than the silence limit gets no new plugins until it "
+		  "answers",
 	"[integration]")
 {
+	// Only the silence limit is short: the creates and moves keep the default job deadline, so a loaded machine that
+	// doesn't run the host for seconds during one of them doesn't fail it (#2175).
 	plugins::HostManager::Options options = testOptions();
 	options.deadlines.query = 100ms;
-	options.deadlines.job = 500ms;
+	options.silenceLimit = 500ms;
 	plugins::HostManager manager(options);
 	const std::unique_ptr<plugin::remote::RemotePlugin> stalling = createRemote(manager, {"test:stall", "", "GNUbase"});
 	const std::unique_ptr<plugin::remote::RemotePlugin> before = createRemote(manager);
 	REQUIRE(manager.hosts().size() == 1); // the same vendor: the same process
 
-	// The host's main thread takes 1.5 s for a flush: the query isn't answered, and for longer than a job may take,
+	// The host's main thread takes 1.5 s for a flush: the query isn't answered, and for longer than the silence limit,
 	// the host answers nothing. A new plugin of the group goes to a process of its own, with a log of its own.
 	flush(*stalling, {paramEvent(g_stall, 1500.0)});
 	std::this_thread::sleep_for(600ms);

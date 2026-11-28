@@ -422,6 +422,12 @@ namespace gnubase::engine
 		m_audio->setLocateCuedHook(std::move(hook));
 	}
 
+	void Engine::setCommandRanHook(std::function<void(const std::string& command)> hook)
+	{
+		const std::scoped_lock lock(m_mutex);
+		m_commandRanHook = std::move(hook);
+	}
+
 	void Engine::readMeters(MeterFrame& frame)
 	{
 		m_audio->readMeters(frame);
@@ -568,10 +574,14 @@ namespace gnubase::engine
 				m_commandLog.pop_front();
 		}
 
+		std::function<void(const std::string& command)> ran;
 		{
 			const std::scoped_lock lock(m_mutex);
 			clients = m_clients;
+			ran = m_commandRanHook; // a copy, which stays valid while it runs
 		}
+		if (ran)
+			ran(request.command);
 		for (Event& event : context.m_events)
 		{
 			event.request = request.id;

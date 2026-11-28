@@ -26,6 +26,7 @@
 #include <SDL3/SDL.h>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
@@ -51,6 +52,7 @@
 
 using namespace gnubase;
 using Catch::Matchers::ContainsSubstring;
+using Catch::Matchers::WithinAbs;
 using engine::Json;
 
 TEST_CASE("Audio Hitpoints divides the selected folder with Group Editing enabled", "[ui]")
@@ -1261,6 +1263,128 @@ TEST_CASE("Audio Advanced shows Close Gaps progress and Cancel until the job end
 		app.call("history.undo");
 		CHECK(app.call("project.get") == before);
 	}
+}
+
+namespace
+{
+	// Holds the Close Gaps job at each job.progress it sends, and lets it go on to the next one whenever a job.get has
+	// read it, before that job.get's answer goes out: so the answer tells an older progress than the job.progress
+	// event that came before it, as a busy machine can schedule the threads (#2172).
+	class SteppedSlices
+	{
+	public:
+		explicit SteppedSlices(engine::Engine& engine) : m_engine(engine)
+		{
+			m_engine.setJobProgressHook(
+				[state = m_state](uint64_t, const std::string& kind)
+				{
+					if (kind != "event.closeGaps")
+						return;
+					std::unique_lock lock(state->mutex);
+					++state->held;
+					state->changed.notify_all();
+					state->changed.wait(lock, [&] { return state->released || state->steps >= state->held; });
+				});
+			m_engine.setCommandRanHook(
+				[state = m_state](const std::string& command)
+				{
+					if (command != "job.get")
+						return;
+					std::unique_lock lock(state->mutex);
+					// Its last job.progress is held until the release, as going on from there needs this thread.
+					if (!state->changed.wait_for(
+							lock, std::chrono::minutes(1), [&] { return state->released || state->held != 0; }) ||
+						state->released || state->held >= g_lastProgress)
+						return;
+					state->steps = state->held;
+					state->changed.notify_all();
+					const int next = state->held + 1;
+					state->changed.wait_for(
+						lock, std::chrono::minutes(1), [&] { return state->released || state->held >= next; });
+				});
+		}
+		~SteppedSlices()
+		{
+			release();
+			m_engine.setCommandRanHook({});
+			m_engine.setJobProgressHook({});
+		}
+		SteppedSlices(const SteppedSlices&) = delete;
+		SteppedSlices& operator=(const SteppedSlices&) = delete;
+		SteppedSlices(SteppedSlices&&) = delete;
+		SteppedSlices& operator=(SteppedSlices&&) = delete;
+		// The job.progress the job is held at, 1 for its first; 0 before it got there.
+		int held() const
+		{
+			const std::scoped_lock lock(m_state->mutex);
+			return m_state->held;
+		}
+		void release()
+		{
+			{
+				const std::scoped_lock lock(m_state->mutex);
+				m_state->released = true;
+			}
+			m_state->changed.notify_all();
+		}
+
+		// Of three events: progress 0, 1/3 and 2/3.
+		static constexpr int g_lastProgress = 3;
+
+	private:
+		struct State
+		{
+			std::mutex mutex;
+			std::condition_variable changed;
+			int held = 0;          // guarded by mutex
+			int steps = 0;         // guarded by mutex
+			bool released = false; // guarded by mutex
+		};
+		engine::Engine& m_engine;
+		std::shared_ptr<State> m_state = std::make_shared<State>();
+	};
+}
+
+TEST_CASE("Close Gaps progress doesn't go back to what an older job.get answer tells", "[ui]")
+{
+	const test::TempDir dir;
+	test::Audio audio;
+	audio.samples.assign(48000, 0.25F);
+	const auto file = dir.path() / "slices.wav";
+	test::writeWav(file, audio);
+	test::UiApp app({1000, 760});
+	auto& display = app.appUi().showProject();
+	app.call("project.save", {{"path", (dir.path() / "song.dawproject").u8string()}});
+	const Json track = app.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track").at("id");
+	const Json media = app.call("media.add", {{"path", file.u8string()}}).at("media").at("id");
+	const Json clip = app.call("clip.add", {{"media", media}}).at("clip").at("id");
+	std::vector<uint64_t> events;
+	for (const int64_t position : {0, 24000, 48000})
+		events.push_back(
+			app.call("audioEvent.add", {{"track", track}, {"clip", clip}, {"position", position}, {"length", 12000}})
+				.at("event")
+				.at("id")
+				.get<uint64_t>());
+	REQUIRE(app.waitUntil([&] { return display.project().at("audioEvents").size() == 3; }));
+	display.select(events);
+	SteppedSlices stepped(app.engine());
+	click(app, "#menu-bar button[menu=audio-menu]");
+	app.ui().move(std::nullopt, {"#audio-advanced-submenu", 0, std::nullopt});
+	click(app, "menuitem[command=audio.closeGapsTimeStretch]");
+	// Once the command's result came, the event display asks job.get, then the progress dialog: the job goes on to 1/3
+	// before the first answer and to 2/3 before the dialog's, which tells 1/3.
+	const ui::EngineBinding& binding = app.appUi().binding();
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			return shown(app, "#render-progress-dialog") && stepped.held() == SteppedSlices::g_lastProgress &&
+				binding.waiting("job.get") == 0;
+		},
+		std::chrono::seconds(30)));
+	CHECK_THAT(std::stod(element(app, "#render-progress").at("attributes").at("value").get<std::string>()),
+		WithinAbs(2.0 / 3.0, 0.01));
+	stepped.release();
+	REQUIRE(app.waitUntil([&] { return !shown(app, "#render-progress-dialog"); }, std::chrono::seconds(30)));
 }
 
 TEST_CASE("Audio Advanced reports a failed Close Gaps time stretch job", "[ui]")

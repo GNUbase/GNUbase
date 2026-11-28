@@ -324,6 +324,10 @@ namespace gnubase::engine
 		// streams at its position and before it sends itself to the audio thread, e.g. to let the cue thread cue
 		// meanwhile, which then cues as the locate does (#1136). Empty for none. Any thread.
 		void setLocateCuedHook(std::function<void()> hook);
+		// For tests: calls hook on the command thread with the name of each command once it ran, before its events and
+		// its result go out, e.g. to let a job go on between what a job.get read and its answer, as a busy machine can
+		// schedule the threads (#2172). Empty for none. Any thread.
+		void setCommandRanHook(std::function<void(const std::string& command)> hook);
 
 	private:
 		friend class Client;
@@ -359,6 +363,7 @@ namespace gnubase::engine
 		std::map<std::string, std::shared_ptr<const Command>> m_commands;
 		std::deque<Request> m_requests;
 		std::vector<std::shared_ptr<detail::Mailbox>> m_clients;
+		std::function<void(const std::string& command)> m_commandRanHook; // for tests; empty for none
 		std::deque<Json> m_commandLog; // the newest commands that aren't queries; only the command thread uses it
 		RequestId m_nextRequest = 1;
 		bool m_stopping = false;

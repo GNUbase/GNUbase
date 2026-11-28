@@ -85,6 +85,10 @@ namespace gnubase::engine::plugins
 		{
 			std::filesystem::path executable; // gnubase-pluginhost; empty: the one next to the running program
 			plugin::remote::Deadlines deadlines;
+			// A host whose main thread answers nothing for longer is stuck, not slow: new plugins of its group go to a
+			// process of their own until it answers again. As long as the default job deadline, the longest a call may
+			// take.
+			std::chrono::milliseconds silenceLimit{std::chrono::seconds(30)};
 			std::chrono::milliseconds launchTimeout{10000};
 			std::chrono::milliseconds monitorInterval{20};
 		};

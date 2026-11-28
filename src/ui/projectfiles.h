@@ -97,6 +97,9 @@ namespace gnubase::ui
 			WindowId window = 0;
 			Rml::ObserverPtr<Rml::Element> progress;
 			bool rendering = false;
+			// A job.progress came since backupStarted: newer than what the job.get sent there answers, which may come
+			// after it (#2172).
+			bool progressed = false;
 		};
 
 		void ProcessEvent(Rml::Event& event) override;
