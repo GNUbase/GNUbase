@@ -43,7 +43,8 @@ keep its own height.
     .in-place-editor[track]           over its track's own lane; .hidden while a folded folder hides the track,
                                       .toolbar-shown while the toolbar shows; the focus zone "inPlace"
       .key-editor                     the key editor (key-editor.md): the parts' row, keyboard, grid, controller lanes
-        .key-editor-toolbar           starts with button.in-place-editing-mode and button.in-place-active-part
+        .key-editor-toolbar           starts with the section parts (Multiple Part Controls): button.in-place-editing-mode
+                                      and button.in-place-active-part; its sections are the set inPlaceToolbar
 #track-list listitem[value=<track>]   the track's row (track-list.md); .in-place while its editor is open
   button.in-place-toolbar-toggle      the triangle at its upper right, shown while .in-place: shows or hides the
                                       toolbar and the info line (p. 1259), .checked while they show
@@ -103,10 +104,9 @@ menu#in-place-editing-mode-menu-inPlace-<track>, menu#in-place-active-part-menu-
 
 ## Not yet
 
-Tracked in #1766: the setup panes of the toolbar and the info line (p. 1575), which only the project window has so far
-([docking.md](docking.md)); the keyboard in the track list's column; the toolbar's Event Colors (the key editor has
-none yet). The toolbar's Acoustic Feedback and Indicate Transpositions are the key editor's, velocity edits on the
-velocity lane included ([key-editor.md](key-editor.md)).
+Tracked in #1766: the keyboard in the track list's column. The toolbar's Acoustic Feedback, Indicate Transpositions
+and Event Colors are the key editor's, velocity edits on the velocity lane included, and so are the setup panes of the
+toolbar and the info line ([key-editor.md](key-editor.md)).
 
 ## Checks
 
@@ -140,7 +140,9 @@ velocity lane included ([key-editor.md](key-editor.md)).
   on a note after the tempo change selecting it; with Acoustic Feedback turned on in the toolbar, a note playing on the
   instrument track while it is pressed, at the pitch it is dragged to and until its release, and a note while it is
   drawn, and nothing with it off; Indicate Transpositions from the toolbar showing the notes of a part that follows
-  the project root key on the rows they play at.
+  the project root key on the rows they play at; the toolbar's and the info line's setup panes, with the sets of the
+  in-place editors (Multiple Part Controls first) and not the key editor's, hiding Event Colors and the velocity, which
+  an editor that opens again keeps hidden.
 - `tests/midiedit_tests.cpp`: `note.move` moving notes to another part as one undo step, keeping every field, a quantize
   origin included, and their ids, two notes keeping their distance, with its `note.removed` and `note.added` events,
   undo and redo; ticks counting on the project's timeline, so that parts starting at different places and a part on a

@@ -202,7 +202,7 @@ namespace gnubase::ui
 	Docking::Docking(engine::Engine& engine, EngineBinding& binding, Shell& shell, std::filesystem::path panelWindow,
 		bool hiddenWindows)
 		: m_binding(binding), m_shell(shell), m_panelWindow(std::move(panelWindow)), m_hiddenWindows(hiddenWindows),
-		  m_reloadEvent(g_documentReloadEvent), m_closeEvent(g_dialogCloseEvent)
+		  m_reloadEvent(g_documentReloadEvent), m_closeEvent(g_dialogCloseEvent), m_sectionsEvent(g_sectionsAddedEvent)
 	{
 		const engine::Result layout = engine::Client(engine).call("settings.get", {{"key", "ui.layout"}});
 		if (layout.ok() && layout.value.at("value").is_object())
@@ -288,11 +288,13 @@ namespace gnubase::ui
 		{
 			document.AddEventListener(Rml::EventId::Focus, this, true);
 			document.AddEventListener(m_reloadEvent, this);
+			document.AddEventListener(m_sectionsEvent, this);
 		}
 		else
 		{
 			document.RemoveEventListener(Rml::EventId::Focus, this, true);
 			document.RemoveEventListener(m_reloadEvent, this);
+			document.RemoveEventListener(m_sectionsEvent, this);
 		}
 	}
 
@@ -391,6 +393,11 @@ namespace gnubase::ui
 					item->SetInnerRML(known.label);
 				}
 		return learned;
+	}
+
+	void sectionsAdded(Rml::Element& element)
+	{
+		element.DispatchEvent(g_sectionsAddedEvent, {});
 	}
 
 	void Docking::arrangeSections(Rml::Element& element)
@@ -1617,6 +1624,11 @@ namespace gnubase::ui
 					reload(*old, *loaded);
 					break;
 				}
+			return;
+		}
+		if (event.GetType() == m_sectionsEvent)
+		{
+			arrangeSections(*target);
 			return;
 		}
 		if (event.GetType() == m_closeEvent)

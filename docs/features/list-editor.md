@@ -129,7 +129,7 @@ doesn't have (#1580).
 
 ## Not yet
 
-The setup panes of the toolbar and the info line (p. 1575), which only the project window has so far
+The setup panes of the toolbar and the info line (p. 1575), which only the project window and the key, drum and in-place editors have so far
 ([docking.md](docking.md)); the MIDI SysEx Editor dialog (address, ASCII, decimal and binary displays, Insert and
 Delete, importing and exporting .syx files); the project cursor in the event display (p. 1245); the Focus menu's user
 presets and Setup (the transform editor); text, lyrics and SMF events, which the project has no type for; muting events

@@ -30,6 +30,12 @@ namespace gnubase::ui
 {
 	class KeyCommands;
 
+	// Asks the docking system to arrange element's sections (Docking::arrangeSections) through the event
+	// g_sectionsAddedEvent, which bubbles to the document: for code that builds containers of sections or setup panes
+	// without a Docking at hand, such as the key editor's toolbar. Nothing happens outside a docking window.
+	inline constexpr const char* g_sectionsAddedEvent = "sectionsadded";
+	void sectionsAdded(Rml::Element& element);
+
 	// What a docking window can show in a zone's tab group or in a window of its own, e.g. the mixer.
 	struct Panel
 	{
@@ -285,6 +291,7 @@ namespace gnubase::ui
 		Rml::String
 			m_reloadEvent; // g_documentReloadEvent, made once: the destructor removes listeners without allocating
 		Rml::String m_closeEvent;            // g_dialogCloseEvent, made once, as m_reloadEvent
+		Rml::String m_sectionsEvent;         // g_sectionsAddedEvent, made once, as m_reloadEvent
 		std::set<engine::RequestId> m_saves; // layouts sent to the engine that it hasn't answered yet
 		bool m_unsaved = false;              // a fitted width that no save has sent yet
 		std::function<void(const std::string& window, const std::string& set)> m_reset;

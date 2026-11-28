@@ -21,12 +21,6 @@
 	min-height: 32dp;
 }
 
-.key-editor-toolbar .separator
-{
-	display: inline-block;
-	width: 8dp;
-}
-
 .key-editor-toolbar valuefield
 {
 	width: 40dp;

@@ -5,6 +5,7 @@
 // closing. tests/inplaceeditor_tests.cpp checks the engine's side.
 #include "engine/time/tempomap.h"
 #include "ui/automation.h"
+#include "ui/docking.h"
 #include "ui/eventdisplay.h"
 #include "ui/inplaceeditor.h"
 #include "ui/keyeditor.h"
@@ -1422,4 +1423,47 @@ TEST_CASE("an in-place editor's toolbar has Indicate Transpositions", "[ui]")
 	};
 	CHECK(
 		f.app.waitUntil([&] { return on(f.notes[0], g_bar + 10, 62) && on(f.notes[1], g_bar + g_quarter + 10, 66); }));
+}
+
+TEST_CASE("the in-place editor's toolbar and info line have setup panes", "[ui]")
+{
+	// Their context menus show, hide and order their sections (#1766, reference manual pp. 1259, 1575), for every
+	// in-place editor of the window: a set of their own, not the key editor's.
+	Fixture f;
+	f.app.call("editor.inPlace", {{"tracks", {f.track}}, {"open", true}});
+	f.click(f.triangle());
+	const std::string suffix = "-inPlace-" + std::to_string(f.track);
+	const ui::Docking& docking = f.app.appUi().docking();
+	REQUIRE(f.app.waitUntil([&] { return !docking.sections("project", "inPlaceToolbar").empty(); }));
+	CHECK(docking.sections("project", "inPlaceToolbar") ==
+		std::vector<std::string>{"parts", "tools", "transpose", "stepInput", "autoSelect", "acousticFeedback",
+			"lengthQuantize", "insertVelocity", "eventColors", "expression", "transpositions"});
+	CHECK(docking.sections("project", "inPlaceInfoLine") ==
+		std::vector<std::string>{
+			"start", "end", "length", "pitch", "articulations", "velocity", "releaseVelocity", "channel"});
+
+	// The toolbar's pane hides Event Colors.
+	f.app.ui().click(std::nullopt, ui::Target{f.editor() + " .key-tool[key-tool=erase]", 0, std::nullopt},
+		ui::MouseButton::Right, 1, {});
+	REQUIRE(f.app.waitUntil([&] { return f.has("#key-toolbar-setup" + suffix, "open"); }));
+	CHECK(f.elements("#key-toolbar-setup" + suffix + " [setup-section]").size() == 11);
+	f.click("#key-toolbar-setup" + suffix + " [setup-section=eventColors]");
+	const auto colorsHidden = [&] { return f.has(f.editor() + " [section=eventColors]", "hidden"); };
+	REQUIRE(f.app.waitUntil(colorsHidden));
+	CHECK_FALSE(f.elements(f.editor() + " #key-event-colors").at(0).at("visible").get<bool>());
+
+	// The info line's pane hides the velocity.
+	f.app.ui().click(std::nullopt, ui::Target{f.editor() + " .key-editor-info .info-empty", 0, std::nullopt},
+		ui::MouseButton::Right, 1, {});
+	REQUIRE(f.app.waitUntil([&] { return f.has("#key-info-setup" + suffix, "open"); }));
+	f.click("#key-info-setup" + suffix + " [setup-section=velocity]");
+	REQUIRE(f.app.waitUntil([&] { return f.has(f.editor() + " .info-field[section=velocity]", "hidden"); }));
+
+	// An editor that opens again has them hidden still.
+	f.app.call("editor.inPlace", {{"tracks", {f.track}}, {"open", false}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor()).empty(); }));
+	f.app.call("editor.inPlace", {{"tracks", {f.track}}, {"open", true}});
+	REQUIRE(f.app.waitUntil([&] { return !f.elements(f.editor() + " [section=eventColors]").empty(); }));
+	CHECK(f.app.waitUntil(colorsHidden));
+	CHECK(f.has(f.editor() + " .info-field[section=velocity]", "hidden"));
 }

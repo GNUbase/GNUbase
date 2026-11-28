@@ -10,6 +10,7 @@
 #include "ui/articulationnames.h"
 #include "ui/controllerlanes.h"
 #include "ui/cursors.h"
+#include "ui/docking.h"
 #include "ui/timeformat.h"
 
 #include <RmlUi/Core/ComputedValues.h>
@@ -89,6 +90,15 @@ namespace gnubase::ui
 
 		// The drum editor's tools (p. 1224): no trim, split or glue; the draw tool is the drumstick. The mute tool
 		// mutes on the Articulations lane, as the key editor's (#1684).
+		// A setup pane of the sections of the set (docs/features/docking.md), as the project window's toolbar has.
+		std::string setupPane(const std::string& id, const std::string& set)
+		{
+			return R"(<menu id=")" + id + R"(" class="setup-pane"><div setup-presets=")" + set +
+				R"("/><button setup-preset-save=")" + set + R"(">Save Preset</button><button setup-all=")" + set +
+				R"(">Show All</button><button setup-reset=")" + set + R"(">Reset All</button><div setup=")" + set +
+				R"("/></menu>)";
+		}
+
 		bool drumTool(KeyTool tool)
 		{
 			return tool != KeyTool::Trim && tool != KeyTool::Split && tool != KeyTool::Glue;
@@ -304,16 +314,34 @@ namespace gnubase::ui
 		for (const Transpose& each : g_transpose)
 			transpose += R"(<button class="key-transpose" semitones=")" + std::to_string(each.semitones) +
 				R"(" title=")" + each.title + R"(">)" + each.label + "</button>";
-		std::string inputs;
+		// The toolbar's and the info line's sections, which their setup panes show, hide and order (p. 1575): sets of
+		// their own for the key editor, the drum editor and the in-place editors (docs/features/docking.md).
+		const std::string kind = m_name.rfind("inPlace:", 0) == 0 ? "inPlace" : (drum ? "drumEditor" : "keyEditor");
+		const auto section = [](const char* id, const char* label, const std::string& content)
+		{
+			return std::string(R"(<div class="toolbar-section" section=")") + id + R"(" label=")" + label + R"(">)" +
+				content + "</div>";
+		};
+		std::string inputs; // Step Input and MIDI Input with their options, then Auto Select and Acoustic Feedback
 		for (const Input& each : g_inputs)
-			inputs += std::string(R"(<button class="key-input" setting=")") + each.setting + R"(" title=")" +
-				each.title + R"(">)" + each.label + "</button>";
+		{
+			const std::string button = std::string(R"(<button class="key-input" setting=")") + each.setting +
+				R"(" title=")" + each.title + R"(">)" + each.label + "</button>";
+			if (each.setting == std::string("autoSelectControllers"))
+				inputs = section("stepInput", "Step Input", inputs) +
+					section("autoSelect", "Auto Select Controllers", button);
+			else if (each.setting == std::string("acousticFeedback"))
+				inputs += section("acousticFeedback", "Acoustic Feedback", button);
+			else
+				inputs += button;
+		}
 		std::string info;
 		for (const auto& [field, label] : std::vector<std::pair<const char*, const char*>>{{"start", "Start"},
 				 {"end", "End"}, {"length", "Length"}, {"pitch", "Pitch"}, {"articulations", "Articulations"},
 				 {"velocity", "Velocity"}, {"releaseVelocity", "Off Velocity"}, {"channel", "Channel"}})
-			info += std::string(R"(<div class="info-field" info-field=")") + field + R"("><span class="info-label">)" +
-				label + R"(</span><textdisplay class="display" field=")" + field + R"("/>)" +
+			info += std::string(R"(<div class="info-field" info-field=")") + field + R"(" section=")" + field +
+				R"(" label=")" + label + R"("><span class="info-label">)" + label +
+				R"(</span><textdisplay class="display" field=")" + field + R"("/>)" +
 				// The warning sign for attributes the track's map doesn't have (.unknown, #1580, p. 1291).
 				(field == std::string("articulations")
 						? R"(<button class="articulation-menu" menu="key-articulations-menu)" + m_menuSuffix +
@@ -343,40 +371,51 @@ namespace gnubase::ui
 		// a press in the note display gives the focus (p. 1214, app::AppUi::addMidiFunctions).
 		root.SetAttribute("focuszone", "keyEditor");
 		updateOrder();
-		root.SetInnerRML(R"(<div class="toolbar key-editor-toolbar">)" + tools + R"(<span class="separator"/>)" +
-			transpose + R"(<span class="separator"/>)" + inputs +
-			R"(<button id="key-length-quantize" menu="key-length-menu)" + m_menuSuffix +
-			R"(" title="Length Quantize"/>)"
-			R"(<valuefield id="key-insert-velocity" min="1" max="127" default="100" step="1" decimals="0")"
-			R"( title="Insert Velocity"/><button id="key-event-colors" menu="key-event-colors-menu)" +
-			m_menuSuffix + R"(" title="Event Colors"/>)" +
+		root.SetInnerRML(R"(<div class="toolbar key-editor-toolbar" sections=")" + kind +
+			R"(Toolbar" contextmenu="key-toolbar-setup)" + m_menuSuffix + R"(">)" +
+			section("tools", "Tool Buttons", tools) + section("transpose", "Transpose Palette", transpose) + inputs +
+			section("lengthQuantize", "Length Quantize",
+				R"(<button id="key-length-quantize" menu="key-length-menu)" + m_menuSuffix +
+					R"(" title="Length Quantize"/>)") +
+			section("insertVelocity", "Insert Velocity",
+				R"(<valuefield id="key-insert-velocity" min="1" max="127" default="100" step="1" decimals="0")"
+				R"( title="Insert Velocity"/>)") +
+			section("eventColors", "Event Colors",
+				R"(<button id="key-event-colors" menu="key-event-colors-menu)" + m_menuSuffix +
+					R"(" title="Event Colors"/>)") +
 			// Show Note Expression Data and Double-Click Opens Note Expression Editor (pp. 1303, 1308).
 			(drum ? std::string()
-				  : std::string(
-						R"(<span class="separator"/>)"
+				  : section("expression", "Note Expression",
 						R"(<button class="key-input" setting="showExpression" title="Show Note Expression Data">)"
 						R"(Expression</button><button class="key-input" setting="expressionDoubleClick")"
-						R"( title="Double-Click Opens Note Expression Editor">Edit Expression</button>)"
-						R"(<button class="key-input" setting="indicateTranspositions" title="Indicate Transpositions">)"
-						R"(Transpositions</button>)")) +
-			(drum ? R"(<span class="separator"/><button id="drum-map" menu="drum-map-menu)" + m_menuSuffix +
-						R"(" title="Drum Map"/>)"
-						R"(<button class="key-input" setting="pitchVisibility" title="Pitch Visibility On/Off">)"
-						R"(Pitch Visibility</button><button id="drum-pitch-options" menu="drum-pitch-menu)" +
-						m_menuSuffix +
-						R"(" title="Select Pitch Visibility Options">Options</button>)"
-						R"(<button class="key-input" setting="soloInstrument" title="Solo Instrument">Solo</button>)"
-						R"(<button id="drum-names" menu="drum-names-menu)" +
-						m_menuSuffix +
-						R"(" title="Names"/>)"
-						R"(<button class="key-input" setting="showNoteLength" title="Show Note Length On/Off">)"
-						R"(Note Length</button><button id="drum-grid-type" menu="drum-grid-menu)" +
-						m_menuSuffix + R"(" title="Grid Type"/>)"
+						R"( title="Double-Click Opens Note Expression Editor">Edit Expression</button>)") +
+						section("transpositions", "Indicate Transpositions",
+							R"(<button class="key-input" setting="indicateTranspositions" title="Indicate Transpositions">)"
+							R"(Transpositions</button>)")) +
+			(drum ? section("drumMap", "Drum Map",
+						R"(<button id="drum-map" menu="drum-map-menu)" + m_menuSuffix + R"(" title="Drum Map"/>)") +
+						section("pitchVisibility", "Pitch Visibility",
+							R"(<button class="key-input" setting="pitchVisibility" title="Pitch Visibility On/Off">)"
+							R"(Pitch Visibility</button><button id="drum-pitch-options" menu="drum-pitch-menu)" +
+								m_menuSuffix + R"(" title="Select Pitch Visibility Options">Options</button>)") +
+						section("solo", "Solo Instrument",
+							R"(<button class="key-input" setting="soloInstrument" title="Solo Instrument">Solo</button>)") +
+						section("names", "Names",
+							R"(<button id="drum-names" menu="drum-names-menu)" + m_menuSuffix +
+								R"(" title="Names"/>)") +
+						section("noteLength", "Show Note Length",
+							R"(<button class="key-input" setting="showNoteLength" title="Show Note Length On/Off">)"
+							R"(Note Length</button>)") +
+						section("gridType", "Grid Type",
+							R"(<button id="drum-grid-type" menu="drum-grid-menu)" + m_menuSuffix +
+								R"(" title="Grid Type"/>)")
 				  : "") +
 			R"(</div>)"
-			R"(<div class="info-line key-editor-info empty"><span class="info-empty">No Object Selected</span>)" +
-			info + R"(</div><div class="editor-parts"/><div class="key-editor-body"><div class="key-editor-keys">)" +
-			keys + (drum ? std::string() : std::string(R"(<div class="key-editor-keys-zoom"/>)")) +
+			R"(<div class="info-line key-editor-info empty" sections=")" +
+			kind + R"(InfoLine" contextmenu="key-info-setup)" + m_menuSuffix +
+			R"("><span class="info-empty">No Object Selected</span>)" + info +
+			R"(</div><div class="editor-parts"/><div class="key-editor-body"><div class="key-editor-keys">)" + keys +
+			(drum ? std::string() : std::string(R"(<div class="key-editor-keys-zoom"/>)")) +
 			R"(</div><div class="key-editor-grid"><div class="key-editor-rows">)" + rows +
 			R"(</div><div class="key-editor-notes"/><div class="key-editor-step-cursor off"/>)"
 			R"(<div class="key-editor-velocity off"/>)" +
@@ -434,16 +473,22 @@ namespace gnubase::ui
 			R"(<menu id="key-event-colors-menu)" + m_menuSuffix +
 			R"("><menuitem type="toggle" event-colors="default">Default</menuitem>)"
 			R"(<menuitem type="toggle" event-colors="part">Part</menuitem>)"
-			R"(<menuitem type="toggle" event-colors="soundSlot">Sound Slot</menuitem></menu>)"
+			R"(<menuitem type="toggle" event-colors="soundSlot">Sound Slot</menuitem></menu>)" +
+			// The toolbar's and the info line's setup panes.
+			setupPane("key-toolbar-setup" + m_menuSuffix, kind + "Toolbar") +
+			setupPane("key-info-setup" + m_menuSuffix, kind + "InfoLine") +
 			// The info line's attributes (renderInfo), the last menu.
-			R"(<menu id="key-articulations-menu)" +
-			m_menuSuffix + R"("/>)");
+			R"(<menu id="key-articulations-menu)" + m_menuSuffix + R"("/>)");
 		while (holder->HasChildNodes())
 		{
 			Rml::Element* menu = document->AppendChild(holder->RemoveChild(holder->GetFirstChild()));
 			menu->AddEventListener(Rml::EventId::Click, this);
 			m_menus.push_back(menu->GetObserverPtr());
 		}
+		sectionsAdded(root);
+		for (const Rml::ObserverPtr<Rml::Element>& menu : m_menus)
+			if (Rml::Element* pane = menu.get(); pane != nullptr && pane->IsClassSet("setup-pane"))
+				sectionsAdded(*pane);
 		for (const Rml::EventId event : g_rootEvents)
 			root.AddEventListener(event, this);
 		document->AddEventListener(Rml::EventId::Mouseup, this);

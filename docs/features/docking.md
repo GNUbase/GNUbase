@@ -164,7 +164,10 @@ Color Menu, Track Visibility Configurations, State Buttons, Project Root Key and
 `#toolbar-setup` as its context menu (p. 57), and the info line has its fields as the sections of the set `infoLine`,
 with `#info-line-setup` ([inspector.md](inspector.md)), whose buttons name the fields as the info line does: Description
 and Position for its name and start with markers selected (p. 430), Name and Start otherwise. The mixer's channels
-are such containers ([mixer-window.md](mixer-window.md)); `tests/data/ui/sections.rml` is a test window with sections,
+are such containers ([mixer-window.md](mixer-window.md)), and so are the MIDI editors' toolbars and info lines
+([key-editor.md](key-editor.md)): code that builds such containers without the `Docking` at hand, as the key editor
+does each time it builds its toolbar, sends the event `sectionsadded` (`ui::sectionsAdded`) from the container and from
+each of its setup panes, and the docking window's document hears it and arranges them; `tests/data/ui/sections.rml` is a test window with sections,
 and `tests/data/ui/sections-later.rml` one whose channels only come after `attach`.
 
 ## Splitters

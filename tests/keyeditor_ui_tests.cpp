@@ -2729,3 +2729,22 @@ TEST_CASE("the drum editor shows the notes on their own rows with Indicate Trans
 	};
 	CHECK(f.app.waitUntil([&] { return onSound(ids[0], 38) && onSound(ids[1], 38); }));
 }
+
+TEST_CASE("the key editor's and the drum editor's toolbars have sections of their own sets", "[ui]")
+{
+	// Their setup panes show, hide and order them (#1766, reference manual p. 1575); the in-place editors' are in
+	// inplaceeditor_ui_tests.cpp.
+	Fixture f;
+	const ui::Docking& docking = f.app.appUi().docking();
+	REQUIRE(f.app.waitUntil([&] { return !docking.sections("editorWindow", "keyEditorToolbar").empty(); }));
+	CHECK(docking.sections("editorWindow", "keyEditorToolbar") ==
+		std::vector<std::string>{"tools", "transpose", "stepInput", "autoSelect", "acousticFeedback", "lengthQuantize",
+			"insertVelocity", "eventColors", "expression", "transpositions"});
+	CHECK(docking.sections("editorWindow", "keyEditorInfoLine").size() == 8);
+	CHECK(f.elements("#key-toolbar-setup [setup-section]").size() == 10);
+	f.app.call("editor.set", {{"editor", "window"}, {"content", "drum"}});
+	REQUIRE(f.app.waitUntil([&] { return !docking.sections("editorWindow", "drumEditorToolbar").empty(); }));
+	CHECK(docking.sections("editorWindow", "drumEditorToolbar") ==
+		std::vector<std::string>{"tools", "transpose", "stepInput", "autoSelect", "acousticFeedback", "lengthQuantize",
+			"insertVelocity", "eventColors", "drumMap", "pitchVisibility", "solo", "names", "noteLength", "gridType"});
+}

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/inplaceeditor.h"
 
+#include "ui/docking.h"
 #include "ui/eventdisplay.h"
 #include "ui/timeformat.h"
 
@@ -189,12 +190,14 @@ namespace gnubase::ui
 		if (Rml::Element* toolbar = element->QuerySelector(".key-editor-toolbar"))
 		{
 			const Rml::ElementPtr holder = document->CreateElement("div");
-			holder->SetInnerRML(R"(<button class="in-place-editing-mode" menu="in-place-editing-mode-menu)" + suffix +
+			holder->SetInnerRML(R"(<div class="toolbar-section" section="parts" label="Multiple Part Controls">)"
+								R"(<button class="in-place-editing-mode" menu="in-place-editing-mode-menu)" +
+				suffix +
 				R"(" title="Part Editing Mode">Part Editing Mode</button>)"
 				R"(<button class="in-place-active-part" menu="in-place-active-part-menu)" +
-				suffix + R"(" title="Activate Part for Editing"/><span class="separator"/>)");
-			while (holder->HasChildNodes())
-				toolbar->InsertBefore(holder->RemoveChild(holder->GetLastChild()), toolbar->GetFirstChild());
+				suffix + R"(" title="Activate Part for Editing"/></div>)");
+			toolbar->InsertBefore(holder->RemoveChild(holder->GetFirstChild()), toolbar->GetFirstChild());
+			sectionsAdded(*toolbar); // a section of the toolbar's setup pane (p. 1575)
 		}
 		for (const char* menu : {"in-place-editing-mode-menu", "in-place-active-part-menu"})
 		{

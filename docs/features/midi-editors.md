@@ -123,8 +123,8 @@ Visibility tab's checks with the check box skins.
 
 ## Not yet
 
-The setup panes of the toolbar and the info line (p. 1575), which only the project window has so far
-([docking.md](docking.md)); event colors other than Part and Sound Slot, and the list editor's, the Part Editing Mode's effect on a selection rectangle and Show Part Borders,
+The list editor's setup panes of the toolbar and the info line (p. 1575), which the key, drum and in-place editors
+have ([docking.md](docking.md)); event colors other than Part and Sound Slot, and the list editor's, the Part Editing Mode's effect on a selection rectangle and Show Part Borders,
 Independent Track Loop, the global tracks' events and editing them, Find Tracks, track visibility configurations and
 agents, the Track Display and its settings, selecting tracks in the Visibility tab, the preference Editor Content
 Follows Event Selection, Open Editor Commands open Editors in a Window/in Lower Zone (p. 1603: the Audio and MIDI menus'

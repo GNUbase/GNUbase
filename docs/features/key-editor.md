@@ -67,7 +67,8 @@ the edits of several parts go in one `history.transaction`.
 
 ```
 .key-editor[tool=objectSelection|draw|line|erase|trim|split|glue|mute]
-  .toolbar.key-editor-toolbar
+  .toolbar.key-editor-toolbar        its sections (.toolbar-section[section]) of the set keyEditorToolbar,
+                                      drumEditorToolbar or inPlaceToolbar, context menu #key-toolbar-setup (below)
     button.key-tool[key-tool]         the tools; .checked for the current one; the chosen line tool opens
                                       #key-line-menu with its modes (controller-lanes.md)
     button.key-transpose[semitones]   Move Up, Move Down, Move Up More, Move Down More (+1, -1, +12, -12)
@@ -82,7 +83,9 @@ the edits of several parts go in one `history.transaction`.
     button.key-input[setting=indicateTranspositions]
                                       Indicate Transpositions (not in the drum editor); .checked while on
   .info-line.key-editor-info          the first selected note: textdisplay[field=start|end|length|pitch|velocity|
-                                      releaseVelocity|channel]; .empty without, .multiple with several selected
+                                      releaseVelocity|channel]; .empty without, .multiple with several selected;
+                                      its fields are the sections of the set keyEditorInfoLine, drumEditorInfoLine
+                                      or inPlaceInfoLine, context menu #key-info-setup
   .editor-parts                       an .editor-part-row[track] per track, its .editor-part[part] at their time
   .key-editor-body                    scrolls vertically
     .key-editor-keys                  the piano keyboard: 128 .key-editor-key[pitch], the 75 white keys first, then
@@ -196,6 +199,14 @@ the notes, not the project window's selected events.
 - **Event Colors** (pp. 1133-1134, [colors.md](colors.md)): the toolbar's `#key-event-colors` opens
   `#key-event-colors-menu`, which sets the view's `eventColors`: Default (the style sheets' note colors), Part or Sound
   Slot. The drum editor and the in-place editor have it too.
+- **Setup panes** (p. 1575, [docking.md](docking.md)): the toolbar's sections are Tool Buttons, Transpose Palette,
+  Step Input (with MIDI Input and the recording options), Auto Select Controllers, Acoustic Feedback, Length Quantize,
+  Insert Velocity, Event Colors, then Note Expression and Indicate Transpositions in the key editor, and Drum Map,
+  Pitch Visibility, Solo Instrument, Names, Show Note Length and Grid Type in the drum editor; the info line's are its
+  fields. A right click on the toolbar or the info line opens its setup pane (`#key-toolbar-setup`, `#key-info-setup`,
+  with the editor's menu id suffix), which shows, hides and orders them, with presets, Show All and Reset All. The key
+  editor, the drum editor and the in-place editors each have sets of their own, so hiding a section in one hides it
+  in the editors of that kind in the window, and the window's layout keeps it.
 - **Clicking a part** in the row of parts activates it, as `MidiEditor` handles clicks on `[part]` (p. 1152); a click
   on a note activates its part too.
 
@@ -263,4 +274,5 @@ key editor's context menu.
   transpose event on the row it plays at, a note drawn there getting the pitch that plays at that row, a move changing
   the pitch by the rows dragged, and every note on its own row again once it is off; a note dragged across a transpose
   event shown and played by Acoustic Feedback at the pitch it lands on, before and after the release; the drum editor,
-  which keeps the view's setting, without the toggle and with the notes on their own rows.
+  which keeps the view's setting, without the toggle and with the notes on their own rows; the toolbar's sections of
+  the key editor and the drum editor in the editor window.
