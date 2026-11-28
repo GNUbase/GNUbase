@@ -34,6 +34,11 @@ modifier keys from mouse moves, and from the keys going down and up anywhere in 
 document hears the keys, and the pointer is for the element under the mouse (`ui::heldModifiers` counts the key itself
 before the event's modifiers say so).
 
+The in-place editors lie in the event lanes, but the project window's tool doesn't choose their pointers: while the
+mouse is over one, the event lanes' `.event-area` has no `pointer`, so where the in-place editor's own tool sets none,
+over its note display with the object selection tool or a controller lane's empty area with the erase tool, the OS's
+arrow shows (#2171).
+
 An element that RmlUi drags (`drag: drag`, as splitters, the sampler's markers and the value widgets have) keeps its
 pointer while the drag goes on, also when the mouse leaves it, until the button goes up.
 
@@ -45,7 +50,7 @@ until release; `tests/sampleeditor_ui_tests.cpp` does so for the snap point and 
 `tests/hitpoints_ui_tests.cpp` for Edit Hitpoints' modifiers, also while the mouse rests,
 `tests/audioparteditor_ui_tests.cpp` for the audio part editor's tools, `tests/drumeditor_ui_tests.cpp` for the
 drumstick, `tests/controllerlanes_ui_tests.cpp` for pitchbend events and the tools on the lanes
-(`tests/pointers_ui_tests.cpp` in the drum and in-place editors), `tests/listeditor_ui_tests.cpp` and
+(`tests/pointers_ui_tests.cpp` in the drum and in-place editors, also with the project window's draw tool chosen), `tests/listeditor_ui_tests.cpp` and
 `tests/patterneditor_ui_tests.cpp` for those editors' tools and the pattern editor's Alt. `tests/svg_tests.cpp` checks
 that every `cursor` name in the style sheets and documents is one of the OS's pointers or one of GNUbase's with a
 picture and a hotspot.

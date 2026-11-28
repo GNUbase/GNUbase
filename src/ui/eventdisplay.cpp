@@ -2,6 +2,7 @@
 #include "ui/eventdisplay.h"
 
 #include "platform/log.h"
+#include "ui/cursors.h"
 #include "ui/rmlui.h"
 #include "ui/widgets.h"
 
@@ -1639,6 +1640,14 @@ namespace gnubase::ui
 				const double y = (event.GetParameter<float>("mouse_y", 0.0F) - m_area->GetAbsoluteTop()) / dpRatio();
 				m_crossVertical->SetProperty(Rml::PropertyId::Left, dp(x));
 				m_crossHorizontal->SetProperty(Rml::PropertyId::Top, dp(y));
+				if (inInPlaceEditor(target))
+				{
+					// The in-place editor's own tool chooses its pointers, the OS's arrow where it sets none (#2171).
+					m_mouse.reset();
+					if (m_drag == Drag::None)
+						setPointer(*m_area, "");
+					break;
+				}
 				// The mouse pointer for what a press there does, with the modifier keys held.
 				m_mouse = std::make_pair(dpFrom(*m_lanes, event.GetParameter<float>("mouse_x", 0.0F)),
 					(event.GetParameter<float>("mouse_y", 0.0F) - m_lanes->GetAbsoluteTop()) / dpRatio());

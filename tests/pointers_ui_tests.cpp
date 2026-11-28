@@ -303,3 +303,34 @@ TEST_CASE("the controller lanes show the tools' pointers in the drum and the in-
 		CHECK(pointer(app).empty()); // no controller event there to erase
 	}
 }
+
+TEST_CASE("the project window's tool pointer doesn't show through the in-place editor", "[ui]")
+{
+	// The in-place editor sits in the event lanes; where its own tool sets no pointer, the OS's arrow shows, not the
+	// project window's draw tool (#2171).
+	test::UiApp app({1200, 800});
+	app.setDpRatio(1.0F);
+	app.appUi().showProject();
+	const uint64_t track = app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	app.call("midiPart.add", {{"track", track}, {"position", 0}, {"length", 4 * time::g_ticksPerQuarter}});
+	app.shell().step(std::chrono::milliseconds(0));
+	app.keys().run("tool.draw", Json::object(), app.main(), nullptr);
+	REQUIRE(pointerOver(app, middle(app, "event-lanes.events")) == "tool-draw"); // over the project window's lanes
+	app.appUi().trackList()->select({track});
+	app.call("editor.inPlace", {{"tracks", {track}}, {"open", true}});
+	app.call("editor.set",
+		{{"editor", "inPlace:" + std::to_string(track)}, {"lanes", {{{"type", "controller"}, {"number", 1}}}}});
+	const std::string editor = ".in-place-editor[track=\"" + std::to_string(track) + "\"]";
+	const std::string grid = editor + " .key-editor-grid";
+	const std::string area = editor + " .controller-lane[lane-kind=controller] .controller-lane-area";
+	REQUIRE(app.waitUntil([&] { return app.ui().dom(std::nullopt, area, 0).at("elements").size() == 1; }));
+	app.ui().click(std::nullopt,
+		at(".track-list listitem[value=\"" + std::to_string(track) + "\"] .in-place-toolbar-toggle"),
+		ui::MouseButton::Left, 1, {});
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(pointerOver(app, at(grid)).empty()); // the in-place object selection tool
+	CHECK(pointerOver(app, at(area)).empty());
+	app.ui().click(std::nullopt, at(editor + " .key-tool[key-tool=erase]"), ui::MouseButton::Left, 1, {});
+	CHECK(pointerOver(app, at(area)).empty()); // no controller event there to erase
+	CHECK(pointerOver(app, at(grid)) == "tool-erase");
+}
