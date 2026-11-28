@@ -1060,17 +1060,32 @@ TEST_CASE("killing the host process mid-render yields silence and an error event
 	Noise noise;
 	const std::vector<float> input = noise.block(128);
 
-	// The audio thread renders while the host process is killed.
+	// The audio thread renders while the host process is killed. The blocks that start once it knows of the report
+	// are counted apart: the plugin failed before the report, so they must be silent, while the block in flight
+	// when the report came may still bring the audio its host answered before it died.
 	std::atomic<bool> stop{false};
+	std::atomic<bool> knowsReport{false};
 	std::atomic<int> silentBlocks{0};
 	std::atomic<int> blocks{0};
+	std::atomic<int> loudBlocksSince{0};
+	std::atomic<int> blocksSince{0};
 	std::thread audio(
 		[&]
 		{
 			while (!stop)
 			{
-				silentBlocks += silent(graph.render(input)) ? 1 : 0;
-				++blocks;
+				const bool since = knowsReport;
+				const bool quiet = silent(graph.render(input));
+				if (since)
+				{
+					loudBlocksSince += quiet ? 0 : 1;
+					++blocksSince;
+				}
+				else
+				{
+					silentBlocks += quiet ? 1 : 0;
+					++blocks;
+				}
 				std::this_thread::sleep_for(1ms);
 			}
 		});
@@ -1095,12 +1110,11 @@ TEST_CASE("killing the host process mid-render yields silence and an error event
 		}
 	}
 	CHECK(reported);
-	const int silentBefore = silentBlocks;
-	const int blocksBefore = blocks;
-	CHECK(eventually([&] { return blocks > blocksBefore + 20; }));
+	knowsReport = true;
+	CHECK(eventually([&] { return blocksSince > 20; }));
 	stopAudio.join();
 	CHECK(graph.slot().failed());
-	CHECK(silentBlocks - silentBefore == blocks - blocksBefore); // only silence since
+	CHECK(loudBlocksSince == 0); // only silence since
 
 	// GNUbase keeps running.
 	const Result version = client.call("engine.version");
