@@ -114,6 +114,7 @@ namespace gnubase::engine
 		std::atomic<uint64_t> m_takenGeneration{0}; // the generation whose old blocks the disk thread took back
 		std::atomic<uint64_t> m_dropouts{0};
 		std::atomic<bool> m_failed{false};
+		std::atomic<bool> m_filling{false}; // a disk thread is filling the stream: one at a time
 
 		// Audio thread only.
 		Block* m_current = nullptr;
@@ -123,7 +124,7 @@ namespace gnubase::engine
 		bool m_located = false;   // m_next is known: the generation's first block arrived
 		bool m_ended = false;
 
-		// Disk thread only.
+		// Disk thread only: the one that holds m_filling.
 		std::vector<Block*> m_spare; // blocks taken back after a seek
 		uint64_t m_fillGeneration = 0;
 		time::Samples m_fillPosition = 0;
@@ -140,11 +141,17 @@ namespace gnubase::engine
 #pragma warning(pop)
 #endif
 
-	// The disk thread: keeps every open stream's buffer filled, and sleeps briefly when all are full.
+	// The disk threads: keep every open stream's buffer filled, and sleep briefly when all are full. Each takes the
+	// next stream that no other one is filling, so a stream that takes long, as one with a stretcher does (#1735),
+	// holds up only its own thread, and several of them run at once.
 	class DiskStreamer
 	{
 	public:
-		explicit DiskStreamer(std::chrono::microseconds idle = std::chrono::microseconds(1000));
+		// Half the hardware threads, at most 8: a shifted mono event's stretcher takes about a sixteenth of one
+		// (#1735).
+		static size_t defaultThreads();
+
+		explicit DiskStreamer(size_t threads = defaultThreads());
 		~DiskStreamer();
 		DiskStreamer(const DiskStreamer&) = delete;
 		DiskStreamer& operator=(const DiskStreamer&) = delete;
@@ -156,13 +163,14 @@ namespace gnubase::engine
 		// Stops filling the stream; it lives on while someone holds it.
 		void close(const std::shared_ptr<DiskStream>& stream);
 
+		size_t threads() const { return m_threads.size(); }
+
 	private:
 		void run();
 
 		std::mutex m_mutex; // guards m_streams
 		std::vector<std::shared_ptr<DiskStream>> m_streams;
 		std::atomic<bool> m_stopping{false};
-		std::chrono::microseconds m_idle;
-		std::thread m_thread;
+		std::vector<std::thread> m_threads;
 	};
 }
