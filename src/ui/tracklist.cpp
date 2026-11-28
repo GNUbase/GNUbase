@@ -2542,10 +2542,14 @@ namespace gnubase::ui
 					select != nullptr && options.contains(key))
 					select->SetValue(options.at(key).get<std::string>());
 			// Tail Mode: tailBars in bars and beats, tail in seconds, neither off.
-			const char* tailMode = options.contains("tailBars") ? "bars" : options.contains("tail") ? "seconds" : "off";
+			const char* tailMode = "off";
+			if (options.contains("tailBars"))
+				tailMode = "bars";
+			else if (options.contains("tail"))
+				tailMode = "seconds";
 			if (auto* mode = dynamic_cast<Rml::ElementFormControlSelect*>(dialog->GetElementById("render-tail-mode")))
 				mode->SetValue(tailMode);
-			if (Rml::Element* tail = dialog->GetElementById("render-tail"); tail != nullptr && tailMode[0] != 'o')
+			if (Rml::Element* tail = dialog->GetElementById("render-tail"))
 				tail->SetAttribute("value", options.value("tailBars", options.value("tail", 0.0)));
 			if (auto* folder = dynamic_cast<Rml::ElementFormControlInput*>(dialog->GetElementById("render-folder")))
 				folder->SetValue(options.value("folder", std::string()));
