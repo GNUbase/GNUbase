@@ -98,10 +98,10 @@ How it plays:
 Not yet: warped (time-stretched) playback with sync to the tempo, the quality modes, transient, grid and manual slicing
 with fades and the slices' MIDI phrase, the pitch and filter envelopes and a multi-node amp envelope, the LFOs, Trim
 Sample, Hot Swap Preview Sample that restores the sample before, the sampler panel's own undo history and A/B
-settings, loading by dragging an event or a MIDI part onto the panel, and transferring the sample to another
-instrument, which needs a plugin wrapper extension for samples. Key commands for the display's zoom, the toolbar's
-Write Automation (with the write modes, #122) and preset section, and the Add Track dialog's Event Type, which needs
-pattern events ([add-track.md](add-track.md)), are open too (#1122).
+settings, loading a MIDI part dragged onto the panel (rendered through its instrument, p. 711) and an audio event
+dragged onto the panel in a window of its own, and transferring the sample to another instrument, which needs a plugin
+wrapper extension for samples. The toolbar's Write Automation (with the write modes, #122) and preset section, and the
+Add Track dialog's Event Type ([add-track.md](add-track.md)), are open too (#1122).
 
 ## In the UI
 
@@ -179,7 +179,17 @@ root `.sampler-panel` has the class `.empty`):
   goes up, outside the window too. Like every drag of the app it also ends when its window loses the focus with the
   button held, e.g. to Alt+Tab, since the button may then go up over another application, where the window doesn't
   hear it (`SdlWindowSystem`, #1191).
-- A file dropped on the panel loads into the sampler (`sampler.load` with `path`, p. 710).
+- A file dropped on the panel loads into the sampler (`sampler.load` with `path`, p. 710), and so does an audio event
+  dragged onto it from the event display, while the panel is in the project window's lower zone (`sampler.load` with
+  `event`, its section as Start and End; #1122): the event display hands a drag of events that ends outside it to
+  `EventDisplay::onDropEvent`, and the events move only when nothing takes them. Both keep the settings with Lock
+  Parameter Settings.
+- **Key commands** (p. 717, #1122): a press in the display gives the panel the keyboard focus. The panel is the focus
+  zone `sampler`, where the project window's zoom keys zoom the display instead ([key-commands.md](key-commands.md)):
+  H and G (`samplerPanel.zoomIn`, `samplerPanel.zoomOut`) halve and double the part shown around its middle, as far
+  as the horizontal zoom goes, Shift+H and Shift+G (`samplerPanel.zoomInVertically`, `samplerPanel.zoomOutVertically`)
+  double and halve the waveform's gain from 1 to 64 times, and Shift+F (`samplerPanel.zoomFull`) shows the whole
+  sample.
 
 ## Tests
 
@@ -223,3 +233,5 @@ playback and recording from stop answer only after the held read is released.
 imported samplers' samples, go into, and to `tests/sampler_ui_tests.cpp` the ruler with its format and the zoom
 sliders, with a marker's drag while zoomed in. Then `sampler.create`'s `midiInput` went into `tests/sampler_tests.cpp`,
 and the Add Track dialog's Input Routing and the toolbar's Read Automation into `tests/sampler_ui_tests.cpp`.
+#1122 then added the zoom's key commands and an audio event dragged from the event display onto the panel to
+`tests/sampler_ui_tests.cpp`.

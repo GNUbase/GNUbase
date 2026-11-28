@@ -1392,6 +1392,10 @@ namespace gnubase::ui
 		// Released before the drag delay: neither a move nor a click.
 		if (!started)
 			return;
+		// Dropped outside the display on what takes the event instead (onDropEvent).
+		if (Rml::Element* target = event.GetTargetElement();
+			m_dropEvent && target != nullptr && !inside(target, m_root.get()) && m_dropEvent(m_dragEvent, *target))
+			return;
 		const bool constrained = restricts(event);
 		if (constrained)
 			m_pressed = withoutCtrl(m_pressed);

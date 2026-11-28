@@ -906,6 +906,38 @@ namespace gnubase::app
 			}});
 		m_keys.add({"window.sampler", "Shows the sampler panel, which edits the selected sampler track.",
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_docking.open("sampler"); }});
+		// The sampler panel's zoom (p. 717), on the project window's zoom keys while the panel has the focus.
+		struct SamplerZoom
+		{
+			const char* id;
+			const char* action;
+			const char* keys;
+			const char* description;
+		};
+		for (const SamplerZoom& zoom :
+			{SamplerZoom{"samplerPanel.zoomIn", "in", "H", "Zooms the sampler panel's display in."},
+				SamplerZoom{"samplerPanel.zoomOut", "out", "G", "Zooms the sampler panel's display out."},
+				SamplerZoom{
+					"samplerPanel.zoomInVertically", "inVertically", "Shift+H", "Raises the sampler panel's waveform."},
+				SamplerZoom{"samplerPanel.zoomOutVertically", "outVertically", "Shift+G",
+					"Lowers the sampler panel's waveform."},
+				SamplerZoom{
+					"samplerPanel.zoomFull", "full", "Shift+F", "Shows the whole sample in the sampler panel."}})
+		{
+			m_keys.add({zoom.id, zoom.description,
+				[this, action = std::string(zoom.action)](ui::Window& /*window*/, Rml::Element* /*zone*/)
+				{
+					if (const std::shared_ptr<ui::SamplerPanel> panel = m_sampler.lock())
+						panel->zoomBy(action);
+				}});
+			m_keys.enableWhen(zoom.id,
+				[this](ui::Window& /*window*/, Rml::Element* /*zone*/)
+				{
+					const std::shared_ptr<ui::SamplerPanel> panel = m_sampler.lock();
+					return panel && panel->canZoom();
+				});
+			m_keys.bind({zoom.keys, zoom.id, engine::Json::object(), "sampler"});
+		}
 		m_keys.add({"window.drumMachine", "Shows the drum machine, which edits the selected drum track.",
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_docking.open("drumMachine"); }});
 		m_keys.add({"window.history", "Shows the edit history, where steps are undone and redone.",
@@ -2008,6 +2040,19 @@ namespace gnubase::app
 		m_eventDisplay->onImportFailed([this](const std::string& error) { m_files.showError(m_main.id(), error); });
 		// A double click on a part opens it where the preference says (p. 1603).
 		m_eventDisplay->onOpenEditor([this](uint64_t part) { openEditor(doubleClickEditor(), {part}); });
+		// An audio event dragged onto the sampler panel loads into its sampler track (p. 710).
+		m_eventDisplay->onDropEvent(
+			[this](uint64_t event, Rml::Element& target)
+			{
+				const std::shared_ptr<ui::SamplerPanel> panel = m_sampler.lock();
+				const engine::Json& project = m_eventDisplay->project();
+				if (!panel || !project.is_object())
+					return false;
+				const engine::Json events = project.value("audioEvents", engine::Json::array());
+				return std::any_of(events.begin(), events.end(),
+						   [event](const engine::Json& each) { return each.value("id", uint64_t{0}) == event; }) &&
+					panel->dropEvent(event, target);
+			});
 		// Paste goes onto the selected track (reference manual p. 270).
 		m_eventDisplay->useTrackSelection(
 			[this] { return m_trackList ? m_trackList->selection() : std::vector<uint64_t>(); });

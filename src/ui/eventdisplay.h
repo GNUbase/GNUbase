@@ -228,6 +228,10 @@ namespace gnubase::ui
 		// Called with the part for a double click on a MIDI part or an audio part instead of opening it in the editor
 		// window, e.g. by the app, which opens it where the preference editing.doubleClickOpensEditorIn says.
 		void onOpenEditor(std::function<void(uint64_t)> listener) { m_openEditor = std::move(listener); }
+		// Called with the pressed event and the element under the mouse when a drag of events ends outside the
+		// display, e.g. by the app, which loads an audio event dropped on the sampler panel (reference manual p.
+		// 710). The events move only if it returns false.
+		void onDropEvent(std::function<bool(uint64_t, Rml::Element&)> listener) { m_dropEvent = std::move(listener); }
 		// Called with the error when the engine refuses an import of audio or MIDI files (audioFile.import,
 		// midiFile.import), e.g. by the app, which shows it in a dialog (#1976); otherwise it is only logged.
 		void onImportFailed(std::function<void(const std::string&)> listener) { m_importFailed = std::move(listener); }
@@ -1010,6 +1014,8 @@ namespace gnubase::ui
 		std::function<void()> m_layoutListener;
 		// useTrackSelection
 		std::function<std::vector<uint64_t>()> m_trackSelection;
+		// onDropEvent
+		std::function<bool(uint64_t, Rml::Element&)> m_dropEvent;
 		std::function<void()> m_addTrack;                       // onAddTrack
 		std::function<void(uint64_t)> m_openEditor;             // onOpenEditor
 		std::function<void(const std::string&)> m_importFailed; // onImportFailed

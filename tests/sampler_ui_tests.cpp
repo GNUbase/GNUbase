@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The sampler panel and Add Sampler Track in the app (#1029, docs/features/sampler-track.md), driven with
 // ui::Automation as MCP's UI tools drive it: the panel follows the selected sampler track, its controls, markers and
-// keyboard set the sampler's parameters, a dropped file loads into it, Normalize Sample sets its gain, and the add
-// track dialog's Sampler page adds sampler tracks. tests/sampler_tests.cpp checks the engine's side.
+// keyboard set the sampler's parameters, a dropped file or audio event loads into it, key commands zoom its display,
+// Normalize Sample sets its gain, and the add track dialog's Sampler page adds sampler tracks. tests/sampler_tests.cpp
+// checks the engine's side.
 #include "testutils/commandholds.h"
 #include "uiapp.h"
 
@@ -13,6 +14,7 @@
 #include "ui/canvas.h"
 #include "ui/docking.h"
 #include "ui/enginebinding.h"
+#include "ui/eventdisplay.h"
 #include "ui/rmlui.h"
 #include "ui/shell.h"
 #include "ui/tracklist.h"
@@ -55,7 +57,7 @@ namespace
 		explicit Fixture(std::vector<std::unique_ptr<midi::Backend>> backends = midi::makeBackends())
 			: app({1200, 800}, std::move(backends))
 		{
-			app.appUi().showProject();
+			display = &app.appUi().showProject();
 			test::Audio sine;
 			for (int frame = 0; frame < 24000; ++frame)
 				sine.samples.push_back(static_cast<float>(0.5 * std::sin(frame * 0.05)));
@@ -183,6 +185,7 @@ namespace
 		std::filesystem::path file = folder.path() / "sine.wav";
 		std::filesystem::path other = folder.path() / "other.wav";
 		test::UiApp app;
+		ui::EventDisplay* display = nullptr; // the project window's
 		uint64_t audio = 0;
 		uint64_t track = 0;
 		uint64_t channel = 0;
@@ -1215,4 +1218,93 @@ TEST_CASE("Import Audio File loads the file chosen, with the lock, and shows why
 	CHECK(f.app.shell().answerFileDialog(f.app.shell().fileDialogs().begin()->first, {f.file}));
 	REQUIRE(f.app.waitUntil([&] { return f.samplerChannel().at("sample") != loaded; }));
 	CHECK(f.parameter("Cutoff") == 2000.0);
+}
+
+TEST_CASE("key commands zoom the display while the panel has the keyboard focus", "[ui]")
+{
+	// Reference manual p. 717 (#1122): the zoom's key commands, those of the project window's zoom.
+	Fixture f;
+	f.open();
+	ui::EventDisplay& display = *f.display;
+	const double projectScale = display.view().scale;
+	const auto attribute = [&](const std::string& selector, const char* name)
+	{ return f.elements(selector).at(0).at("attributes").value(name, std::string()); };
+	REQUIRE(f.app.waitUntil([&] { return !attribute(".sampler-ruler", "scale").empty(); }));
+	const double full = std::stod(attribute(".sampler-ruler", "scale"));
+	const auto scale = [&] { return std::stod(attribute(".sampler-ruler", "scale")); };
+	const auto gain = [&] { return std::stod(attribute(".sampler-wave", "gain")); };
+	const auto press = [&](const char* keys)
+	{
+		f.app.ui().key(std::nullopt, keys);
+		f.app.shell().step(std::chrono::milliseconds(0));
+	};
+
+	// A press in the display gives the panel the focus: Zoom In halves what it shows, around its middle.
+	f.click("#sampler-display");
+	press("H");
+	REQUIRE(f.app.waitUntil([&] { return std::abs(scale() - (full / 2)) < full * 1e-6; }));
+	CHECK(std::stod(attribute(".sampler-ruler", "start")) > 0.0);
+	press("H");
+	REQUIRE(f.app.waitUntil([&] { return std::abs(scale() - (full / 4)) < full * 1e-6; }));
+	press("G");
+	REQUIRE(f.app.waitUntil([&] { return std::abs(scale() - (full / 2)) < full * 1e-6; }));
+	// Zoom Full shows the whole sample, and Zoom Out stops there.
+	press("Shift+F");
+	REQUIRE(f.app.waitUntil([&] { return std::abs(scale() - full) < full * 1e-6; }));
+	CHECK(std::stod(attribute(".sampler-ruler", "start")) == 0.0);
+	press("G");
+	CHECK(std::abs(scale() - full) < full * 1e-6);
+
+	// Vertically they raise and lower the waveform, from 1 up to 64 times.
+	press("Shift+H");
+	REQUIRE(f.app.waitUntil([&] { return gain() == 2.0; }));
+	press("Shift+G");
+	REQUIRE(f.app.waitUntil([&] { return gain() == 1.0; }));
+	press("Shift+G");
+	CHECK(gain() == 1.0);
+
+	// The project window's zoom stays as it was.
+	CHECK(display.view().scale == projectScale);
+}
+
+TEST_CASE("an audio event dragged from the event display onto the panel loads into the sampler", "[ui]")
+{
+	// Reference manual p. 710 (#1122): the event's section, as Create Sampler Track takes it, with the lock's
+	// settings; the event stays where it was.
+	Fixture f;
+	f.app.setDpRatio(1.0F);
+	const Json media = f.app.call("media.add", {{"path", f.other.u8string()}}).at("media");
+	const Json clip = f.app.call("clip.add", {{"media", media.at("id")}}).at("clip").at("id");
+	const uint64_t event =
+		f.app
+			.call("audioEvent.add",
+				{{"track", f.audio}, {"clip", clip}, {"position", 0}, {"offset", 6000}, {"length", 12000}})
+			.at("event")
+			.at("id")
+			.get<uint64_t>();
+	f.open();
+	f.set("Cutoff", 1000.0);
+	f.click("#sampler-lock");
+	REQUIRE(f.app.waitUntil([&] { return !f.elements("#sampler-lock[checked]").empty(); }));
+	ui::EventDisplay& display = *f.display;
+	REQUIRE(f.app.waitUntil([&] { return display.project().at("audioEvents").size() == 1; }));
+	const Json area = f.box(".event-area");
+	const ui::TimelineView& shown = display.view();
+	const double seconds = 12000.0 / 48000.0 / 2;
+	const ui::Point from{
+		static_cast<int>(std::lround(area.at("x").get<double>() + ((seconds - shown.start) / shown.scale))),
+		static_cast<int>(std::lround(area.at("y").get<double>() + display.laneTops().at(0) + 10.0))};
+	const Json target = f.box("#sampler-display");
+	const ui::Point to{static_cast<int>(target.at("x").get<double>() + (target.at("width").get<double>() / 2)),
+		static_cast<int>(target.at("y").get<double>() + (target.at("height").get<double>() / 2))};
+	f.app.ui().drag(std::nullopt, {"", 0, from}, {"", 0, to});
+	REQUIRE(f.app.waitUntil([&] { return f.samplerChannel().at("sample") == clip; }));
+	CHECK_THAT(f.parameter("Start"), WithinAbs(0.25, 1e-9));
+	CHECK_THAT(f.parameter("End"), WithinAbs(0.75, 1e-9));
+	CHECK(f.parameter("Cutoff") == 1000.0);
+	const Json events = f.app.call("project.get").at("audioEvents");
+	REQUIRE(events.size() == 1);
+	CHECK(events[0].at("id") == event);
+	CHECK(events[0].at("track") == f.audio);
+	CHECK(events[0].at("position") == 0);
 }
