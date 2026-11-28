@@ -2409,7 +2409,7 @@ TEST_CASE("the expression editor stays centered on its note as the pitches zoom"
 }
 
 TEST_CASE("the lower zone's key editor at its default size gives the note display more room than the controller lanes, "
-		  "at dp ratios 1 and 1.5",
+		  "at dp ratios 1, 1.5 and 2",
 	"[ui]")
 {
 	// The lower zone at its default 240 dp, with the Velocity lane and the footer below the note display: the lanes
@@ -2417,8 +2417,9 @@ TEST_CASE("the lower zone's key editor at its default size gives the note displa
 	// as CI's Linux screen lets it be: at a dp ratio of 1 the toolbar is two rows, the note display the larger part of
 	// the editor, and in a lower zone of 400 dp the lanes keep their whole height; at 1.5, 683 x 512 dp, the toolbar
 	// wraps to three rows and leaves less than the note display's 40% and the lanes, so the lanes are down to their
-	// footer. At 2, 512 x 384 dp, it wraps to five rows and leaves the editor no room for the footer.
-	for (const float ratio : {1.0F, 1.5F})
+	// footer. At 2, 512 x 384 dp, it would wrap to five rows, but stays at three, hiding the items that don't fit
+	// (#2169), so the editor keeps the lanes' footer and part of the note display.
+	for (const float ratio : {1.0F, 1.5F, 2.0F})
 	{
 		INFO("dp ratio " << ratio);
 		const auto px = [ratio](double dp) { return dp * ratio; };
@@ -2449,6 +2450,12 @@ TEST_CASE("the lower zone's key editor at its default size gives the note displa
 		const double room =
 			editor - height(".key-editor-toolbar") - height(".key-editor-info") - height(".editor-parts");
 		INFO("editor " << editor << ", note display " << body << ", controller lanes " << lanes << ", room " << room);
+		// Three rows of buttons at most; at 2 Indicate Transpositions, the last item, is below them, the tools in them.
+		CHECK(height(".key-editor-toolbar") <= px(72) + 0.5);
+		const auto inRows = [&box, &bottom](const std::string& item)
+		{ return bottom(item) <= bottom(".key-editor-toolbar") + 0.5 && box(item).at("height").get<double>() > 0; };
+		CHECK(inRows(".key-tool[key-tool=objectSelection]"));
+		CHECK(inRows(".key-input[setting=indicateTranspositions]") == (ratio < 2.0F));
 		// The note display has its 40%, or the lanes are down to their footer and it has the rest.
 		CHECK(std::abs(body + lanes - room) <= 1.0);
 		CHECK(((body >= (0.4 * editor) - 1.0) || (lanes <= px(22) + 0.5)));
