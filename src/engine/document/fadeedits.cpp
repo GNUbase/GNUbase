@@ -142,9 +142,9 @@ namespace gnubase::engine
 			const EventSpan out = eventSpan(project, from);
 			const EventSpan in = eventSpan(project, to);
 			const auto media = static_cast<double>(project.media.at(project.clips.at(from.clip).media).length);
-			const time::Samples first = std::max(
+			const time::Samples first = std::max<time::Samples>(
 				out.start + 1, in.start + std::llround(eventSamples(project, to, -static_cast<double>(to.offset))));
-			const time::Samples last = std::min(in.end - 1,
+			const time::Samples last = std::min<time::Samples>(in.end - 1,
 				out.start + std::llround(eventSamples(project, from, media - static_cast<double>(from.offset))));
 			time::Samples start = 0;
 			time::Samples end = 0;
@@ -157,7 +157,7 @@ namespace gnubase::engine
 				const double seconds = context.call("settings.get", {{"key", "editing.defaultCrossfade"}})
 										   .at("value")
 										   .value("length", 0.01);
-				const auto length = std::llround(seconds * project.sampleRate);
+				const auto length = static_cast<time::Samples>(std::llround(seconds * project.sampleRate));
 				start = std::max(first, (out.end + in.start - length) / 2);
 				end = std::min(last, start + length);
 				start = std::max(first, end - length);
