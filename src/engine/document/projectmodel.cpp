@@ -2191,6 +2191,9 @@ namespace gnubase::engine
 				require(type == TrackType::Midi || type == TrackType::Instrument,
 					"only MIDI and instrument tracks have midiInput");
 				changed.midiInput = parameters.at("midiInput").get<std::string>();
+				require(changed.midiInput == "all" || changed.midiInput == "chordPads" || changed.midiInput == "none" ||
+						changed.midiInput.find("/in/") != std::string::npos,
+					"midiInput must be all, chordPads, none or a MIDI input's midi.portSettings key");
 			}
 			changed.mute = parameters.value("mute", changed.mute);
 			changed.solo = parameters.value("solo", changed.solo);
@@ -4782,7 +4785,9 @@ namespace gnubase::engine
 				"Monitoring glides in and out over one audio block. MIDI and instrument tracks have them too: "
 				"recordEnable arms the track for MIDI recording, and while either is on, the track plays what comes "
 				"from its MIDI input, midiInput: all (all MIDI inputs, the default), chordPads (only the chord pads, "
-				"which play into it also with Chord Pad Output Mode off, chordPads.set outputMode) or none. "
+				"which play into it also with Chord Pad Output Mode off, chordPads.set outputMode), none, or a single "
+				"MIDI input port, by its midi.portSettings key such as dummy/in/Keys (reference manual p. 348), also "
+				"one outside all MIDI inputs or not there now. "
 				"inputTransformer (MIDI "
 				"and instrument tracks): {mode, modules}, mode off, track (its own modules) or project (those of "
 				"midi.setInputTransformer), modules as midi.setInputTransformer takes them; the modules that are on "
@@ -4855,10 +4860,10 @@ namespace gnubase::engine
 						{"program", {{"type", {"integer", "null"}}}}, {"bank", {{"type", {"integer", "null"}}}},
 						{"midiChannel", {{"type", {"integer", "null"}}}}, {"device", stringSchema},
 						{"volume", numberSchema}, {"pan", numberSchema}, {"monitor", booleanSchema},
-						{"recordEnable", booleanSchema}, {"midiInput", enumSchema({"all", "chordPads", "none"})},
-						{"mute", booleanSchema}, {"solo", booleanSchema}, {"exclusive", booleanSchema},
-						{"soloDefeat", booleanSchema}, {"listen", booleanSchema}, {"notes", stringSchema},
-						{"linked", booleanSchema}, {"pre", sections[0]}, {"eq", sections[1]}, {"strip", sections[2]},
+						{"recordEnable", booleanSchema}, {"midiInput", stringSchema}, {"mute", booleanSchema},
+						{"solo", booleanSchema}, {"exclusive", booleanSchema}, {"soloDefeat", booleanSchema},
+						{"listen", booleanSchema}, {"notes", stringSchema}, {"linked", booleanSchema},
+						{"pre", sections[0]}, {"eq", sections[1]}, {"strip", sections[2]},
 						{"modifiers", {{"type", "object"}}}, {"midiInserts", {{"type", "object"}}},
 						{"midiSends", {{"type", "object"}}}, {"inputTransformer", {{"type", "object"}}},
 						{"sends",

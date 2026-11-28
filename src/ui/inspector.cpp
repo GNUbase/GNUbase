@@ -613,16 +613,24 @@ namespace gnubase::ui
 		  m_transportChanged(
 			  binding.on("transport.changed", [this](const engine::Event& event) { followArranger(event.data); })),
 		  // MIDI Learn assigns the next controller, pitch bend or aftertouch the track receives (p. 1304): from the
-		  // MIDI inputs among all MIDI inputs while its MIDI input is All MIDI Inputs, else none.
+		  // MIDI inputs among all MIDI inputs while its MIDI input is All MIDI Inputs, from its port while that is a
+		  // single port (#641), else none.
 		  m_activity(binding.on("midi.activity",
 			  [this](const engine::Event& event)
 			  {
-				  if (!m_learning || m_channel.value("midiInput", std::string("all")) != "all")
+				  if (!m_learning)
 					  return;
+				  const std::string from = m_channel.value("midiInput", std::string("all"));
+				  const auto received = [&](const Json& message)
+				  {
+					  const std::string backend = message.value("backend", std::string());
+					  const std::string id = message.value("id", std::string());
+					  return from == "all" ? m_notInAllInputs.count(backend + " " + id) == 0
+										   : from == backend + "/in/" + id;
+				  };
 				  for (const Json& message : event.data.at("received"))
-					  if (const std::string input = learnedInput(message.at("bytes")); m_learning && !input.empty() &&
-						  m_notInAllInputs.count(
-							  message.value("backend", std::string()) + " " + message.value("id", std::string())) == 0)
+					  if (const std::string input = learnedInput(message.at("bytes"));
+						  m_learning && !input.empty() && received(message))
 					  {
 						  learn(false);
 						  sendExpressionInput({{"input", input}});
@@ -1146,13 +1154,30 @@ namespace gnubase::ui
 					std::to_string(channel->at("output").get<uint64_t>()));
 			if (Rml::Element* input = element("select[control=input]"); input != nullptr && type == "audio")
 				widgets::fill(*input, inputChoices(*m_project), std::to_string(channel->at("input").get<uint64_t>()));
-			// A MIDI or instrument track's MIDI input: all MIDI inputs, the chord pads (reference manual p. 1367) or
-			// none.
+			// A MIDI or instrument track's MIDI input: all MIDI inputs, the chord pads (reference manual p. 1367),
+			// none, or a single MIDI input (p. 348, #641), also one that isn't there now.
 			if (Rml::Element* input = element("select[control=input]");
 				input != nullptr && (type == "midi" || type == "instrument"))
-				widgets::fill(*input,
-					{{"all", "All MIDI Inputs"}, {"chordPads", "Chord Pads"}, {"none", "Not Connected"}},
-					channel->value("midiInput", std::string("all")));
+			{
+				if (!m_portsAsked)
+				{
+					m_portsAsked = true;
+					m_binding.send("midi.ports", Json::object(),
+						[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+						{
+							if (!alive.expired() && result.ok())
+								readPorts(result.value);
+						});
+				}
+				widgets::Options inputs{
+					{"all", "All MIDI Inputs"}, {"chordPads", "Chord Pads"}, {"none", "Not Connected"}};
+				inputs.insert(inputs.end(), m_inputPorts.begin(), m_inputPorts.end());
+				const std::string midiInput = channel->value("midiInput", std::string("all"));
+				if (std::none_of(
+						inputs.begin(), inputs.end(), [&](const auto& each) { return each.first == midiInput; }))
+					inputs.emplace_back(midiInput, midiInput);
+				widgets::fill(*input, inputs, midiInput);
+			}
 			if (type == "midi")
 			{
 				// The MIDI channel its patch, MIDI volume and pan go out on (reference manual p. 349): Any or 1-16.
@@ -1433,9 +1458,19 @@ namespace gnubase::ui
 	void Inspector::readPorts(const Json& ports)
 	{
 		m_notInAllInputs.clear();
+		m_inputPorts.clear();
 		for (const Json& port : ports.value("ports", Json::array()))
-			if (port.value("input", false) && !port.value("inAllInputs", true))
-				m_notInAllInputs.insert(port.value("backend", std::string()) + " " + port.value("id", std::string()));
+		{
+			const std::string backend = port.value("backend", std::string());
+			const std::string id = port.value("id", std::string());
+			if (!port.value("input", false))
+				continue;
+			if (!port.value("inAllInputs", true))
+				m_notInAllInputs.insert(backend + " " += id);
+			if (port.value("visible", true))
+				m_inputPorts.emplace_back(backend + "/in/" += id, port.value("showAs", id));
+		}
+		m_stale = true;
 	}
 
 	void Inspector::showMidiEffects(const std::string& section, const Json& rack)
@@ -1751,16 +1786,22 @@ namespace gnubase::ui
 					: target->Closest(".inspector-retrospective");
 				button != nullptr && m_retrospectiveMenu)
 			{
-				// Insert as Cycle Recording only for input from two or more cycle laps (p. 355, #2067).
+				// Insert as Cycle Recording only for input from two or more cycle laps (p. 355, #2067), as the answer
+				// to this opening says, not to an earlier one (#2096).
 				if (Rml::Element* item = m_retrospectiveMenu->QuerySelector(".retrospective-cycle"); item != nullptr)
 				{
 					item->SetAttribute("disabled", "");
 					if (m_track != 0)
 						m_binding.send("midi.getRetrospective", {{"track", m_track}},
-							[item = item->GetObserverPtr()](const engine::Result& result)
+							[this, item = item->GetObserverPtr(), opened = ++m_retrospectiveOpened](
+								const engine::Result& result)
 							{
-								if (item && result.ok() && result.value.at("cycleLaps").get<size_t>() > 1)
+								if (!item || opened != m_retrospectiveOpened)
+									return;
+								if (result.ok() && result.value.at("cycleLaps").get<size_t>() > 1)
 									item->RemoveAttribute("disabled");
+								else
+									item->SetAttribute("disabled", "");
 							});
 				}
 				openMenu(*m_retrospectiveMenu.get(),
@@ -2186,8 +2227,8 @@ namespace gnubase::ui
 			key = name == "record" ? "recordEnable" : name;
 			value = event.GetParameter<bool>("value", false);
 		}
-		else if (const auto picked = event.GetParameter<Rml::String>("value", "");
-			name == "input" && (picked == "all" || picked == "chordPads" || picked == "none"))
+		else if (const auto picked = event.GetParameter<Rml::String>("value", ""); name == "input" &&
+			(picked == "all" || picked == "chordPads" || picked == "none" || picked.find("/in/") != std::string::npos))
 		{
 			key = "midiInput"; // a MIDI or instrument track's
 			value = picked;

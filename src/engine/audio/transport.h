@@ -282,6 +282,15 @@ namespace gnubase::engine
 		bool cycle = false;              // it played in cycle mode (graph::TransportBlock::cycle)
 	};
 
+	// Where a playback pass stopped (PlayedPositions::stops), as the next pass's PlayedLap tells it.
+	struct PassStop
+	{
+		uint32_t pass = 0;
+		time::Samples position = -1; // PlayedLap::stopped
+		uint32_t lap = 0;            // PlayedLap::stoppedLap
+		time::Samples right = -1;    // PlayedLap::stoppedRight
+	};
+
 	// Where the transport played each of the device's last frames, so recorded input finds where it belongs: with
 	// the audio that went out the record offset before it came in (the device's input and output latency, see
 	// docs/features/latency-and-monitoring.md). Kept per frame, so input lines up across cycle jumps, locates, starts
@@ -303,14 +312,19 @@ namespace gnubase::engine
 		// Audio thread: the cycle lap (TransportSegment::lap) and the playback pass that the device frame played in,
 		// with the locators the lap jumped between, or the current ones if the frame isn't kept.
 		PlayedLap lapAt(int64_t frame) const noexcept;
+		// Audio thread: where the last passes stopped, each at its pass % size: a track's input in a later pass than
+		// the one after its input before finds where that one stopped (#2157).
+		using Stops = std::array<PassStop, 16>;
+		const Stops& stops() const noexcept { return m_stops; }
 
 	private:
 		std::vector<time::Samples> m_positions; // a ring, by device frame
 		std::vector<uint8_t> m_recording;       // the same ring: 1 where the transport recorded
 		std::vector<PlayedLap> m_laps;          // the same ring: the lap and pass of the frame
 		PlayedLap m_lap;                        // the current ones
-		time::Samples m_played = -1;            // the position after the last frame that played
-		bool m_playing = false;                 // the last block played
-		int64_t m_end = 0;                      // the device frame after the last one added
+		Stops m_stops;
+		time::Samples m_played = -1; // the position after the last frame that played
+		bool m_playing = false;      // the last block played
+		int64_t m_end = 0;           // the device frame after the last one added
 	};
 }

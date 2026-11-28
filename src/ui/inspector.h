@@ -155,8 +155,10 @@ namespace gnubase::ui
 		engine::Json m_arrangerChain = engine::Json::object(); // the active chain's id and steps, as the list shows
 		Rml::ObserverPtr<Rml::Element> m_stepMenu;             // the chain list's context menu
 		Rml::ObserverPtr<Rml::Element> m_retrospectiveMenu;    // Retrospective Recording's pop-up menu
-		Rml::ObserverPtr<Rml::Element> m_expressionMenu;       // Note Expression's Show Additional Functions
-		int m_touchedStep = -1;                                // the step right-clicked, for Remove Touched
+		uint64_t m_retrospectiveOpened =
+			0; // how often it opened: midi.getRetrospective answers of earlier ones go unused
+		Rml::ObserverPtr<Rml::Element> m_expressionMenu; // Note Expression's Show Additional Functions
+		int m_touchedStep = -1;                          // the step right-clicked, for Remove Touched
 		std::vector<int> m_selectedSteps; // the steps selected, by index, for Remove Selected; a chain edit clears them
 		int m_stepAnchor = -1;            // the step clicked last, where Shift selects from
 		// A step or an arranger event pressed in the lists, which a release over the chain list drops there.
@@ -169,7 +171,11 @@ namespace gnubase::ui
 		std::set<std::string> m_usedExpressions; // the expressions the track's notes have points of
 		Subscription m_activity;                 // midi.activity, for MIDI Learn
 		std::set<std::string> m_notInAllInputs;  // "backend id" of the MIDI inputs that aren't among all MIDI inputs
-		Subscription m_portsChanged;             // midi.changed, for them
+		// The visible MIDI inputs, by midi.portSettings key, with the names they show as, for a track's MIDI input
+		// (#641); asked for once a MIDI or instrument track shows.
+		std::vector<std::pair<std::string, std::string>> m_inputPorts;
+		bool m_portsAsked = false;
+		Subscription m_portsChanged; // midi.changed, for them
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 	};
 }

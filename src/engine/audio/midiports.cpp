@@ -174,8 +174,38 @@ namespace gnubase::engine
 		m_mpeInputs[index].process(midi::MpeSetup::unpack(setup), event, allInputs);
 	}
 
+	void MidiPorts::deliver(int slot, const audio::MidiMessage& message, bool inAll, graph::EventBuffer& allInputs,
+		PortInputs& ports) noexcept
+	{
+		const uint64_t hash = m_slotHashes[static_cast<size_t>(slot)].load(std::memory_order_relaxed);
+		const auto port =
+			static_cast<size_t>(std::find(ports.hashes.begin(), ports.hashes.end(), hash) - ports.hashes.begin());
+		if (hash == 0 || port == ports.hashes.size())
+		{
+			if (inAll)
+				addInput(slot, message, allInputs);
+			return;
+		}
+		// The slot's MPE input goes through each message once, so it goes into a buffer of its own first.
+		m_delivered.clear();
+		addInput(slot, message, m_delivered);
+		const auto put = [](graph::EventBuffer& to, const graph::ProcessEvent& event)
+		{
+			if (graph::endsNotes(event))
+				to.addEnd(event);
+			else
+				to.add(event);
+		};
+		for (const graph::ProcessEvent& event : m_delivered)
+		{
+			if (inAll)
+				put(allInputs, event);
+			put(ports.events.at(port), event);
+		}
+	}
+
 	void MidiPorts::take(const audio::DeviceBlock& block, double sampleRate, graph::EventBuffer& allInputs,
-		PadBuffers& pads, const ChordPadKeys& padKeys) noexcept
+		PadBuffers& pads, const ChordPadKeys& padKeys, PortInputs& ports) noexcept
 	{
 		// The keys down on the remote's input before another became it go up with it (#1447), and what they hold ends:
 		// their note-offs come from an input that is no longer the remote's (#1571).
@@ -204,7 +234,7 @@ namespace gnubase::engine
 			m_sectionPadOf.fill(0);
 		}
 		m_queue.take(block.time, sampleRate, block.frames,
-			[this, &block, &allInputs, &pads, &padKeys](int slot, const audio::MidiMessage& message)
+			[this, &block, &allInputs, &pads, &padKeys, &ports](int slot, const audio::MidiMessage& message)
 			{
 				if (slot == g_keyboardSlot)
 				{
@@ -232,8 +262,7 @@ namespace gnubase::engine
 					// A remote key that goes up meanwhile ends what it played and is no section key down (#1447).
 					if (!on && remote)
 						playPad(message, padKeys, pads);
-					if (inAll)
-						addInput(slot, message, allInputs);
+					deliver(slot, message, inAll, allInputs, ports);
 				}
 				else if (m_padListen.load(std::memory_order_relaxed) &&
 					((status == 0xD0 && message.size >= 2) ||
@@ -247,12 +276,11 @@ namespace gnubase::engine
 						source = 2;
 					m_padEvents.tryPush(PadEvent{PadEvent::Kind::ControlInput, source,
 						static_cast<uint8_t>(status == 0xB0 ? message.bytes[1] & 0x7F : 0)});
-					if (inAll)
-						addInput(slot, message, allInputs);
+					deliver(slot, message, inAll, allInputs, ports);
 				}
-				else if (!(remote && playPad(message, padKeys, pads)) && inAll)
+				else if (!(remote && playPad(message, padKeys, pads)))
 				{
-					addInput(slot, message, allInputs);
+					deliver(slot, message, inAll, allInputs, ports);
 				}
 				const Received received{slot, block.position + message.offset, message};
 				// Only while someone listens, and without system real-time messages (clock, active sensing), which

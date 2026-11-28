@@ -30,6 +30,20 @@ namespace gnubase::engine
 		class Store;
 	}
 
+	// What came in at single MIDI input ports in a block, for the tracks that play one (Channel::midiInput, #641): up
+	// to g_max ports, by chordPadPortHash of their keys (0 for none).
+	struct PortInputs
+	{
+		static constexpr size_t g_max = 8;
+		explicit PortInputs(size_t capacity = 0)
+		{
+			for (graph::EventBuffer& buffer : events)
+				buffer = graph::EventBuffer(capacity);
+		}
+		std::array<uint64_t, g_max> hashes{};
+		std::array<graph::EventBuffer, g_max> events;
+	};
+
 	// The ports of every MIDI backend, with their settings: the name they are shown as, whether they are visible,
 	// whether an input belongs to "all MIDI inputs", and an input's MPE setup (midi::MpeSetup). The settings are the
 	// user setting midi.portSettings, so they last across restarts and wait for ports that aren't connected. The first
@@ -67,9 +81,10 @@ namespace gnubase::engine
 		// says (midi::PadVoices); its note-off ends them, or with latch its next note-on. With filter, the remote
 		// keys without a chord play nothing (#1089). pads also gets what playPads plays.
 		// pads has a buffer per player (ChordPadKeys::players): each player's voicings go into its own.
+		// ports gets what came in at the ports that tracks play on their own (#641), in all MIDI inputs or not.
 		using PadBuffers = std::array<audio::MidiBuffer, ChordPadKeys::g_maxPlayers>;
 		void take(const audio::DeviceBlock& block, double sampleRate, graph::EventBuffer& allInputs, PadBuffers& pads,
-			const ChordPadKeys& padKeys) noexcept;
+			const ChordPadKeys& padKeys, PortInputs& ports) noexcept;
 
 		// Any thread but an audio thread: a message from the on-screen keyboard (midi.keyboard), which belongs to all
 		// MIDI inputs and arrives now, as a port's would. False if the input queue is full.
@@ -164,6 +179,9 @@ namespace gnubase::engine
 		// Audio thread: a message of the input slot (or the on-screen keyboard's) into allInputs, by the slot's MPE
 		// setup.
 		void addInput(int slot, const audio::MidiMessage& message, graph::EventBuffer& allInputs) noexcept;
+		// Audio thread: the same into allInputs if inAll, and into the buffer of ports that has the slot's port.
+		void deliver(int slot, const audio::MidiMessage& message, bool inAll, graph::EventBuffer& allInputs,
+			PortInputs& ports) noexcept;
 		Json toJson(const Port& port) const;
 		Json list() const;
 
@@ -217,6 +235,7 @@ namespace gnubase::engine
 		std::atomic<bool> m_padListen{false};
 		// Per input slot, chordPadPortHash of its port's key, for the MIDI input that the remote keys come from.
 		std::array<std::atomic<uint64_t>, g_maxInputs> m_slotHashes{};
+		graph::EventBuffer m_delivered{64}; // audio thread: one message's events (deliver)
 		std::atomic<size_t> m_monitorDropped{0};
 	};
 }

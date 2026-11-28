@@ -512,6 +512,7 @@ namespace gnubase::engine
 			channel.instrumentParameters.clear();
 			channel.samples.clear();
 			channel.midiThru = false;
+			channel.midiPort = 0;
 			channel.padThru = false;
 			channel.autoFades = AutoFades();
 			if (frozen.inserts)
@@ -877,6 +878,9 @@ namespace gnubase::engine
 				channel.midiInput == "all" && (channel.monitor || channel.recordEnable);
 			render.padThru = (track.type == TrackType::Midi || track.type == TrackType::Instrument) &&
 				channel.midiInput == "chordPads" && (channel.monitor || channel.recordEnable);
+			if ((track.type == TrackType::Midi || track.type == TrackType::Instrument) &&
+				channel.midiInput.find("/in/") != std::string::npos && (channel.monitor || channel.recordEnable))
+				render.midiPort = chordPadPortHash(channel.midiInput);
 			for (size_t player = 0; player < project.chordPads.players.size(); ++player)
 				if (project.chordPads.players[player].track == track.id && track.id != 0)
 					render.padPlayer = static_cast<int>(player);

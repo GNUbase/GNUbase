@@ -259,11 +259,16 @@ namespace gnubase::engine
 		}
 	}
 
-	void MidiTap::thru(
-		const graph::EventBuffer& input, const Sequencers& sequencers, const std::vector<uint8_t>& thru) noexcept
+	void MidiTap::thru(const graph::EventBuffer& input, const PortInputs& ports, const Sequencers& sequencers,
+		const std::vector<uint8_t>& thru) noexcept
 	{
 		for (size_t i = 0; i < sequencers.size(); ++i)
-			sequencers[i].second->thru(input, i < thru.size() && thru[i] != 0);
+		{
+			const uint8_t from = i < thru.size() ? thru[i] : 0;
+			// By the port's hash, not its index, which moves when other tracks change their input.
+			sequencers[i].second->thru(
+				from >= 2 ? ports.events.at(from - 2U) : input, from != 0, from >= 2 ? ports.hashes.at(from - 2U) : 0);
+		}
 	}
 
 	void MidiTap::capture(uint64_t position, const Instruments& instruments) noexcept
@@ -465,10 +470,13 @@ namespace gnubase::engine
 				"last muted (recording.add's cycleMode stacked); laps after the first start at the left locator, and "
 				"those playback left end at the right one, as the locators were when the lap played. Each start of "
 				"playback in cycle mode after a stop in cycle mode begins a lap too, where it starts, and the lap "
-				"before it ends where playback stopped. It needs input from at least two laps. Returns what "
-				"recording.add returns.",
+				"before it ends where playback stopped. It needs input from at least two laps. allInputs: Insert from "
+				"All MIDI Inputs (p. 354): inserts into the track what came in at all MIDI inputs, which a buffer of "
+				"its own keeps in the same way, whatever the tracks' MIDI inputs, monitor and record enable. Returns "
+				"what recording.add returns.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["track"],
-					"properties": {"track": {"type": "integer"}, "cycle": {"type": "boolean"}}})"),
+					"properties": {"track": {"type": "integer"}, "cycle": {"type": "boolean"},
+						"allInputs": {"type": "boolean"}}})"),
 				Json::parse(R"({"type": "object", "properties": {"parts": {"type": "array"}},
 					"required": ["parts"]})"),
 				false},
@@ -476,8 +484,10 @@ namespace gnubase::engine
 			{
 				require(m_device != nullptr, "there is no audio device; set one with audio.setDevice");
 				const Json& track = context.parameters().at("track");
-				const ObjectId channel = midiChannel(track);
-				const std::vector<RetrospectiveEvent> events = m_recorder.retrospective(channel);
+				const ObjectId channel = midiChannel(track); // also for allInputs: a MIDI or instrument track
+				// The buffer of all MIDI inputs is channel 0's (Recorder::process).
+				const ObjectId buffer = context.parameters().value("allInputs", false) ? 0 : channel;
+				const std::vector<RetrospectiveEvent> events = m_recorder.retrospective(buffer);
 				const MidiRecordFilter filter = MidiRecordFilter::fromJson(m_settings.value("midi.recordFilter"));
 				const double ratio = m_snapshots.latest().sampleRate / m_device->format().sampleRate;
 				const time::Samples cursor = m_transport.position();
@@ -569,12 +579,13 @@ namespace gnubase::engine
 						{"tracks",
 							Json::array({{{"track", track}, {"takes", std::move(takes)}, {"notes", builder.notes()},
 								{"controllers", builder.controllers()}}})}});
-				m_recorder.inserted(channel, events.back().deviceFrame); // only now: a failed insert keeps the buffer
+				m_recorder.inserted(buffer, events.back().deviceFrame); // only now: a failed insert keeps the buffer
 				return added;
 			});
 		engine.registerCommand(
 			{"midi.clearRetrospective", 1,
-				"Empties the retrospective buffer of a MIDI or instrument track, or of every track without track.",
+				"Empties the retrospective buffer of a MIDI or instrument track, or without track every buffer, also "
+				"that of all MIDI inputs (midi.insertRetrospective allInputs).",
 				Json::parse(R"({"type": "object", "additionalProperties": false,
 					"properties": {"track": {"type": "integer"}}})"),
 				Json::object(), false},

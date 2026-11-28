@@ -507,6 +507,34 @@ TEST_CASE("retrospective recording inserts what a track's input played while it 
 	CHECK_THAT(reject(client, "midi.insertRetrospective", {{"track", setup.track}}), ContainsSubstring("nothing"));
 }
 
+TEST_CASE("Insert from All MIDI Inputs inserts into the track what came in at all MIDI inputs (#641)", "[integration]")
+{
+	// Reference manual p. 354: its own buffer, before the tracks' routing, so a track that neither monitors nor is
+	// record-enabled, and whose own buffer holds nothing, gets it too.
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "channel.set", {{"channel", setup.channel}, {"recordEnable", false}, {"midiInput", "none"}});
+	const auto key = [&](std::vector<int> bytes)
+	{
+		run(client, "midi.keyboard", {{"messages", Json::array({{{"bytes", std::move(bytes)}}})}});
+		run(client, "audio.render", {{"frames", 640}});
+	};
+	key({0x90, 60, 100});
+	key({0x80, 60, 0});
+	CHECK_THAT(reject(client, "midi.insertRetrospective", {{"track", setup.track}}), ContainsSubstring("nothing"));
+	run(client, "midi.insertRetrospective", {{"track", setup.track}, {"allInputs", true}});
+	const std::vector<Json> parts = setup.parts();
+	REQUIRE(parts.size() == 1);
+	REQUIRE(parts[0].at("notes").size() == 1);
+	CHECK(parts[0].at("notes")[0].at("pitch") == 60);
+
+	// Empty All Buffers empties it too.
+	key({0x90, 62, 100});
+	run(client, "midi.clearRetrospective");
+	CHECK_THAT(reject(client, "midi.insertRetrospective", {{"track", setup.track}, {"allInputs", true}}),
+		ContainsSubstring("nothing"));
+}
+
 TEST_CASE("input in stop mode on the next audio device leaves out the old device's input in stop mode", "[integration]")
 {
 	Setup setup;
@@ -694,6 +722,15 @@ TEST_CASE("MIDI and instrument tracks play all MIDI inputs while they monitor or
 	CHECK(played({{"recordEnable", false}}) == 0);
 	CHECK(played({{"monitor", true}}) == 2);
 	CHECK(played({{"midiInput", "none"}}) == 0);
+	// Or a single input port (reference manual p. 348, #641), also one outside all MIDI inputs.
+	CHECK(played({{"midiInput", "dummy/in/Keys"}}) == 2);
+	CHECK(played({{"midiInput", "dummy/in/Other"}}) == 0);
+	run(client, "midi.setPort", {{"id", "Keys"}, {"input", true}, {"inAllInputs", false}});
+	CHECK(played({{"midiInput", "all"}}) == 0);
+	CHECK(played({{"midiInput", "dummy/in/Keys"}}) == 2);
+	run(client, "midi.setPort", {{"id", "Keys"}, {"input", true}, {"inAllInputs", true}});
+	CHECK_THAT(reject(client, "channel.set", {{"channel", setup.channel}, {"midiInput", "Keys"}}),
+		ContainsSubstring("midiInput"));
 
 	// What a record-enabled track receives there is recorded.
 	played({{"midiInput", "all"}, {"monitor", false}, {"recordEnable", true}});
@@ -710,12 +747,14 @@ TEST_CASE("MIDI and instrument tracks play all MIDI inputs while they monitor or
 
 TEST_CASE("turning MIDI thru off releases the keys and pedals it holds", "[integration]")
 {
-	// Record enable, monitor or the MIDI input going off while a key and the sustain pedal are held (#641).
-	const std::string off = GENERATE("recordEnable", "monitor", "midiInput");
+	// Record enable, monitor or the MIDI input going off while a key and the sustain pedal are held, or the MIDI input
+	// changing from all MIDI inputs or a port to another port, which leaves thru on (#641).
+	const std::string off = GENERATE("recordEnable", "monitor", "midiInput", "allToPort", "portToPort");
 	INFO(off);
 	auto dummy = std::make_unique<gnubase::midi::DummyBackend>();
 	gnubase::midi::DummyBackend& backend = *dummy;
 	backend.addLoopback("Keys");
+	backend.addLoopback("Other");
 	std::vector<std::unique_ptr<gnubase::midi::Backend>> midi;
 	midi.push_back(std::move(dummy));
 	Setup setup(64, std::move(midi));
@@ -724,6 +763,8 @@ TEST_CASE("turning MIDI thru off releases the keys and pedals it holds", "[integ
 	const auto keys = backend.openOutput("Keys");
 	if (off == "monitor")
 		run(client, "channel.set", {{"channel", setup.channel}, {"recordEnable", false}, {"monitor", true}});
+	if (off == "portToPort")
+		run(client, "channel.set", {{"channel", setup.channel}, {"midiInput", "dummy/in/Keys"}});
 	run(client, "audio.render", {{"frames", 64}}); // the new graph
 	constexpr gnubase::HostTime second = 1000000000;
 	for (const std::array<uint8_t, 3>& bytes : {std::array<uint8_t, 3>{0x90, 60, 100}, {0xB0, 64, 127}})
@@ -735,7 +776,11 @@ TEST_CASE("turning MIDI thru off releases the keys and pedals it holds", "[integ
 	}
 	run(client, "audio.render", {{"frames", 64}});
 	run(client, "midi.capture", {{"start", true}});
-	run(client, "channel.set", {{"channel", setup.channel}, {off, off == "midiInput" ? Json("none") : Json(false)}});
+	if (off == "recordEnable" || off == "monitor")
+		run(client, "channel.set", {{"channel", setup.channel}, {off, false}});
+	else
+		run(client, "channel.set",
+			{{"channel", setup.channel}, {"midiInput", off == "midiInput" ? "none" : "dummy/in/Other"}});
 	run(client, "audio.render", {{"frames", 128}});
 	std::vector<std::vector<int>> played;
 	const Json capture = run(client, "midi.capture");
@@ -1333,7 +1378,11 @@ TEST_CASE("starts of playback after a stop without cycle mode start no cycle lap
 TEST_CASE("a note held when cycle playback stops ends where it stopped, with its lap (#2096)", "[integration]")
 {
 	// The note-off comes in stop mode, which Insert as Cycle Recording leaves out: the note and the lap end where
-	// playback stopped, not at the pass's last input.
+	// playback stopped, not at the pass's last input. Also after a pass in between that cycles without input on the
+	// track, played just to listen: where that one stopped doesn't count (#2157). After more passes in between than
+	// the stops kept, where the pass before stopped is no longer known: the note and the lap end at its last input.
+	const int listened = GENERATE(0, 1, 16);
+	INFO("passes to listen: " << listened);
 	Setup setup;
 	Client& client = setup.client;
 	run(client, "settings.set", {{"key", "midi.snapPartsToBars"}, {"value", false}});
@@ -1348,6 +1397,14 @@ TEST_CASE("a note held when cycle playback stops ends where it stopped, with its
 	now = run(client, "audio.get").at("position").get<int64_t>();
 	setup.inject({message(now + 10, {0x80, 60, 0})});
 	run(client, "audio.render", {{"frames", 64}});
+	for (int i = 0; i < listened; ++i) // each cycles and stops at beat 1
+	{
+		run(client, "transport.locate", {{"position", 0}});
+		run(client, "transport.play");
+		run(client, "audio.render", {{"frames", 5 * g_beat}});
+		run(client, "transport.stop");
+		run(client, "audio.render", {{"frames", 64}});
+	}
 	run(client, "transport.locate", {{"position", 0}});
 	now = run(client, "audio.get").at("position").get<int64_t>();
 	run(client, "transport.play");
@@ -1363,8 +1420,10 @@ TEST_CASE("a note held when cycle playback stops ends where it stopped, with its
 	std::vector<std::vector<int64_t>> notes = notesOf(parts[0]);
 	for (std::vector<int64_t>& each : notes)
 		each[0] += start;
-	CHECK(notes == std::vector<std::vector<int64_t>>{{g_beatTicks, 2 * g_beatTicks, 60}});
-	CHECK(start + parts[0].at("length").get<int64_t>() == 3 * g_beatTicks);
+	// Past 16 passes: a sample after its input, the shortest note.
+	const int64_t end = listened < 16 ? 3 * g_beatTicks : g_beatTicks + ((g_beatTicks + (g_beat / 2)) / g_beat);
+	CHECK(notes == std::vector<std::vector<int64_t>>{{g_beatTicks, end - g_beatTicks, 60}});
+	CHECK(start + parts[0].at("length").get<int64_t>() == end);
 }
 
 TEST_CASE(

@@ -656,6 +656,7 @@
 		</menuitem>
 		<menuitem id="midi-retrospective-submenu">MIDI Retrospective Recording
 			<menu>
+				<menuitem id="midi-retrospective-all-inputs" command="track.insertFromAllMidiInputs">Insert from All MIDI Inputs</menuitem>
 				<menuitem id="midi-retrospective-empty" command="midi.clearRetrospective">Empty All Buffers</menuitem>
 			</menu>
 		</menuitem>

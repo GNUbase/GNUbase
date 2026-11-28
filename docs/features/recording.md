@@ -120,11 +120,12 @@ transport's record state and the record mode setting.
   thread ignores the automatic punch out at the right locator, so with `audio.stopAfterPunchOut` playback doesn't stop
   there either. In the UI, a stop, Start/Stop or Record that the engine refused this way opens
   `resources/ui/lock-record.rml` (`app::AppUi` hears the refusal with `EngineBinding::onResult` and checks
-  `transport.get`) in the window whose key, button or menu item sent the command (`KeyCommands::sentFrom`, the main
-  window for a command from elsewhere, #645), so a refusal in a mixer or editor window of its own asks there; it asks to confirm what was refused: Stop sends `transport.stop` with `confirmed`, Punch Out
-  `transport.record` with `record` false and `confirmed`, so playback goes on; Cancel goes on recording. Tests:
-  `tests/transport_tests.cpp` (the punch out ignored for any block size, the commands, a stop right after the punch
-  in) and `tests/lockrecord_tests.cpp` (the menu and the dialog in the app's UI).
+  `transport.get`) in the window whose key, button or menu item sent the command (`KeyCommands::sentFrom`, kept by
+  request until its result is in, #645, #2096), so a refusal in a mixer or editor window of its own asks there, and in
+  the main window for a command from elsewhere, such as UI Lua; it asks to confirm what was refused: Stop sends
+  `transport.stop` with `confirmed`, Punch Out `transport.record` with `record` false and `confirmed`, so playback goes
+  on; Cancel goes on recording. Tests: `tests/transport_tests.cpp` (the punch out ignored for any block size, the
+  commands, a stop right after the punch in) and `tests/lockrecord_tests.cpp` (the menu and the dialog in the app's UI).
 - **Remaining record time** (#104, p. 356). `recording.remainingTime` divides the space available on the disk of the
   record folder (the nearest folder above it that exists, while it doesn't yet) by what the tracks that would record
   write a second: the project's sample rate times the record bit depth's bytes times their channels, uncompressed,

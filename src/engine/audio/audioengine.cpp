@@ -210,7 +210,8 @@ namespace gnubase::engine
 					  m_engine->broadcast(name, data);
 			  }),
 		  m_midi(settings, std::move(midiBackends)), m_midiInput(graph::g_maxEventsPerBlock),
-		  m_generatorEvents(graph::g_maxEventsPerBlock), m_generatorOut(graph::g_maxEventsPerBlock)
+		  m_portInputs(graph::g_maxEventsPerBlock), m_generatorEvents(graph::g_maxEventsPerBlock),
+		  m_generatorOut(graph::g_maxEventsPerBlock)
 	{
 		for (audio::MidiBuffer& buffer : m_padOutput)
 			buffer = audio::MidiBuffer(graph::g_maxEventsPerBlock);
@@ -785,7 +786,22 @@ namespace gnubase::engine
 			program->destinations.push_back(destination);
 			const auto found = std::find_if(snapshot.channels.begin(), snapshot.channels.end(),
 				[channel = channel](const RenderChannel& candidate) { return candidate.id == channel; });
-			program->thru.push_back(static_cast<uint8_t>(found != snapshot.channels.end() && found->midiThru));
+			uint8_t thru = found != snapshot.channels.end() && found->midiThru ? 1 : 0;
+			if (found != snapshot.channels.end() && found->midiPort != 0)
+			{
+				// ponytail: up to PortInputs::g_max ports; tracks of more play nothing.
+				std::array<uint64_t, PortInputs::g_max>& single = program->ports;
+				auto port =
+					static_cast<size_t>(std::find(single.begin(), single.end(), found->midiPort) - single.begin());
+				if (port == single.size())
+					port = static_cast<size_t>(std::find(single.begin(), single.end(), 0) - single.begin());
+				if (port < single.size())
+				{
+					single.at(port) = found->midiPort;
+					thru = static_cast<uint8_t>(2 + port);
+				}
+			}
+			program->thru.push_back(thru);
 			// With Chord Pad Output Mode on the pads play into the tracks of all MIDI inputs too, each its player's
 			// notes: those of the player whose track it is, or the selected player's (#1089).
 			const bool pads = found != snapshot.channels.end() &&
@@ -1528,7 +1544,10 @@ namespace gnubase::engine
 		m_midiInput.clear();
 		for (audio::MidiBuffer& buffer : m_padOutput)
 			buffer.clear();
-		m_midi.take(block, format.sampleRate, m_midiInput, m_padOutput, program.chordPadKeys);
+		m_portInputs.hashes = program.ports;
+		for (graph::EventBuffer& buffer : m_portInputs.events)
+			buffer.clear();
+		m_midi.take(block, format.sampleRate, m_midiInput, m_padOutput, program.chordPadKeys, m_portInputs);
 		const size_t bytes = block.frames * sizeof(float);
 		for (const BusLink& link : program.inputs)
 		{
@@ -1547,7 +1566,7 @@ namespace gnubase::engine
 		m_played.add(block.position, block.frames, transport);
 		captureInput(block);
 		m_tap.deliver(block.position, block.frames, program.sequencers);
-		MidiTap::thru(m_midiInput, program.sequencers, program.thru);
+		MidiTap::thru(m_midiInput, m_portInputs, program.sequencers, program.thru);
 		// Snap Playback to Musical Grid: the pads' note-ons wait for the next grid position while playing (#1089).
 		const int64_t snap = program.chordPadKeys.snapTicks;
 		// The pattern player mode plays the pattern at the tempo where the transport is (#1089).
@@ -1579,7 +1598,8 @@ namespace gnubase::engine
 		program.graph.process(block.frames, transport, m_workers.get());
 		// After the graph: the MIDI inserts above the divider played the input there, with their automation, before
 		// it is recorded (MidiSequencer::process).
-		m_recorder.process(block, m_played, m_recordOffset.load(std::memory_order_relaxed), program.sequencers);
+		m_recorder.process(
+			block, m_played, m_recordOffset.load(std::memory_order_relaxed), program.sequencers, m_midiInput);
 		m_tap.capture(block.position, program.instruments);
 		m_playback.endBlock();
 		output(block, program);

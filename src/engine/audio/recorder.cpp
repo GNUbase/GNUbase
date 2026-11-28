@@ -465,11 +465,12 @@ namespace gnubase::engine
 	}
 
 	void Recorder::process(const audio::DeviceBlock& block, const PlayedPositions& played, int64_t offset,
-		const MidiTap::Sequencers& sequencers) noexcept
+		const MidiTap::Sequencers& sequencers, const graph::EventBuffer& allInputs) noexcept
 	{
 		if (!m_filled)
 			return;
-		processMidi(block, played, sequencers); // first: a MIDI recording ends before the audio one it goes with
+		processMidi(
+			block, played, sequencers, allInputs); // first: a MIDI recording ends before the audio one it goes with
 		if (!m_armed.load(std::memory_order_acquire))
 		{
 			// Disarmed while recording: the disk thread ends the recording on a chunk that isn't recorded.
@@ -514,8 +515,8 @@ namespace gnubase::engine
 		return true;
 	}
 
-	void Recorder::processMidi(
-		const audio::DeviceBlock& block, const PlayedPositions& played, const MidiTap::Sequencers& sequencers) noexcept
+	void Recorder::processMidi(const audio::DeviceBlock& block, const PlayedPositions& played,
+		const MidiTap::Sequencers& sequencers, const graph::EventBuffer& allInputs) noexcept
 	{
 		// Runs of frames recorded at consecutive positions, or not recorded, as for audio but without the record
 		// offset: MIDI input belongs where the transport plays as it comes. A run is sent only for its input, where
@@ -525,13 +526,14 @@ namespace gnubase::engine
 		const auto deviceFrame = static_cast<int64_t>(block.position);
 		const auto recordedAt = [&](uint32_t i)
 		{ return armed ? played.recordedAt(deviceFrame + i) : time::Samples{-1}; };
-		const auto hasInput = [&sequencers](uint32_t from, uint32_t to)
+		const auto hasInput = [&sequencers, &allInputs](uint32_t from, uint32_t to)
 		{
+			const auto within = [from, to](const graph::ProcessEvent& event)
+			{ return event.offset >= from && event.offset < to; };
 			for (const auto& entry : sequencers)
-				for (const graph::ProcessEvent& event : entry.second->input())
-					if (event.offset >= from && event.offset < to)
-						return true;
-			return false;
+				if (std::any_of(entry.second->input().begin(), entry.second->input().end(), within))
+					return true;
+			return std::any_of(allInputs.begin(), allInputs.end(), within);
 		};
 		uint32_t start = 0;
 		time::Samples first = recordedAt(0);
@@ -545,7 +547,7 @@ namespace gnubase::engine
 			const bool needed = first >= 0 ? !goesOn : m_midiSending;
 			if (needed || hasInput(start, i))
 			{
-				if (sendMidi(block, played, sequencers, start, i - start, first))
+				if (sendMidi(block, played, sequencers, allInputs, start, i - start, first))
 					m_midiSending = first >= 0;
 				else if (needed)
 					m_midiSending = false; // the next recorded run is sent as a start
@@ -558,7 +560,8 @@ namespace gnubase::engine
 	}
 
 	bool Recorder::sendMidi(const audio::DeviceBlock& block, const PlayedPositions& played,
-		const MidiTap::Sequencers& sequencers, uint32_t offset, uint32_t frames, time::Samples position) noexcept
+		const MidiTap::Sequencers& sequencers, const graph::EventBuffer& allInputs, uint32_t offset, uint32_t frames,
+		time::Samples position) noexcept
 	{
 		// Drum sounds auditioned in the drum editor (midi.inject drumSounds) play but are no MIDI input: neither
 		// recorded nor kept for retrospective recording.
@@ -567,7 +570,7 @@ namespace gnubase::engine
 			return event.offset >= offset && event.offset - offset < frames && event.type != EventType::SysEx &&
 				event.type != EventType::Parameter && !event.drumSound;
 		};
-		size_t count = 0;
+		auto count = static_cast<size_t>(std::count_if(allInputs.begin(), allInputs.end(), input));
 		for (const auto& entry : sequencers)
 			count +=
 				static_cast<size_t>(std::count_if(entry.second->input().begin(), entry.second->input().end(), input));
@@ -586,13 +589,19 @@ namespace gnubase::engine
 			chunk->frames = frames;
 			chunk->setup = m_latestSetup.load(std::memory_order_relaxed);
 			chunk->eventCount = 0;
+			chunk->stops = played.stops();
 			size_t index = 0;
-			for (const auto& [channel, sequencer] : sequencers)
-				for (const graph::ProcessEvent& event : sequencer->input())
+			const auto add = [&](ObjectId channel, const graph::EventBuffer& events)
+			{
+				for (const graph::ProcessEvent& event : events)
 					if (input(event) && index++ >= sent && chunk->eventCount < chunk->events.size())
 						chunk->events[chunk->eventCount++] = {channel, event.offset - offset,
 							played.at(static_cast<int64_t>(block.position + event.offset)), event,
 							played.lapAt(static_cast<int64_t>(block.position + event.offset))};
+			};
+			add(0, allInputs);
+			for (const auto& [channel, sequencer] : sequencers)
+				add(channel, sequencer->input());
 			sent += chunk->eventCount;
 			m_inFlight.fetch_add(1, std::memory_order_relaxed);
 			m_filled->tryPush(chunk); // there is room for every chunk
@@ -914,7 +923,7 @@ namespace gnubase::engine
 			if (m_midiRecording)
 				endMidi();
 			for (size_t i = 0; i < chunk.eventCount; ++i)
-				keepRetrospective(chunk.events[i], chunk.deviceFrame);
+				keepRetrospective(chunk.events[i], chunk);
 			return;
 		}
 		if (!m_midiRecording)
@@ -946,7 +955,7 @@ namespace gnubase::engine
 			const bool chordsOnly = std::any_of(m_midiCurrent.midiTracks.begin(), m_midiCurrent.midiTracks.end(),
 				[&input](const MidiRecordTrack& track) { return track.channel == input.channel && track.chordsOnly; });
 			if (builder == m_midiBuilders.end() || chordsOnly)
-				keepRetrospective(input, chunk.deviceFrame);
+				keepRetrospective(input, chunk);
 			if (chordsOnly)
 				if (const auto kept = m_retrospective.find(input.channel); kept != m_retrospective.end())
 					kept->second.recorded = kept->second.events.size();
@@ -1030,8 +1039,9 @@ namespace gnubase::engine
 		return m_next.cycleLeft >= 0 && start == m_next.cycleLeft && end == m_next.cycleRight;
 	}
 
-	void Recorder::keepRetrospective(const MidiInput& input, uint64_t deviceFrame)
+	void Recorder::keepRetrospective(const MidiInput& input, const Chunk& chunk)
 	{
+		const uint64_t deviceFrame = chunk.deviceFrame;
 		// With midi.retrospectiveEvents 0 it keeps only the catch range's input, which retrospective() doesn't return.
 		if (m_next.retrospective == 0 && m_next.catchFrames == 0)
 			return;
@@ -1077,7 +1087,20 @@ namespace gnubase::engine
 				std::remove_if(buffer.events.begin(), buffer.events.end(), earlier), buffer.events.end());
 			buffer.stoppedBefore = 0;
 		}
-		buffer.events.push_back({frame, input.played, input.event, input.lap});
+		PlayedLap lap = input.lap;
+		// Passes without input in between, e.g. one played just to listen: the insert ends the input before where its
+		// own pass stopped, or at that input if it is no longer known (#2157).
+		const auto before = std::find_if(buffer.events.rbegin(), buffer.events.rend(),
+			[](const RetrospectiveEvent& kept) { return kept.position >= 0; });
+		if (input.played >= 0 && before != buffer.events.rend() && lap.pass > before->lap.pass + 1)
+		{
+			const PassStop& stop = chunk.stops[before->lap.pass % chunk.stops.size()];
+			const bool known = stop.pass == before->lap.pass;
+			lap.stopped = known ? stop.position : -1;
+			lap.stoppedLap = known ? stop.lap : before->lap.lap;
+			lap.stoppedRight = known ? stop.right : -1;
+		}
+		buffer.events.push_back({frame, input.played, input.event, lap});
 		const auto full = [&]
 		{
 			return m_next.retrospective > 0

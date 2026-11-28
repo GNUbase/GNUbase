@@ -1567,7 +1567,10 @@ TEST_CASE("mute, solo, solo defeat, listen, notes and disabled tracks are saved,
 			{"listen", true}});
 	run(client, "channel.set", {{"channel", idOf(soloed, "channel")}, {"solo", true}});
 	run(client, "track.set", {{"track", idOf(disabled, "track")}, {"enabled", false}});
+	// So is a single MIDI input port as a track's MIDI input (#641).
+	run(client, "channel.set", {{"channel", idOf(disabled, "channel")}, {"midiInput", "dummy/in/Keys"}});
 	const Json before = run(client, "project.get");
+	CHECK(before.at("channels")[2].at("midiInput") == "dummy/in/Keys");
 	CHECK(before.at("channels")[0].at("soloDefeat") == true);
 	CHECK(before.at("channels")[0].at("listen") == true);
 	const std::string file = utf8(dir.path() / "song.dawproject");

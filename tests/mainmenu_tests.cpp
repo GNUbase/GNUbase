@@ -272,6 +272,32 @@ TEST_CASE("Transport > MIDI Retrospective Recording > Empty All Buffers empties 
 		}));
 }
 
+TEST_CASE(
+	"Transport > MIDI Retrospective Recording > Insert from All MIDI Inputs inserts into the selected track", "[ui]")
+{
+	// Reference manual p. 354 (#641).
+	test::UiApp app({900, 640});
+	const auto& display = app.appUi().showProject();
+	app.call("audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}, {"captureSeconds", 1}});
+	const Json added = app.call("track.add", {{"type", "instrument"}});
+	const auto track = added.at("track").at("id").get<uint64_t>();
+	app.call("channel.set", {{"channel", added.at("channel").at("id")}, {"recordEnable", false}});
+	for (const int status : {0x90, 0x80})
+	{
+		app.call("midi.keyboard", {{"messages", Json::array({{{"bytes", {status, 60, 100}}}})}});
+		app.call("audio.render", {{"frames", 640}});
+	}
+	REQUIRE(app.waitUntil([&] { return display.project().at("tracks").size() == 1; }));
+	app.appUi().trackList()->select({track});
+	app.shell().step(std::chrono::milliseconds(0));
+	click(app, "#menu-bar button[menu=transport-menu]");
+	app.ui().move(std::nullopt, {"#midi-retrospective-submenu", 0, std::nullopt});
+	app.shell().step(std::chrono::milliseconds(0));
+	click(app, "#midi-retrospective-all-inputs");
+	REQUIRE(app.waitUntil([&] { return app.call("project.get").at("midiParts").size() == 1; }));
+	CHECK(app.call("project.get").at("midiParts")[0].at("track") == track);
+}
+
 TEST_CASE("Transport > MIDI Record Mode sets the transport's MIDI cycle record mode", "[ui]")
 {
 	test::UiApp app({900, 640});

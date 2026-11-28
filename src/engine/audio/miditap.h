@@ -16,6 +16,8 @@
 
 namespace gnubase::engine
 {
+	struct PortInputs; // engine/audio/midiports.h
+
 	// MIDI for tests and remote control, at frame positions on the audio device: messages injected into MIDI and
 	// instrument tracks (midi.inject), which play them as if they came from their MIDI input, and what instruments
 	// played (midi.capture). The command thread injects and takes; the audio thread delivers and captures.
@@ -64,9 +66,9 @@ namespace gnubase::engine
 		static void thru(
 			const audio::MidiBuffer& input, const Sequencers& sequencers, const std::vector<uint8_t>& thru) noexcept;
 		// The same for input that is events already: the MIDI inputs' (MidiPorts::take), whose MPE input is per-note
-		// expression.
-		static void thru(
-			const graph::EventBuffer& input, const Sequencers& sequencers, const std::vector<uint8_t>& thru) noexcept;
+		// expression. A sequencer that thru marks 2 + n plays the single port ports.events[n] instead (#641).
+		static void thru(const graph::EventBuffer& input, const PortInputs& ports, const Sequencers& sequencers,
+			const std::vector<uint8_t>& thru) noexcept;
 
 		// A MIDI 1.0 channel message as an event; a note-on of velocity 0 is a note-off of velocity 64.
 		static graph::ProcessEvent toEvent(const audio::MidiMessage& message, uint32_t offset) noexcept;

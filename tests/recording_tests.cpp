@@ -211,7 +211,8 @@ namespace
 		transport.segmentCount = 1;
 		transport.recording = recording;
 		played.add(position, g_blockFrames, transport);
-		recorder.process({inputs, nullptr, g_blockFrames, position, 0, midiIn, midiOut}, played, 0, sequencers);
+		recorder.process({inputs, nullptr, g_blockFrames, position, 0, midiIn, midiOut}, played, 0, sequencers,
+			engine::graph::EventBuffer());
 	}
 
 	// A setup that records one mono track into folder.
@@ -1346,8 +1347,8 @@ TEST_CASE("audio pre-record keeps only the armed tracks' input channels (#531)",
 			transport.segmentCount = 1;
 			transport.recording = recording;
 			played.add(position, g_blockFrames, transport);
-			recorder.process(
-				{inputs.data(), nullptr, g_blockFrames, position, 0, midiIn, midiOut}, played, 0, sequencers);
+			recorder.process({inputs.data(), nullptr, g_blockFrames, position, 0, midiIn, midiOut}, played, 0,
+				sequencers, engine::graph::EventBuffer());
 		};
 		for (uint64_t index = 0; index < 3; ++index)
 			block(index, false);

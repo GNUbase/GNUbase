@@ -373,6 +373,8 @@ namespace gnubase::app
 		void addMidiFunctions();
 		// File > Import > Tracks, File > Export > Selected Tracks and the track preset commands (#164).
 		void addTrackFileCommands();
+		// Lock Record's dialog for the stops that the engine refused (docs/features/recording.md).
+		void watchLockRecord();
 		// The OS's file dialog for objects of the project: chosen gets the file unless a project.reset came while it
 		// was open, as the ids it acts on are the old project's then (#1586, #1648).
 		void chooseProjectFile(const ui::FileDialog& dialog, std::function<void(const std::filesystem::path&)> chosen);

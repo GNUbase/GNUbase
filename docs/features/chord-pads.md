@@ -256,8 +256,8 @@ a remote start above the end, goes back to the one the pads have.
   and show their click at once as well (#1896): the panel lights them, and until the engine has answered every command
   of a toggle, it shows what the toggle sent last instead of the engine's reads, so a double click before the first
   answer turns it on and off again.
-- The Inspector's Input Routing of a MIDI or instrument track chooses All MIDI Inputs, Chord Pads or Not Connected
-  (p. 1367).
+- The Inspector's Input Routing of a MIDI or instrument track chooses All MIDI Inputs, a single MIDI input port, Chord
+  Pads or Not Connected (p. 1367, #641).
 - The wheel over a pad: down the next voicing, up the previous one; with Shift it transposes, with Alt it changes the
   tensions. Over the root key it moves the key a semitone, with Transpose Pads as it says (p. 1364).
 - With step input on, Left and Right Arrow move the step position a bar back or on wherever the focus is in the zone,

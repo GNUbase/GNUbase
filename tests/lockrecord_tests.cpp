@@ -102,6 +102,13 @@ TEST_CASE("a refused stop asks in the window whose key sent it (#645)", "[ui]")
 	REQUIRE(app.waitUntil([&] { return !shown(app, "#lock-record-dialog", mixer); }));
 	CHECK(transport(app).at("recording") == true);
 
+	// A stop through the binding directly, as UI Lua sends it, asks in the main window, not where the key was (#2096).
+	app.appUi().binding().send("transport.stop");
+	REQUIRE(app.waitUntil([&] { return shown(app, "#lock-record-dialog"); }));
+	CHECK(!shown(app, "#lock-record-dialog", mixer));
+	click(app, "#lock-record-dialog button[result=cancel]");
+	REQUIRE(app.waitUntil([&] { return !shown(app, "#lock-record-dialog"); }));
+
 	// The main window's key asks there again.
 	app.ui().key(std::nullopt, "Num0");
 	REQUIRE(app.waitUntil([&] { return shown(app, "#lock-record-dialog"); }));

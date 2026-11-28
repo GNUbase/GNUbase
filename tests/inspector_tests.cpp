@@ -1183,15 +1183,34 @@ TEST_CASE("the inspector's Retrospective Recording menu inserts the track's buff
 	play(62, 100, 1000, 2000);
 	choose("retrospective-linear");
 	REQUIRE(window.app.waitUntil([&] { return pitches() == std::vector<std::vector<int64_t>>{{62}}; }));
-	// Without input from cycle laps it stays disabled.
+	// Without input from cycle laps it stays disabled, also once the answer is in (#2096).
+	ui::EngineBinding& binding = window.app.appUi().binding();
+	const auto answered = [&] { return binding.waiting("midi.getRetrospective") == 0; };
 	play(63, 100, 1000, 2000);
 	window.click(".inspector .inspector-retrospective");
 	CHECK(window.call("midi.getRetrospective", {{"track", track}}).at("cycleLaps") == 0);
-	REQUIRE(window.app.waitUntil([&] { return elements(window.app, cycleDisabled).size() == 1; }));
+	REQUIRE(window.app.waitUntil(answered));
+	CHECK(elements(window.app, cycleDisabled).size() == 1);
 	window.click("#inspector-retrospective-menu menuitem.retrospective-empty");
 
 	// Insert as Cycle Recording: a part per lap.
 	window.call("transport.set", {{"left", 0}, {"right", 20000}, {"cycle", true}});
+	window.call("transport.play");
+	play(64, 5000, 8000, 20000);
+	play(65, 5000, 8000, 10000);
+	window.call("transport.stop");
+	window.call("audio.render", {{"frames", 64}});
+	// An answer from an earlier opening, here from before Empty Retrospective Record Buffer, doesn't enable it: the
+	// answers come in together, without a step of the UI in between (#2096).
+	const auto clickNow = [&](const std::string& selector)
+	{ window.app.ui().click(std::nullopt, {selector, 0, std::nullopt}, ui::MouseButton::Left, 1, {}); };
+	clickNow(".inspector .inspector-retrospective");
+	clickNow("#inspector-retrospective-menu menuitem.retrospective-empty");
+	clickNow(".inspector .inspector-retrospective");
+	REQUIRE(window.app.waitUntil(answered));
+	CHECK(window.call("midi.getRetrospective", {{"track", track}}).at("cycleLaps") == 0);
+	CHECK(elements(window.app, cycleDisabled).size() == 1);
+	window.app.ui().key(std::nullopt, "Escape");
 	window.call("transport.play");
 	play(64, 5000, 8000, 20000);
 	play(65, 5000, 8000, 10000);
@@ -2821,10 +2840,15 @@ TEST_CASE("a MIDI modifier or a part's transpose dragged back to where it starte
 		"#info-line valuefield[field=transpose]", [&] { return window.part(part).at("transpose").get<int64_t>(); });
 }
 
-TEST_CASE("the inspector routes a MIDI or instrument track's MIDI input from all MIDI inputs or the chord pads", "[ui]")
+TEST_CASE("the inspector routes a MIDI or instrument track's MIDI input from all MIDI inputs, the chord pads or a port",
+	"[ui]")
 {
-	// Reference manual p. 1367: Chord Pads as the input routing (#1089).
-	Window window;
+	// Reference manual p. 1367: Chord Pads as the input routing (#1089); p. 348: a single MIDI input (#641).
+	auto backend = std::make_unique<midi::DummyBackend>();
+	backend->addLoopback("Keys");
+	std::vector<std::unique_ptr<midi::Backend>> backends;
+	backends.push_back(std::move(backend));
+	Window window(1200, std::move(backends));
 	const uint64_t keys = window.addTrack({{"type", "instrument"}, {"name", "Keys"}});
 	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 1; }));
 	window.list.select({keys});
@@ -2838,6 +2862,25 @@ TEST_CASE("the inspector routes a MIDI or instrument track's MIDI input from all
 	// Another client's choice shows.
 	window.call("channel.set", {{"channel", window.channel(keys).at("id")}, {"midiInput", "none"}});
 	CHECK(window.shows(".inspector select[control=input]", "none"));
+	// The input ports come after Not Connected, by the names they show as.
+	window.call("midi.setPort", {{"id", "Keys"}, {"input", true}, {"showAs", "My keys"}});
+	const auto lists = [&]
+	{
+		Rml::Context& context = window.app.main().context();
+		for (int i = 0; i < context.GetNumDocuments(); ++i)
+			if (auto* select = dynamic_cast<Rml::ElementFormControlSelect*>(
+					context.GetDocument(i)->QuerySelector(".inspector select[control=input]")))
+				for (int option = 0; option < select->GetNumOptions(); ++option)
+					if (select->GetOption(option)->GetAttribute<Rml::String>("value", "") == "dummy/in/Keys")
+						return select->GetOption(option)->GetInnerRML() == "My keys";
+		return false;
+	};
+	REQUIRE(window.app.waitUntil(lists));
+	window.click(".inspector select[control=input]");
+	window.app.ui().key(std::nullopt, "Down");
+	window.click(".inspector select[control=input]");
+	REQUIRE(window.app.waitUntil([&] { return window.channel(keys).at("midiInput") == "dummy/in/Keys"; }));
+	CHECK(window.shows(".inspector select[control=input]", "dummy/in/Keys"));
 }
 
 TEST_CASE("the inspector's MIDI Inserts and MIDI Sends sections show and change the track's MIDI effects", "[ui]")
@@ -3037,4 +3080,18 @@ TEST_CASE("the inspector's Note Expression section shows and changes the track's
 	CHECK_FALSE(hasClass(window.app, section + "button[control=noteExpression-learn]", "checked"));
 	window.call("history.undo");
 	REQUIRE(window.app.waitUntil([&] { return setup().at("inputs") == Json::array({tuning}); }));
+
+	// With a single port as the track's MIDI input, Learn takes the controllers of that port only, also of one outside
+	// all MIDI inputs (#641).
+	window.call("channel.set", {{"channel", window.channel(keys).at("id")}, {"midiInput", "dummy/in/" + pads}});
+	window.click(section + "button[control=noteExpression-learn]");
+	REQUIRE(window.app.waitUntil(
+		[&] { return hasClass(window.app, section + "button[control=noteExpression-learn]", "checked"); }));
+	REQUIRE(send(*keysOut, 23));
+	for (int i = 0; i < 3; ++i)
+		window.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(setup().at("inputs").size() == 1);
+	REQUIRE(send(*padsOut, 24));
+	REQUIRE(window.app.waitUntil([&] { return setup().at("inputs").size() == 2; }));
+	CHECK(setup().at("inputs").at(1).at("input") == "cc24");
 }

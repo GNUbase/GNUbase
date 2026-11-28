@@ -892,10 +892,15 @@ TEST_CASE("only inputs that belong to all MIDI inputs reach them", "[unit]")
 	gnubase::engine::graph::EventBuffer allInputs(8);
 	gnubase::engine::MidiPorts::PadBuffers padOutput;
 	const DeviceBlock block{nullptr, nullptr, 480, 1000, now, midiIn, midiOut};
-	ports.take(block, 48000.0, allInputs, padOutput, gnubase::engine::ChordPadKeys());
+	// A track that plays the input outside all MIDI inputs on its own gets it (#641).
+	gnubase::engine::PortInputs single(8);
+	single.hashes[0] = gnubase::engine::chordPadPortHash("dummy/in/Pads");
+	ports.take(block, 48000.0, allInputs, padOutput, gnubase::engine::ChordPadKeys(), single);
 	REQUIRE(allInputs.size() == 1);
 	CHECK(allInputs[0].key == 60);
 	CHECK(allInputs[0].offset == 432); // 9 ms into the 10 ms before the block
+	REQUIRE(single.events[0].size() == 1);
+	CHECK(single.events[0][0].key == 61);
 }
 
 TEST_CASE("a hidden input that becomes visible reaches all MIDI inputs", "[unit]")
@@ -923,7 +928,8 @@ TEST_CASE("a hidden input that becomes visible reaches all MIDI inputs", "[unit]
 	gnubase::engine::graph::EventBuffer allInputs(8);
 	gnubase::engine::MidiPorts::PadBuffers padOutput;
 	const DeviceBlock block{nullptr, nullptr, 480, 1000, now, midiIn, midiOut};
-	ports.take(block, 48000.0, allInputs, padOutput, gnubase::engine::ChordPadKeys());
+	gnubase::engine::PortInputs single;
+	ports.take(block, 48000.0, allInputs, padOutput, gnubase::engine::ChordPadKeys(), single);
 	REQUIRE(allInputs.size() == 1);
 	CHECK(allInputs[0].key == 60);
 }
