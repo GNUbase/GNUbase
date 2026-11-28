@@ -17,6 +17,8 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <iterator>
 #include <map>
 #include <optional>
@@ -128,25 +130,72 @@ namespace gnubase::engine
 			return {{"notes", result}};
 		}
 
-		// A MIDI or instrument track's note expression setup (#1513): its bypass and input assignments.
-		Json setNoteExpression(Project& project, CommandContext& context)
+		// The channel of the MIDI or instrument track that the parameters' track names.
+		Channel& noteExpressionChannel(Project& project, const Json& parameters)
 		{
-			const Json& parameters = context.parameters();
 			const auto id = parameters.at("track").get<ObjectId>();
 			const auto track = project.trackById.find(id);
 			const bool midi = track != project.trackById.end() &&
 				(track->second.type == TrackType::Midi || track->second.type == TrackType::Instrument);
 			const auto channel = midi ? project.channels.find(track->second.channel) : project.channels.end();
 			require(channel != project.channels.end(), "no MIDI or instrument track " + std::to_string(id));
-			NoteExpressionSetup& setup = channel->second.noteExpression;
-			const std::set<plugin::NoteExpression> hidden = setup.hidden;
+			return channel->second;
+		}
+
+		// A MIDI or instrument track's note expression setup (#1513): its bypass and input assignments.
+		Json setNoteExpression(Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			Channel& channel = noteExpressionChannel(project, parameters);
+			NoteExpressionSetup& setup = channel.noteExpression;
+			const NoteExpressionSetup before = setup;
 			setup = noteExpressionFromJson(parameters, setup, false);
-			context.emit("channel.changed", {{"channel", toJson(channel->second)}});
-			// The editors show the notes without the hidden expressions (#2120): not a step of channels only, which
-			// they need not read the project for (ui::changedOnly).
-			if (setup.hidden != hidden)
-				context.emit("noteExpression.changed", {{"track", id}, {"noteExpression", toJson(setup)}});
-			return {{"track", id}, {"noteExpression", toJson(setup)}};
+			context.emit("channel.changed", {{"channel", toJson(channel)}});
+			// The editors show the notes without the hidden expressions and in the parameter colors (#2120): not a
+			// step of channels only, which they need not read the project for (ui::changedOnly).
+			const Json& track = parameters.at("track");
+			if (setup.hidden != before.hidden || setup.colors != before.colors)
+				context.emit("noteExpression.changed", {{"track", track}, {"noteExpression", toJson(setup)}});
+			return {{"track", track}, {"noteExpression", toJson(setup)}};
+		}
+
+		// Save Input Assignment (#2120, pp. 1302, 1304): the track's input assignments as a file, JSON
+		// {"inputs": [...]} as project.get lists them.
+		Json saveInputs(Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			const Json inputs = toJson(noteExpressionChannel(project, parameters).noteExpression).at("inputs");
+			const std::string path = parameters.at("path").get<std::string>();
+			std::ofstream out(std::filesystem::u8path(path), std::ios::binary | std::ios::trunc);
+			out << Json{{"inputs", inputs}}.dump(1, '\t') << '\n';
+			out.close();
+			require(static_cast<bool>(out), "can't write " + path);
+			return Json::object();
+		}
+
+		// Load Input Assignment: a file's input assignments replace the track's, read as a project file's are.
+		Json loadInputs(Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			Channel& channel = noteExpressionChannel(project, parameters);
+			const std::string path = parameters.at("path").get<std::string>();
+			std::ifstream in(std::filesystem::u8path(path), std::ios::binary);
+			require(static_cast<bool>(in), "can't open " + path);
+			const Json file = Json::parse(in, nullptr, false);
+			require(
+				file.is_object() && file.value("inputs", Json()).is_array(), path + ": not an input assignment file");
+			NoteExpressionSetup setup = channel.noteExpression;
+			setup.inputs.clear();
+			try
+			{
+				channel.noteExpression = noteExpressionFromJson({{"inputs", file.at("inputs")}}, setup, true);
+			}
+			catch (const std::exception& error)
+			{
+				throw CommandError(path + ": " + error.what());
+			}
+			context.emit("channel.changed", {{"channel", toJson(channel)}});
+			return {{"track", parameters.at("track")}, {"noteExpression", toJson(channel.noteExpression)}};
 		}
 
 		// Convert to Note Expression (#1515, reference manual p. 1316): the part's controller events whose message the
@@ -676,6 +725,13 @@ namespace gnubase::engine
 						{{"type", "string"},
 							{"description", "none, pitchBend, aftertouch or a controller, cc0 to cc127"}}},
 					{"min", number}, {"max", number}}}};
+		const Json expressionColor = {{"type", "object"}, {"additionalProperties", false},
+			{"required", {"type", "color"}},
+			{"properties",
+				{{"type", {{"type", "string"}, {"enum", g_expressionNames}}},
+					{"color", {{"type", "string"}, {"description", "#rrggbb, or empty for the theme's color"}}}}}};
+		const Json setupResult = {{"type", "object"}, {"required", {"track", "noteExpression"}},
+			{"properties", {{"track", integer}, {"noteExpression", {{"type", "object"}}}}}};
 		addEdit(engine,
 			{"noteExpression.set", 1,
 				"Changes a MIDI or instrument track's note expression setup, as the inspector's Note Expression "
@@ -685,23 +741,43 @@ namespace gnubase::engine
 				"the range of the expression's values that it goes over, min and max in the expression's unit and "
 				"range (see note.add), min above max for a reversed one. hidden lists the expressions the "
 				"inspector's visibility hides from the key editor's note expression editor and its notes (all of "
-				"them visible by default). What a call leaves out stays as it was. "
+				"them visible by default). colors gives expressions their Parameter Colors (p. 1301), #rrggbb, which "
+				"the key editor draws their points in, or an empty color for the theme's. What a call leaves out "
+				"stays as it was. "
 				"The setup belongs to the track and is saved with the project; project.get lists it as the "
 				"channel's noteExpression, whose inputs are the expressions that have a message or a range other "
 				"than the whole one. Refuses, changing nothing, a track that is no MIDI or instrument track, unknown "
 				"expressions and messages and values out of range. Emits channel.changed, and noteExpression.changed "
-				"with the track and its setup when hidden changes. Returns the track and its "
+				"with the track and its setup when hidden or colors change. Returns the track and its "
 				"setup.",
 				{{"type", "object"}, {"additionalProperties", false}, {"required", {"track"}},
 					{"properties",
 						{{"track", integer}, {"bypass", {{"type", "boolean"}}},
 							{"inputs", {{"type", "array"}, {"items", expressionInput}}},
 							{"hidden",
-								{{"type", "array"}, {"items", {{"type", "string"}, {"enum", g_expressionNames}}}}}}}},
-				{{"type", "object"}, {"required", {"track", "noteExpression"}},
-					{"properties", {{"track", integer}, {"noteExpression", {{"type", "object"}}}}}},
-				false},
+								{{"type", "array"}, {"items", {{"type", "string"}, {"enum", g_expressionNames}}}}},
+							{"colors", {{"type", "array"}, {"items", expressionColor}}}}}},
+				setupResult, false},
 			"Change note expression setup", setNoteExpression);
+		const Json fileSchema = {{"type", "object"}, {"additionalProperties", false}, {"required", {"track", "path"}},
+			{"properties", {{"track", integer}, {"path", {{"type", "string"}}}}}};
+		addEdit(engine,
+			{"noteExpression.saveInputs", 1,
+				"Save Input Assignment (reference manual pp. 1302, 1304): saves a MIDI or instrument track's input "
+				"assignments (noteExpression.set inputs) as a file at path, which noteExpression.loadInputs reads, "
+				"for later use with the same MIDI device: JSON {inputs}, as project.get lists them; the inspector "
+				"names it .neinput. Changes nothing in the project.",
+				fileSchema, Json::object(), true, false, true},
+			"", saveInputs);
+		addEdit(engine,
+			{"noteExpression.loadInputs", 1,
+				"Load Input Assignment (reference manual pp. 1302, 1304): a file that noteExpression.saveInputs "
+				"saved gives a MIDI or instrument track its input assignments, in place of the ones it has; its "
+				"bypass, hidden expressions and colors stay. Values out of range load clamped, unknown messages as "
+				"none and unknown expressions not at all, as in a project file. Refuses a file that can't be read or "
+				"isn't one, changing nothing. Emits channel.changed. Returns the track and its setup.",
+				fileSchema, setupResult, false},
+			"Load input assignment", loadInputs);
 		addEdit(engine,
 			{"noteExpression.convert", 1,
 				"Convert to Note Expression (reference manual p. 1316): the controller events of a MIDI part whose "
