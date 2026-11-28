@@ -1259,8 +1259,9 @@ namespace gnubase::engine
 		// tracks play into a new group channel, or send to a new effect channel with the given send, or else their
 		// first send without a destination, at the user setting audio.defaultSendLevel. Those that can't be routed
 		// are left out: tracks without an audio channel (MIDI, marker and ruler tracks, folders without a group
-		// channel, whose tracks are meant only when they are selected themselves) and, without send, tracks with no
-		// free send.
+		// channel, whose tracks are meant only when they are selected themselves), without send tracks with no free
+		// send, and tracks whose routing would close a loop, such as the group channel of the folder that the new
+		// track goes into.
 		void routeTo(Project& project, const Channel& added, const Json& parameters, CommandContext& context)
 		{
 			const TrackType type = project.trackById.at(added.track).type;
@@ -1284,6 +1285,8 @@ namespace gnubase::engine
 				if (source == project.channels.end() || source->second.format == ChannelFormat::None)
 					continue;
 				Channel& channel = source->second;
+				if (loops(project, channel.id, added.id))
+					continue;
 				if (type == TrackType::Group)
 				{
 					checkOutput(project, channel, added.id);
@@ -1302,8 +1305,6 @@ namespace gnubase::engine
 					}
 					if (send == nullptr)
 						continue;
-					require(!routingLoops(project, channel.id, added.id),
-						"sending channel " + idText(channel.id) + " to " + idText(added.id) + " would make a loop");
 					*send = {added.id, true, level, false};
 				}
 				context.emit("channel.changed", {{"channel", toJson(channel)}});
@@ -4630,8 +4631,9 @@ namespace gnubase::engine
 				"Selected Tracks), and for an effect track, they send to its channel with send (1 to 8), or else "
 				"their first send without a destination, switched on, after the fader and at the user setting "
 				"audio.defaultSendLevel (Effect Track to Selected Tracks, Add Effect Track to Send); tracks without "
-				"an audio channel, such as MIDI tracks and folders without a group channel, and without send those "
-				"with no free send, are left out; for a VCA track, their channels go into a new link group that it "
+				"an audio channel, such as MIDI tracks and folders without a group channel, without send those with "
+				"no free send, and those whose routing would close a loop are left out; for a VCA track, their "
+				"channels go into a new link group that it "
 				"controls (linkGroup.add; Add VCA Track to Selected Tracks), tracks without a channel left out. "
 				"projectFolder "
 				"puts a group, effect or VCA track into the project's Group, FX or VCA folder, the first folder of "
@@ -4678,8 +4680,9 @@ namespace gnubase::engine
 				"nothing and is silent. groupChannel turns a folder's group channel on or off: a new one is stereo "
 				"and plays through the next group channel up, or the main output; the audio of the tracks inside "
 				"then plays through it, or without it through the next group channel up, or the main output, and "
-				"its automation and the routing of other channels to it go. Channels routed elsewhere by hand or "
-				"disconnected keep their routing. With the user setting editing.applyFolderColor, a folder's new "
+				"its automation and the routing of other channels to it go, and it leaves its link group, which goes "
+				"if it has no channels left (linkGroup.removed). Channels routed elsewhere by hand or disconnected "
+				"keep their routing. With the user setting editing.applyFolderColor, a folder's new "
 				"color goes to the tracks inside it. groupEditing turns a folder's Group Editing mode on or off "
 				"(reference manual p. 274): in the project window, selecting an event, a part or a range on a track "
 				"inside it then selects those of its other tracks with the same start and end too. picture is an image "
@@ -4730,7 +4733,10 @@ namespace gnubase::engine
 				"marker tracks without events, parts, markers or automation, and folders without tracks, unless "
 				"another track's channel plays or sends into theirs (an instrument track a MIDI track plays, a "
 				"folder's group channel). Plugins in a channel's slots and an instrument track's instrument don't keep "
-				"a track. Group, effect, VCA, ruler, tempo and signature tracks stay. If the active marker track goes, "
+				"a track. Group, effect, VCA, ruler, tempo and signature tracks stay. The channels of the tracks it "
+				"removes "
+				"leave their link groups, and a group left without channels goes (linkGroup.removed). If the active "
+				"marker track goes, "
 				"the topmost marker track that stays becomes the active one. What it removes "
 				"can leave others empty, such as a folder that held only empty tracks, so it looks again until no "
 				"empty track is left. One undo step; none if nothing is empty. Returns the tracks removed, from top "

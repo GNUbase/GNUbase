@@ -1305,10 +1305,9 @@ namespace gnubase::engine
 						slot = candidate;
 						fromSilence = false;
 					}
-				// Mute Pre-Send when Mute (reference manual p. 1623): the mute button mutes pre-fader sends too, and
-				// mute automation through the tap.
-				const float gain = send.preFader && channel.muted && m_mutePreSends ? 0.0f : send.gain;
-				addSend(number, slot, gain, send.preFader, fromSilence);
+				// Mute Pre-Send when Mute (reference manual p. 1623) mutes pre-fader sends through the tap, which the
+				// fader's mute scales, from the mute button as from mute automation.
+				addSend(number, slot, send.gain, send.preFader, fromSilence);
 				next[number][slot] = {destination, send.preFader};
 			}
 			for (const GoingSend& send : going)

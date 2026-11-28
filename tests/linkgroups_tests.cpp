@@ -522,6 +522,12 @@ TEST_CASE("a link group that loses all its channels goes, and its VCA fader stay
 	run(client, "track.set", {{"track", folder.at("track").at("id")}, {"groupChannel", false}});
 	REQUIRE(groups(client).size() == 1);
 	CHECK(groups(client).at(0).at("channels") == Json({d}));
+
+	// Removing empty tracks takes their channels out of their groups, and a group without channels goes.
+	lastEvent(client, "linkGroup.removed");
+	REQUIRE(run(client, "track.removeEmpty").at("tracks").size() == 2); // d's track and the folder
+	CHECK(groups(client).empty());
+	CHECK(lastEvent(client, "linkGroup.removed") == Json({{"group", withAudio}}));
 }
 
 TEST_CASE("a VCA track added for tracks controls a new link group of their channels", "[unit]")

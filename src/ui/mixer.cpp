@@ -1157,11 +1157,10 @@ namespace gnubase::ui
 		Rml::ElementList controls;
 		strip.QuerySelectorAll(controls, "[param]");
 		m_updating = true; // filling a drop-down list sends a change
-		// A send level's Ctrl-click value follows the default send level, also while its knob is ahead. The knob goes
-		// up to the project's maximum volume, as the fader does, and down to the default send level below its usual
-		// -60 dB, so that it gives a send the level track.add gives it.
+		// A send level's Ctrl-click value follows the default send level, also while its knob is ahead, and also below
+		// the knob's -60 dB, so that it gives a send the level track.add gives it. The knob goes up to the project's
+		// maximum volume, as the fader does; its travel stays the same whatever the default send level is.
 		const std::string level = widgets::format(static_cast<float>(m_defaultSendLevel));
-		const std::string lowest = widgets::format(static_cast<float>(std::min(m_defaultSendLevel, g_sendKnobMin)));
 		const std::string highest = widgets::format(m_project.value("maxVolume", 6.0F));
 		const widgets::Options destinations =
 			sendDestinations(m_project, m_channels, channel.id, channel.track != 0 && m_actions.addEffectTrack);
@@ -1169,8 +1168,7 @@ namespace gnubase::ui
 		{
 			const std::string param = attribute(*control, "param");
 			if (param.rfind("sends.", 0) == 0 && endsWith(param, ".level"))
-				for (const auto& [name, value] :
-					{std::pair{"default", &level}, std::pair{"min", &lowest}, std::pair{"max", &highest}})
+				for (const auto& [name, value] : {std::pair{"default", &level}, std::pair{"max", &highest}})
 					if (attribute(*control, name) != *value)
 						control->SetAttribute(name, *value);
 			if (control->HasAttribute("value") && m_binding.sending(stepKey(m_stepOwner, channel.id, param)))

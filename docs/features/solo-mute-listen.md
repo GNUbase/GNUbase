@@ -56,8 +56,8 @@ modes, solo defeat, the Deactivate All buttons and listen.
 ## Not yet
 
 The control room (#191), and with it PFL, listen on input and output channels, and the listen level and dim in its panel
-rather than in user settings; the toolbar's Activate/Deactivate Read for All Tracks (p. 58); the preferences Group
-Channels: Mute Sources as well and Mute Pre-Send when Mute (p. 1622); solo on directly monitored inputs with dimming.
+rather than in user settings; the toolbar's Activate/Deactivate Read for All Tracks (p. 58); the preference Group
+Channels: Mute Sources as well (p. 1622); solo on directly monitored inputs with dimming.
 
 ## Checks
 

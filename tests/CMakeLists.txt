@@ -10,7 +10,8 @@ add_library(gnubase-testutils STATIC
 	testutils/slowframe.h
 	testutils/stopandjoin.h
 	testutils/tempfolder.cpp testutils/tempfolder.h
-	testutils/testutils.cpp testutils/testutils.h)
+	testutils/testutils.cpp testutils/testutils.h
+	testutils/ticks.h)
 target_include_directories(gnubase-testutils PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(gnubase-testutils PUBLIC gnubase-ui)
 target_link_libraries(gnubase-testutils PRIVATE Catch2::Catch2 miniz)

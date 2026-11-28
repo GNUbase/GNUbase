@@ -10,6 +10,7 @@
 #include "engine/processors/testsynth.h"
 #include "testutils/heldjob.h"
 #include "testutils/testutils.h"
+#include "testutils/ticks.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
@@ -32,6 +33,7 @@
 
 using namespace gnubase::engine;
 using Catch::Matchers::ContainsSubstring;
+using gnubase::test::ticks;
 
 namespace
 {
@@ -65,13 +67,6 @@ namespace
 				channel = t.at("channel").get<ObjectId>();
 		REQUIRE(channel != 0);
 		return channel;
-	}
-
-	// Ticks for a number of samples at the default 120 BPM and 48 kHz, exact for multiples of 25 samples.
-	int64_t ticks(int64_t samples)
-	{
-		REQUIRE(samples % 25 == 0);
-		return samples / 25 * 1792;
 	}
 
 	double gain(double decibels)

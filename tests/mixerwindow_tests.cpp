@@ -906,8 +906,9 @@ TEST_CASE(
 	app.ui().click(
 		window, {control(guitar.channel, "sends.2.level"), 0, std::nullopt}, ui::MouseButton::Left, 1, {"ctrl"});
 	REQUIRE(app.waitUntil([&] { return send().at("level") == -12.0; }));
-	// The knob reaches every default send level that track.add gives a send: up to the project's maximum volume and
-	// below the knob's usual -60 dB.
+	// Ctrl-click gives every default send level that track.add gives a send: up to the project's maximum volume, to
+	// which the knob goes, and below the knob's -60 dB, which stays its lowest level, so that a drag changes the level
+	// as fast whatever the default is.
 	app.call("project.set", {{"maxVolume", 12.0}});
 	app.call("settings.set", {{"key", "audio.defaultSendLevel"}, {"value", 10.0}});
 	REQUIRE(app.waitUntil(
@@ -919,16 +920,22 @@ TEST_CASE(
 	app.ui().click(
 		window, {control(guitar.channel, "sends.2.level"), 0, std::nullopt}, ui::MouseButton::Left, 1, {"ctrl"});
 	REQUIRE(app.waitUntil([&] { return send().at("level") == 10.0; }));
-	app.call("settings.set", {{"key", "audio.defaultSendLevel"}, {"value", -80.0}});
+	app.call("settings.set", {{"key", "audio.defaultSendLevel"}, {"value", -144.0}});
 	REQUIRE(app.waitUntil(
 		[&]
 		{
-			return element(app, window, control(guitar.channel, "sends.2.level")).at("attributes").value("min", "") ==
-				"-80";
+			return element(app, window, control(guitar.channel, "sends.2.level"))
+					   .at("attributes")
+					   .value("default", "") == "-144";
 		}));
+	CHECK(element(app, window, control(guitar.channel, "sends.2.level")).at("attributes").value("min", "") == "-60");
 	app.ui().click(
 		window, {control(guitar.channel, "sends.2.level"), 0, std::nullopt}, ui::MouseButton::Left, 1, {"ctrl"});
-	REQUIRE(app.waitUntil([&] { return send().at("level") == -80.0; }));
+	REQUIRE(app.waitUntil([&] { return send().at("level") == -144.0; }));
+	// The wheel turns it up from the knob's lowest level.
+	app.ui().wheel(window, {control(guitar.channel, "sends.2.level"), 0, std::nullopt}, 0.0F, -1.0F);
+	REQUIRE(app.waitUntil([&] { return send().at("level") > -60.0; }));
+	CHECK(send().at("level") < -59.0);
 
 	// What another client changes shows.
 	app.call(

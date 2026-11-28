@@ -19,9 +19,10 @@ fader itself is in [mixer.md](mixer.md), mute, solo and listen in [solo-mute-lis
   takes it from the group it was in. `linkGroup.add` (unless named, Link Group N with N one more than the number
   of groups, or the next number no group's name has; at least one channel), `linkGroup.set` and `linkGroup.remove`
   (unlink; a VCA fader that controlled the group stays) are undo steps; removing a track takes its channel out of
-  its group, and a VCA track that goes leaves its group without one, which links the volume again (p. 518). A group
-  whose last channel goes, to another group or with its track, goes too (`linkGroup.removed`), as linking needs a
-  channel; its VCA fader stays and controls nothing.
+  its group, as do turning a folder's group channel off (`track.set` `groupChannel` false) and Remove Empty Tracks
+  (`track.removeEmpty`), and a VCA track that goes leaves its group without one, which links the volume again
+  (p. 518). A group whose last channel goes, to another group or with its track, goes too (`linkGroup.removed`), as
+  linking needs a channel; its VCA fader stays and controls nothing.
 - **What a group links** (p. 458): `volume` (on by default) moves the other channels' faders by as much as one moved,
   stopping at their ends; `pan` likewise (both commands below through `followLinkedMove` in
   `src/engine/document/document.cpp`, so the rules can't drift apart); `mute` passes mute, solo, solo defeat and listen
@@ -55,8 +56,10 @@ fader itself is in [mixer.md](mixer.md), mute, solo and listen in [solo-mute-lis
   `Volume`; link groups, which DAWproject doesn't have, go into GNUbase's extra entry. A file's link groups lose
   channels that are gone or already in a group, and VCA faders that aren't VCA tracks' channels, control another
   group or would control themselves (in the group they control, or through others: the first group of such a loop
-  loses its VCA fader); groups left without channels go. Another application's VCA channel keeps its fader, mute and
-  solo; its pan, sends and destination are left out, as a VCA channel can't have them.
+  loses its VCA fader); a group that loses its VCA fader links the volume again, as when its VCA track goes, and
+  groups left without channels go. Another application's VCA channel keeps its fader, mute and solo; its pan, sends
+  and destination are left out, as a VCA channel can't have them, and so are the audio channels, input, output, pan,
+  sends and slots of a VCA channel in a hand-edited GNUbase entry.
 
 ## In the UI
 
@@ -100,7 +103,8 @@ Channels, and the channels' automation tracks showing the combined curve (pp. 51
   doesn't; a channel moving between groups, removing tracks and unlinking; refusals. VCA tracks' channels and their
   parameter; a VCA fader turns off the volume link, passes its buttons on through a nested VCA fader in one undo step,
   refuses loops, leaves the group it controlled for another one; removing a VCA track turns the volume link back on;
-  groups without channels go; default names stay unique; a VCA track for tracks controlling a new group of their
+  groups without channels go, also when a folder's group channel goes or `track.removeEmpty` removes their tracks;
+  default names stay unique; a VCA track for tracks controlling a new group of their
   channels, in the project's VCA folder, in one undo step; saving and loading. Rendered through the dummy device: the
   reference manual's nested example (-3, -10 and +4 dB play at -9 dB), a VCA ramp over a static channel fader exactly,
   and a VCA ramp over the channel's own ramp within 0.001; a VCA fader's meter 6 dB above its two equal channels', also
@@ -111,5 +115,8 @@ Channels, and the channels' automation tracks showing the combined curve (pp. 51
   double click, and no display line without a group; the Link Group Settings dialog from the menu and from a double
   click with Ctrl, showing the group's settings, Use VCA Fader turning Volume off, OK sending the settings and Cancel
   nothing.
-- `tests/dawproject_tests.cpp`: VCA fader loops in a file are left out, and another application's VCA channel loses its
-  pan, sends and destination.
+- `tests/dawproject_tests.cpp`: VCA fader loops in a file are left out; groups whose VCA fader is an audio channel, a
+  channel that isn't there or one that controls an earlier group lose it and link the volume again; another
+  application's VCA channel loses its pan, sends and destination, and one in a hand-edited GNUbase entry its audio
+  channels, routing, pan, sends and slots; a project with a VCA track's volume automation loads from GNUbase's
+  entry, link groups and all.

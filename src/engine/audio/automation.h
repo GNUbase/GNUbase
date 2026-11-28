@@ -214,6 +214,15 @@ namespace gnubase::engine
 
 	class PreFaderTap;
 
+	// A channel's pre-fader tap that its fader mutes, by how much: 1 as the fader mutes the channel, 0 not at all, and
+	// in between while it glides over the block from `from` to `to`, frame by frame as ChannelStrip::glide.
+	struct MutedTap
+	{
+		PreFaderTap* tap = nullptr;
+		float from = 1.0f;
+		float to = 1.0f;
+	};
+
 	// A channel's fader: a linear gain, then its panner. A mono channel on a stereo destination is placed with the
 	// pan law and becomes stereo; a stereo channel has a balance as in the built-in gainPan (the side panned away from
 	// is lowered, the center is unity gain) or the combined panner, which places its left and its right channel each
@@ -234,15 +243,15 @@ namespace gnubase::engine
 		ChannelFader();
 
 		// Audio thread. The context has the channel's own channels; a mono panner writes the second one of its
-		// stereo output after them. muted, if any, is scaled by the mute alone, frame by frame as the channel is;
-		// unpanned, if any, by the gain and the mute, without the panner.
-		void process(const graph::ProcessContext& context, const Panning& panning, PreFaderTap* muted = nullptr,
+		// stereo output after them. muted's tap, if any, is scaled by the mute alone, frame by frame as the channel
+		// is, as far as muted says; unpanned, if any, by the gain and the mute, without the panner.
+		void process(const graph::ProcessContext& context, const Panning& panning, const MutedTap& muted = {},
 			PreFaderTap* unpanned = nullptr) noexcept;
 
 	private:
 		using Ramp = ParameterRamp;
 
-		void render(const graph::ProcessContext& context, const Panning& panning, PreFaderTap* muted,
+		void render(const graph::ProcessContext& context, const Panning& panning, const MutedTap& muted,
 			PreFaderTap* unpanned, uint32_t begin, uint32_t end) noexcept;
 
 		Ramp m_volume;
@@ -336,6 +345,10 @@ namespace gnubase::engine
 		// and the output's, 0 while the channel is silent: soloed out or on a disabled track (RenderChannel::quiet;
 		// the mute button mutes through the fader)
 		float outputGain = -1.0f;
+		// Audio thread: how far the fader's mute muted the pre-fader sends in the last block, 1 with Mute Pre-Send
+		// when Mute and 0 without (MutedTap), -1 before the first block and while the channel has no pre-fader
+		// sends; a new graph glides from it to its setting.
+		float preSendsMuted = -1.0f;
 		// Audio thread: the fader's automation events of the block, from a channel's source node to its fader node
 		// when plugin slots are between them; the source node always runs first.
 		graph::EventBuffer faderEvents{graph::g_maxEventsPerBlock};
@@ -476,8 +489,10 @@ namespace gnubase::engine
 		uint32_t latency() const override;
 
 		// Command thread, before the graph compiles: where the strip leaves its audio before the fader in every block;
-		// with followMute (Mute Pre-Send when Mute), muted as the fader mutes the channel, so that mute automation
-		// mutes the pre-fader sends too, from its sample on.
+		// with followMute (Mute Pre-Send when Mute), muted as the fader mutes the channel, so that the mute button and
+		// mute automation mute the pre-fader sends too, the automation from its sample on, and a handover between them
+		// lets nothing through. A graph with the other setting than the one before glides to it over its first block,
+		// so the sends of a muted channel glide out or in.
 		void tapPreFader(std::shared_ptr<PreFaderTap> tap, bool followMute)
 		{
 			m_tap = std::move(tap);
