@@ -76,7 +76,11 @@ Functions that edit MIDI parts as a whole (#133, #838).
   Global Transpose setting, and new tracks get the track's MIDI modifiers, so that they play as the part did, and are
   set to the MIDI channel they hold by channel (p. 1122), on which they play even where the track was set to one channel
   and played them all on it, or to the track's (`channel.set` `midiChannel`) by pitch. The copied events get new ids, so
-  play probability and velocity variance, drawn from part and note ids, draw anew. `midi.bounce` combines a track's
+  play probability and velocity variance, drawn from part and note ids, draw anew. Poly pressure presses the key of
+  its note as playback does (`midi::PressedNotes`, [midi-modifiers.md](midi-modifiers.md)): both write it on the
+  merged or bounced note it presses, in that note's part, leave it out with a note that is left out, and move pressure
+  without such a note by the transposition (#2158); merge keeps the stored key of a track whose MIDI inserts play its
+  notes, which make notes of their own. `midi.bounce` combines a track's
   parts into one on the lowest of their lanes, removes muted parts and writes the parts' transpose and velocity into the
   notes (p. 1123), as playback applies them. The new part gets the root key and Global Transpose setting the parts with
   notes share, or, when they differ, the project root key and follow, as merge does (#954, #1240), and each part's

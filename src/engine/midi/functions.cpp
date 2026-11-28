@@ -1028,7 +1028,9 @@ namespace gnubase::engine::midi
 				const Ticks shift = from - combinedStart;
 				const Ticks partTo = partEnd(project, part);
 				const Ticks length = partTo - from;
-				for (const auto& [noteId, note] : playedNotes(project, part))
+				const std::map<ObjectId, Note> played = playedNotes(project, part);
+				std::map<ObjectId, uint8_t> pitchOf; // of the notes written, for their poly pressure
+				for (const auto& [noteId, note] : played)
 				{
 					if (note.position >= length)
 						continue;
@@ -1043,6 +1045,7 @@ namespace gnubase::engine::midi
 							continue;
 						copy.pitch = static_cast<uint8_t>(moved);
 					}
+					pitchOf[noteId] = copy.pitch;
 					copy.id = project.newId();
 					copy.position += shift;
 					copy.length =
@@ -1055,10 +1058,26 @@ namespace gnubase::engine::midi
 					}
 					combined.notes[copy.id] = copy;
 				}
+				// Poly pressure presses the key of its note as playback does (#2158): the note's new pitch, nothing
+				// if the note is left out, and without a note the key moved by the transposition.
+				const PressedNotes pressed(played, trackMidiChannel(project, part.track).has_value());
 				for (const auto& [controllerId, controller] : part.controllers)
 					if (controller.position < length)
 					{
 						Controller copy = controller;
+						if (bounced.pitchInNotes && controller.type == ControllerType::PolyPressure)
+						{
+							int key = controller.number +
+								semitonesAgainst(project, part, bounced.against, from + controller.position);
+							if (const Note* note = pressed.find(controller))
+							{
+								const auto found = pitchOf.find(note->id);
+								key = found != pitchOf.end() ? found->second : -1;
+							}
+							if (key < 0 || key > 127)
+								continue;
+							copy.number = static_cast<uint8_t>(key);
+						}
 						copy.id = project.newId();
 						copy.position += shift;
 						combined.controllers[copy.id] = copy;
@@ -1299,9 +1318,21 @@ namespace gnubase::engine::midi
 			Ticks sourceAt;     // where it is stored in its part, as playback sees the global transposition there
 			uint8_t ownPitch;   // the pitch it is stored with, which a destination's map prefers
 			uint8_t ownChannel; // the channel it is stored with, which a destination set to a channel keeps
+			ObjectId id;        // its id in its part, for its poly pressure
 		};
 		std::vector<Candidate> candidates;
 		std::vector<Controller> controllers;
+		// Poly pressure in the range presses the key of its note as playback does (#2158): where the merged note
+		// it became is stored, in that note's part, and nothing if the note is left out; without a note, the key
+		// moved by the transposition. Pressure of a track whose inserts play its notes keeps its stored key.
+		struct Pressure
+		{
+			Controller controller; // as the destination stores it
+			const MidiPart* source;
+			ObjectId note; // the note it presses, 0 if none
+			Ticks sourceAt;
+		};
+		std::vector<Pressure> pressures;
 		// The directions of the merged tracks by their maps' groups, and where parts start in the range a reset of each
 		// group, as they play from the default slot.
 		struct GroupEvent
@@ -1384,9 +1415,10 @@ namespace gnubase::engine::midi
 					}
 				}
 			// The notes as playback plays them with the modifiers given.
+			const std::map<ObjectId, Note> played = playedNotes(project, part);
 			const auto collect = [&](const Modifiers& with, std::vector<Candidate>& into)
 			{
-				for (const auto& [noteId, note] : playedNotes(project, part))
+				for (const auto& [noteId, note] : played)
 				{
 					if (partFrom + note.position >= partTo || sourcePitches.silent(note.pitch))
 						continue;
@@ -1404,7 +1436,8 @@ namespace gnubase::engine::midi
 					const Ticks length = note.length > 0 ? modifyLength(with, seed, note.length) : 0;
 					copy.position = at;
 					copy.length = std::min(at + length, partTo) - at;
-					into.push_back({copy, seed, with, &part, partFrom + note.position, note.pitch, note.channel});
+					into.push_back(
+						{copy, seed, with, &part, partFrom + note.position, note.pitch, note.channel, noteId});
 				}
 			};
 			collect(modifiers, candidates);
@@ -1416,6 +1449,8 @@ namespace gnubase::engine::midi
 				partOnly.velocityShift = part.velocity;
 				collect(partOnly, unmodified);
 			}
+			const bool insertsPlay = playing != effects.end() && !playing->second.inserts.empty();
+			const PressedNotes pressed(played, sourcePitches.trackChannel().has_value());
 			for (const auto& [controllerId, controller] : part.controllers)
 			{
 				const Ticks at = partFrom + controller.position;
@@ -1437,7 +1472,12 @@ namespace gnubase::engine::midi
 					for (const Articulation& each : articulations->articulations)
 						if (each.name == controller.articulation)
 							group = each.group;
-				if (inRange(at))
+				if (inRange(at) && controller.type == ControllerType::PolyPressure && !insertsPlay)
+				{
+					const Note* note = pressed.find(controller);
+					pressures.push_back({written, &part, note != nullptr ? note->id : 0, at});
+				}
+				else if (inRange(at))
 				{
 					controllers.push_back(written);
 					if (group >= 0)
@@ -1510,9 +1550,12 @@ namespace gnubase::engine::midi
 			: trackModifiers(project, settings.destination);
 		// Writes a note as a new part with the setting plays it, pitchKept telling whether that has its part's
 		// transpose and Global Transpose setting; false where it can't hold the pitch that played.
+		// Where each written note landed, by its source part and id: its part's setting, its stored pitch and channel.
+		std::map<std::pair<const MidiPart*, ObjectId>, std::tuple<BouncedSetting, uint8_t, uint8_t>> landed;
 		const auto write =
 			[&](const Candidate& candidate, const BouncedSetting& setting, bool pitchKept, std::vector<Note>& into)
 		{
+			landed.erase({candidate.source, candidate.id});
 			Note copy = candidate.note;
 			const MidiPart& source = *candidate.source;
 			Modifiers transposed = candidate.modifiers;
@@ -1548,6 +1591,7 @@ namespace gnubase::engine::midi
 			copy.pitch = static_cast<uint8_t>(
 				destinationPitches.stored(copy.pitch, copy.channel, copy.position, candidate.ownPitch));
 			copy.channel = destinationPitches.storedChannel(copy.channel, candidate.ownChannel, copy.pitch);
+			landed[{candidate.source, candidate.id}] = {setting, copy.pitch, copy.channel};
 			into.push_back(copy);
 			return true;
 		};
@@ -1620,6 +1664,31 @@ namespace gnubase::engine::midi
 			const auto first = firstStart.find(setting);
 			if (first == firstStart.end() || from < first->second)
 				firstStart[setting] = from;
+		}
+		// The poly pressure in the part of its note, or else moved by the transposition as playback moves it, with the
+		// track's modifiers' transpose with Include Inserts, into the first new part.
+		std::map<BouncedSetting, std::vector<Controller>> pressing;
+		for (Pressure& pressure : pressures)
+		{
+			Controller& controller = pressure.controller;
+			if (pressure.note != 0)
+			{
+				const auto found = landed.find({pressure.source, pressure.note});
+				if (found == landed.end())
+					continue; // its note didn't play
+				const auto& [setting, pitch, channel] = found->second;
+				controller.number = pitch;
+				controller.channel = channel;
+				pressing[setting].push_back(controller);
+				continue;
+			}
+			const int key = controller.number + playedAt(project, *pressure.source, pressure.sourceAt) -
+				globalAt(project, newSetting, controller.position) +
+				(settings.includeInserts ? trackModifiers(project, pressure.source->track).transpose : 0);
+			if (key < 0 || key > 127)
+				continue;
+			controller.number = static_cast<uint8_t>(key);
+			controllers.push_back(controller);
 		}
 		// What the effects of the tracks with effects play, which make new notes of their own: the notes as playback
 		// plays them into the effects (compilePart and the sequencer), with their play probability and velocity
@@ -1785,6 +1854,9 @@ namespace gnubase::engine::midi
 				start = std::min(start, note.position);
 		for (const Controller& controller : controllers)
 			start = std::min(start, controller.position);
+		for (const auto& [setting, pressed] : pressing)
+			for (const Controller& controller : pressed)
+				start = std::min(start, controller.position);
 		// Before the directions at the same positions, which come after them (soundSlots goes by id there).
 		controllers.insert(controllers.begin(), resets.begin(), resets.end());
 		for (auto& [key, controller] : chased)
@@ -1817,14 +1889,20 @@ namespace gnubase::engine::midi
 				note.position -= start;
 				part.notes[note.id] = note;
 			}
-			// Every new part gets the articulation events, which playback reads per part and never sends.
-			for (Controller controller : controllers)
-				if (i == 0 || controller.type == ControllerType::Articulation)
-				{
-					controller.id = project.newId();
-					controller.position -= start;
-					part.controllers[controller.id] = controller;
-				}
+			// Every new part gets the articulation events, which playback reads per part and never sends, and the poly
+			// pressure of its notes.
+			std::vector<Controller> own;
+			std::copy_if(controllers.begin(), controllers.end(), std::back_inserter(own),
+				[i](const Controller& controller)
+				{ return i == 0 || controller.type == ControllerType::Articulation; });
+			if (const auto pressed = pressing.find(setting); pressed != pressing.end())
+				own.insert(own.end(), pressed->second.begin(), pressed->second.end());
+			for (Controller& controller : own)
+			{
+				controller.id = project.newId();
+				controller.position -= start;
+				part.controllers[controller.id] = controller;
+			}
 			changes.addedParts.push_back(part.id);
 			project.midiParts[part.id] = std::move(part);
 		}

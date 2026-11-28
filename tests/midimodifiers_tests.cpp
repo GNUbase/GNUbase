@@ -172,11 +172,11 @@ namespace
 
 	// The keys of the poly pressure the track plays, or its MIDI sends before the modifiers get, from the render
 	// snapshot, by position, then key.
-	std::vector<int> pressedKeys(ModifiedTrack& track, bool pre = false)
+	std::vector<int> pressedKeys(ModifiedTrack& track, bool pre = false, ObjectId channel = 0)
 	{
 		std::vector<std::pair<int64_t, int>> keys;
 		for (const RenderChannel& render : track.engine.renderSnapshots().acquire().channels)
-			if (render.id == track.channel)
+			if (render.id == (channel == 0 ? track.channel : channel))
 				for (const RenderController& controller : pre ? render.preControllers : render.controllers)
 					if (controller.type == ControllerType::PolyPressure)
 						keys.emplace_back(controller.position, controller.number);
@@ -800,6 +800,55 @@ TEST_CASE("glued MIDI parts move the other parts' poly pressure with their notes
 	CHECK_THAT(reject(track.client, "event.glue", {{"events", {track.part, second}}}),
 		ContainsSubstring("a poly pressure event of MIDI part"));
 	CHECK(run(track.client, "project.get") == before);
+}
+
+TEST_CASE("Bounce MIDI moves the poly pressure of a transposed part with its notes (#2158)", "[integration]")
+{
+	ModifiedTrack track;
+	track.add({{60, 100}, {64, 100}});
+	// On the first note's key, on a key no note holds then, and on the second note's key.
+	press(track, track.part, {{0, 60}, {0, 61}, {1, 64}});
+	run(track.client, "midiPart.set", {{"part", track.part}, {"transpose", 2}});
+	CHECK(pressedKeys(track) == std::vector<int>{62, 63, 66});
+
+	// The transpose goes into the notes' pitches, and the pressure with them; pressure without a note by the
+	// transpose alone, as playback moved it.
+	run(track.client, "midi.bounce", {{"parts", {track.part}}});
+	CHECK(pitches(track.notes()) == std::vector<int>{62, 66});
+	CHECK(pressedKeys(track) == std::vector<int>{62, 63, 66});
+}
+
+TEST_CASE("Merge MIDI in Loop moves poly pressure with the notes as they play (#2158)", "[integration]")
+{
+	ModifiedTrack track;
+	const Json added = run(track.client, "track.add", {{"type", "instrument"}});
+	const auto destination = added.at("track").at("id").get<ObjectId>();
+	const auto destinationChannel = added.at("channel").at("id").get<ObjectId>();
+	run(track.client, "channel.set", {{"channel", destinationChannel}, {"instrument", "noteProbe"}});
+	track.add({{60, 100}, {62, 100}});
+	press(track, track.part, {{0, 60}, {0, 61}, {1, 62}});
+	run(track.client, "midiPart.set", {{"part", track.part}, {"transpose", 2}});
+	track.modify({{"transpose", 1}, {"random", {{{"target", "pitch"}, {"minimum", 5}, {"maximum", 5}}}}});
+	CHECK(pitches(track.notes()) == std::vector<int>{68, 70});
+	CHECK(pressedKeys(track) == std::vector<int>{64, 68, 70});
+	const auto merge = [&](bool includeInserts)
+	{
+		run(track.client, "midi.merge",
+			{{"start", 0}, {"end", 4 * g_beat}, {"tracks", {track.track}}, {"destination", destination},
+				{"includeInserts", includeInserts}});
+		return pressedKeys(track, false, destinationChannel);
+	};
+
+	// With Include Inserts the merged notes play as the track played them, and the pressure with them.
+	CHECK(merge(true) == std::vector<int>{64, 68, 70});
+	run(track.client, "history.undo");
+	// Without, the part's transpose goes into the notes and the pressure, the track's modifiers stay on the track.
+	CHECK(merge(false) == std::vector<int>{62, 63, 64});
+	run(track.client, "history.undo");
+	// A note that a range leaves out has its pressure left out too.
+	track.modify({{"range", {{{"target", "noteFilter"}, {"maximum", 69}}}}});
+	CHECK(pressedKeys(track) == std::vector<int>{64, 68});
+	CHECK(merge(true) == std::vector<int>{64, 68});
 }
 
 TEST_CASE("glued poly pressure moves by the difference at its note's position, which the octave-range fold can change",
