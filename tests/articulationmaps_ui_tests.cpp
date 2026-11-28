@@ -1926,7 +1926,7 @@ TEST_CASE("the event colors menu's Sound Slot colors the notes by the slot they 
 		return found.empty() ? std::string("none") : found.at(0).at("attributes").value("color", std::string());
 	};
 	REQUIRE(f.app.waitUntil([&f] { return f.slot(f.notes[0]) == "Staccato" && f.slot(f.notes[2]) == "Pizzicato"; }));
-	CHECK(color(f.notes[1]).empty());
+	CHECK(color(f.notes[1]) != "#2040a0"); // at first in its velocity's color
 	f.click(of("#key-event-colors"));
 	f.click(of("#key-event-colors-menu menuitem[event-colors=soundSlot]"));
 	REQUIRE(f.app.waitUntil([&] { return color(f.notes[1]) == "#2040a0"; }));

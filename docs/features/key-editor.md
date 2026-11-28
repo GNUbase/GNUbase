@@ -194,8 +194,8 @@ the notes, not the project window's selected events.
   opens nothing yet, as the key editor has no context menu: the grid's `contextmenu` or `modifiercontextmenu` is
   empty. A right click doesn't change the selection.
 - **Event Colors** (pp. 1133-1134, [colors.md](colors.md)): the toolbar's `#key-event-colors` opens
-  `#key-event-colors-menu`, which sets the view's `eventColors`: Default (the style sheets' note colors), Part or Sound
-  Slot. The drum editor and the in-place editor have it too.
+  `#key-event-colors-menu`, which sets the view's `eventColors`: Velocity (at first), Pitch, Channel, Part or Sound
+  Slot, and Setup for the first three's colors. The drum editor and the in-place editor have it too.
 - **Clicking a part** in the row of parts activates it, as `MidiEditor` handles clicks on `[part]` (p. 1152); a click
   on a note activates its part too.
 
@@ -258,7 +258,7 @@ key editor's context menu.
   more room than the controller lanes, at dp ratios 1 and 1.5, and the lanes whole in a lower zone of 400 dp; the editor
   window's lane keeping its 64 dp and the note display its 40%, and the in-place editor's lanes keeping their height
   with its toolbar shown; the Event Colors menu's Part, notes in their part's own color or else their track's, a
-  selected note without it, and Default; the menu in the drum editor and in the in-place editor, where with Active Part
+  selected note without it, and Velocity; the menu in the drum editor and in the in-place editor, where with Active Part
   the other parts' notes keep the style sheets' look; Indicate Transpositions from the toolbar showing a note after a
   transpose event on the row it plays at, a note drawn there getting the pitch that plays at that row, a move changing
   the pitch by the rows dragged, and every note on its own row again once it is off; a note dragged across a transpose

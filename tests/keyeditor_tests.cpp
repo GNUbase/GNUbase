@@ -483,15 +483,37 @@ TEST_CASE("the note expression settings of the key editor are view state", "[uni
 
 TEST_CASE("the MIDI editors' event colors are view state", "[unit]")
 {
-	// The Event Colors menu (reference manual pp. 1133-1134): the theme's note colors at first, Part or Sound Slot.
+	// The Event Colors menu (reference manual pp. 1133-1134): Velocity at first, Pitch, Channel, Part or Sound Slot.
 	Fixture f;
-	CHECK(f.view().at("eventColors") == "default");
+	CHECK(f.view().at("eventColors") == "velocity");
 	const int64_t revision = f.call("project.revision").at("revision").get<int64_t>();
-	CHECK(f.call("editor.set", {{"editor", "window"}, {"eventColors", "part"}}).at("eventColors") == "part");
-	CHECK(f.call("editor.set", {{"editor", "window"}, {"eventColors", "soundSlot"}}).at("eventColors") == "soundSlot");
+	for (const char* colors : {"pitch", "channel", "part", "soundSlot"})
+		CHECK(f.call("editor.set", {{"editor", "window"}, {"eventColors", colors}}).at("eventColors") == colors);
 	CHECK(f.view().at("eventColors") == "soundSlot");
 	CHECK(f.call("project.revision").at("revision").get<int64_t>() == revision); // no undo step
 	CHECK(!f.fails("editor.set", {{"editor", "window"}, {"eventColors", "rainbow"}}).empty());
+	CHECK(!f.fails("editor.set", {{"editor", "window"}, {"eventColors", "default"}}).empty());
+}
+
+TEST_CASE("the velocity, pitch and channel colors are a user setting", "[unit]")
+{
+	// The event colors setup dialogs (reference manual pp. 1134-1136): 8 velocity ranges, the 12 pitch classes from C
+	// and the 16 MIDI channels, each a color.
+	Fixture f;
+	const Json colors = f.call("settings.get", {{"key", "ui.eventColors"}}).at("value");
+	CHECK(colors.at("velocity").size() == 8);
+	CHECK(colors.at("pitch").size() == 12);
+	CHECK(colors.at("channel").size() == 16);
+	Json changed = colors;
+	changed["pitch"][0] = "#123456";
+	f.call("settings.set", {{"key", "ui.eventColors"}, {"value", changed}});
+	CHECK(f.call("settings.get", {{"key", "ui.eventColors"}}).at("value") == changed);
+	Json shorter = colors;
+	shorter["velocity"].erase(0);
+	CHECK(!f.fails("settings.set", {{"key", "ui.eventColors"}, {"value", shorter}}).empty());
+	Json bad = colors;
+	bad["channel"][3] = "red";
+	CHECK(!f.fails("settings.set", {{"key", "ui.eventColors"}, {"value", bad}}).empty());
 }
 
 TEST_CASE("notes played on the MIDI inputs go into step input as chords once all their keys are up", "[unit]")

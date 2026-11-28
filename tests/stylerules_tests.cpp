@@ -30,13 +30,15 @@ namespace
 	// color is the data itself: the color picker's field (its hue) and swatches, the track colors of the track list
 	// and the mixer's strips, the swatches of the project's color set in the color menu and the project colors setup
 	// dialog (#94) and the color tool's color on its button, the sound slots' colors of an articulation map in the
-	// Articulations lane (#1112), the drum pads' colors (#1567), and the key editor's notes in their parts' or sound
-	// slots' colors (the Event Colors menu, #553). Event colors are data that <event-lanes> draws
-	// (docs/features/canvas.md), not a style property.
+	// Articulations lane (#1112), the drum pads' colors (#1567), and the key editor's notes in the colors of the Event
+	// Colors menu (their velocities', pitches', channels', parts' or sound slots') with the swatches of the event
+	// colors setup dialog (#553). Event colors are data that <event-lanes> draws (docs/features/canvas.md), not a style
+	// property.
 	std::set<std::string> dataColors(const std::filesystem::path& file)
 	{
 		static const std::set<std::string> files = {"colorwidgets.cpp", "colormenu.cpp", "controllerlanes.cpp",
-			"drummachinepanel.cpp", "keyeditor.cpp", "mixer.cpp", "project-colors.rml", "tracklist.cpp"};
+			"drummachinepanel.cpp", "event-colors.rml", "keyeditor.cpp", "mixer.cpp", "project-colors.rml",
+			"tracklist.cpp"};
 		if (files.count(file.filename().string()) != 0)
 			return {"background-color"};
 		return {};

@@ -1,0 +1,134 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The event colors setup dialogs (#553, docs/features/colors.md, reference manual pp. 1134-1136): the colors of the
+     MIDI editors' Event Colors scheme in the document's attribute scheme, velocity, pitch or channel, which
+     ui::KeyEditor opens from the menu's Setup. Its Lua edits a copy of the user setting ui.eventColors: a row per
+     color with its swatch and what it is for, the color picker for the selected one; OK sets the setting, Cancel
+     drops the changes. The swatches show the colors, which are user data: background-color from Lua
+     (tests/stylerules_tests.cpp). -->
+<rml>
+<head>
+	<title>Event Colors Setup</title>
+	<style>
+		dialog
+		{
+			width: 480dp;
+		}
+
+		.content
+		{
+			display: flex;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		#event-colors-list
+		{
+			width: 150dp;
+			height: 240dp;
+			margin-right: 12dp;
+		}
+
+		.row
+		{
+			display: flex;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.row .spacer
+		{
+			flex: 1;
+		}
+
+		.row button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+	<script>
+		EventColors = {}
+		local dialog = EventColors
+
+		local titles = {velocity = "Velocity Colors Setup", pitch = "Pitch Colors Setup", channel = "Channel Colors Setup"}
+		local pitches = {"C", "C#/Db", "D", "D#/Eb", "E", "F", "F#/Gb", "G", "G#/Ab", "A", "A#/Bb", "B"}
+		local all = {} -- ui.eventColors as the dialog edits it
+		local scheme = "velocity"
+		local selected = 1
+
+		-- What the scheme's color at index is for.
+		local function describe(index)
+			if scheme == "velocity" then
+				return "Velocity " .. ((index - 1) * 16) .. "-" .. (index * 16 - 1)
+			elseif scheme == "pitch" then
+				return pitches[index]
+			end
+			return "Channel " .. index
+		end
+
+		function dialog.show(document)
+			local colors = all[scheme]
+			local rml = {}
+			for index in ipairs(colors) do
+				rml[index] = '<listitem value="' .. index .. '"><span class="color-swatch"/>' .. describe(index)
+					.. "</listitem>"
+			end
+			local list = document:GetElementById("event-colors-list")
+			list.inner_rml = table.concat(rml)
+			for index, color in ipairs(colors) do
+				list.child_nodes[index]:QuerySelector(".color-swatch").style["background-color"] = color
+			end
+			list:SetAttribute("value", tostring(selected))
+			local picker = document:GetElementById("event-colors-picker")
+			local old = picker:QuerySelector(".color-old") -- the picker's old color is the selected color as it was
+			if old ~= nil then
+				old:RemoveAttribute("color")
+			end
+			picker:SetAttribute("value", colors[selected])
+		end
+		function dialog.load(document)
+			scheme = tostring(document:GetAttribute("scheme") or "velocity")
+			if titles[scheme] == nil then
+				scheme = "velocity"
+			end
+			all = gnubase.settings.get{key = "ui.eventColors"}.value
+			selected = 1
+			document:GetElementById("event-colors-title").inner_rml = titles[scheme]
+			dialog.show(document)
+		end
+		function dialog.select(document)
+			local value = tonumber(tostring(document:GetElementById("event-colors-list"):GetAttribute("value") or ""))
+			if value ~= nil and value ~= selected and all[scheme][value] ~= nil then
+				selected = value
+				dialog.show(document)
+			end
+		end
+		function dialog.recolor(document, event)
+			local value = event.parameters.value
+			if type(value) ~= "string" or event.target_element.tag_name ~= "colorpicker" then
+				return -- the picker's own value fields
+			end
+			all[scheme][selected] = value
+			local row = document:GetElementById("event-colors-list").child_nodes[selected]
+			if row ~= nil then
+				row:QuerySelector(".color-swatch").style["background-color"] = value
+			end
+		end
+		function dialog.ok(document)
+			gnubase.settings.set{key = "ui.eventColors", value = all}
+			document:Close()
+		end
+	</script>
+</head>
+<body onshow="EventColors.load(document)">
+	<dialog id="event-colors-dialog">
+		<div class="dialog-titlebar" id="event-colors-title">Event Colors Setup</div>
+		<div class="content">
+			<listview id="event-colors-list" onchange="EventColors.select(document)"/>
+			<colorpicker id="event-colors-picker" onchange="EventColors.recolor(document, event)"/>
+		</div>
+		<div class="row">
+			<div class="spacer"/>
+			<button id="event-colors-cancel" result="cancel">Cancel</button>
+			<button id="event-colors-ok" class="primary" onclick="EventColors.ok(document)">OK</button>
+		</div>
+	</dialog>
+</body>
+</rml>
