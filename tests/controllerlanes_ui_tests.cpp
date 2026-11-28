@@ -575,6 +575,13 @@ TEST_CASE("the line tool's modes draw lines, parabolas and periodic curves on a 
 	CHECK(f.controllers()[4].at("type") == "pitchBend");
 	CHECK(f.controllers()[4].at("value").get<double>() == Approx(0.5).margin(0.05));
 	REQUIRE(f.app.waitUntil([&] { return f.elements(Fixture::area(0) + " .controller-step").size() == 9; }));
+	// Quantize Link takes the density from the quantize grid, 1/4: over the two quarters an event on each, and the
+	// end (#832).
+	f.app.call("editor.set", {{"editor", "window"}, {"lengthQuantize", "link"}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements("#key-length-quantize").at(0).at("text") == "Quantize Link"; }));
+	f.drag(f.at(0, 0, 0.0), f.at(0, 8, 1.0));
+	REQUIRE(f.app.waitUntil([&] { return f.controllers().size() == 3; }));
+	CHECK(f.controllers()[1].at("value").get<double>() == Approx(0.5).margin(0.05));
 
 	// A second click on the line tool opens its modes, whose menu is in the document but closed until then. Square
 	// goes from the start value to the end value and back every period, the quantize grid; the length quantize sets
