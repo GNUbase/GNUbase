@@ -139,13 +139,16 @@ namespace
 		std::unique_ptr<gnubase::midi::Input> input; // closes before the engine's backend goes
 	};
 
-	const Json g_synth = {{"midiPort", "dummy/out/Synth"}};
+	Json toSynth()
+	{
+		return {{"midiPort", "dummy/out/Synth"}};
+	}
 }
 
 TEST_CASE("a MIDI track routed to a MIDI output port plays its notes there at their frames' times", "[integration]")
 {
 	Setup setup;
-	Json routing = g_synth;
+	Json routing = toSynth();
 	routing["midiChannel"] = 2; // the notes follow the track's MIDI channel
 	// Frames 0 to 1500 and 750 to 1500: at 48 kHz 15.625 ms apart.
 	setup.midiTrack({{0, g_quarter / 16, 60}, {g_quarter / 32, g_quarter / 32, 64}}, routing);
@@ -161,8 +164,8 @@ TEST_CASE("MIDI output reaches the port at the same times for any number of proc
 	{
 		Setup setup;
 		run(setup.client, "audio.setProcessing", {{"multiProcessing", threads > 1}, {"threads", threads}});
-		setup.midiTrack({{0, g_quarter / 16, 60}, {g_quarter / 8, g_quarter / 32, 62}}, g_synth);
-		setup.midiTrack({{g_quarter / 32, g_quarter / 32, 67}, {g_quarter / 8, g_quarter / 32, 69}}, g_synth);
+		setup.midiTrack({{0, g_quarter / 16, 60}, {g_quarter / 8, g_quarter / 32, 62}}, toSynth());
+		setup.midiTrack({{g_quarter / 32, g_quarter / 32, 67}, {g_quarter / 8, g_quarter / 32, 69}}, toSynth());
 		return setup.play(8);
 	};
 	const std::vector<Arrived> alone = played(1);
@@ -174,7 +177,7 @@ TEST_CASE("a MIDI channel plays to an instrument or to a MIDI output port", "[un
 {
 	Setup setup;
 	Client& client = setup.client;
-	const ObjectId channel = setup.midiTrack({}, g_synth);
+	const ObjectId channel = setup.midiTrack({}, toSynth());
 	const auto get = [&]
 	{
 		const Json project = run(client, "project.get");
