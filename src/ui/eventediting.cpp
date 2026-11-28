@@ -584,6 +584,44 @@ namespace gnubase::ui
 						setRange(std::move(range));
 					}));
 		};
+		// With Range Tool Splits Partly Selected Events, on a selection range with a length: an edit of what lies in
+		// it, cut at its edges (reference manual pp. 259-260, 277, 293, 1595); otherwise as without the preference.
+		const auto splitsRangeOr = [this](std::function<void()> range, std::function<void()> otherwise)
+		{
+			return [this, range = std::move(range), otherwise = std::move(otherwise)]
+			{
+				if (m_rangeSplits && m_range && m_range->end > m_range->start)
+					range();
+				else
+					otherwise();
+			};
+		};
+		// Event Start and Event End to Cursor (p. 259): the selected events move so that their start or end is there.
+		const auto selectionToCursor = [this, edge](bool end)
+		{
+			return [this, edge, end]
+			{
+				if (const std::optional<double> at = edge(end))
+					edit("event.move",
+						{{"events", m_selection},
+							{"delta", clampMove(time::TimeBase::Linear, m_cursorSample - samples(*at))}});
+			};
+		};
+		// Range Start and Range End to Cursor (p. 259): what lies in the range moves there, and the range with it.
+		const auto rangeToCursor = [this](bool end)
+		{
+			return [this, end]
+			{
+				if (!m_range)
+					return;
+				const RangeSelection from = *m_range;
+				const int64_t length = from.end - from.start;
+				const int64_t start = end ? std::max<int64_t>(0, m_cursorSample - length) : m_cursorSample;
+				edit("range.move",
+					{{"start", from.start}, {"end", from.end}, {"tracks", from.tracks}, {"position", start}});
+				setRange(RangeSelection{start, start + length, from.tracks});
+			};
+		};
 		const std::map<std::string, std::function<void()>> actions = {
 			{"edit.delete",
 				[this, range = onRange("range.delete", Json::object()),
@@ -615,8 +653,10 @@ namespace gnubase::ui
 			rangeAction("edit.splitRange", "range.split", Json::object(), false),
 			rangeAction("edit.cropRange", "range.crop", Json::object()),
 			{"edit.globalCopy", [this] { edit("range.copy", Json::object()); }},
-			{"edit.mute", onSelection("event.set", {{"mute", true}})},
-			{"edit.unmute", onSelection("event.set", {{"mute", false}})},
+			{"edit.mute",
+				splitsRangeOr(onRange("range.set", {{"mute", true}}), onSelection("event.set", {{"mute", true}}))},
+			{"edit.unmute",
+				splitsRangeOr(onRange("range.set", {{"mute", false}}), onSelection("event.set", {{"mute", false}}))},
 			{"edit.lock", onSelection("event.set", {{"lock", true}})},
 			{"edit.unlock", onSelection("event.set", {{"lock", false}})},
 			{"edit.splitAtCursor", [this, split] { split(Json::array({m_cursorSample})); }},
@@ -709,22 +749,8 @@ namespace gnubase::ui
 					if (!events.empty())
 						edit("event.setSnapPoint", {{"events", events}, {"position", m_cursorSample}});
 				}},
-			{"edit.moveStartToCursor",
-				[this, edge]
-				{
-					if (const std::optional<double> at = edge(false))
-						edit("event.move",
-							{{"events", m_selection},
-								{"delta", clampMove(time::TimeBase::Linear, m_cursorSample - samples(*at))}});
-				}},
-			{"edit.moveEndToCursor",
-				[this, edge]
-				{
-					if (const std::optional<double> at = edge(true))
-						edit("event.move",
-							{{"events", m_selection},
-								{"delta", clampMove(time::TimeBase::Linear, m_cursorSample - samples(*at))}});
-				}},
+			{"edit.moveStartToCursor", splitsRangeOr(rangeToCursor(false), selectionToCursor(false))},
+			{"edit.moveEndToCursor", splitsRangeOr(rangeToCursor(true), selectionToCursor(true))},
 			// The select submenu (reference manual pp. 254-255); without track selection (#81), on every track.
 			{"edit.selectAll", [this] { selectWhere([](const Shown&) { return true; }); }},
 			{"edit.selectNone", [this] { select({}); }},
