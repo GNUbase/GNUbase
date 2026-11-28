@@ -894,8 +894,9 @@ namespace gnubase::ui
 			const bool lights = status == 0xB0 || (status == 0x90 && bytes.size() > 2 && bytes[2] > 0);
 			const std::string backend = message.value("backend", std::string());
 			const std::string id = message.value("id", std::string());
-			if (!lights ||
-				(from == "all" ? m_notInAllInputs.count(backend + " " + id) != 0 : from != backend + "/in/" + id))
+			const bool fromInput =
+				from == "all" ? m_notInAllInputs.count(backend + " " += id) == 0 : from == (backend + "/in/" += id);
+			if (!lights || !fromInput)
 				continue;
 			m_received = true;
 			m_receivedAt = now();
