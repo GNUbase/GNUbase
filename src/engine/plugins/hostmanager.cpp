@@ -218,8 +218,8 @@ namespace gnubase::engine::plugins
 
 	bool HostManager::answers(const HostConnection& host) const
 	{
-		// Silence longer than any job may take is a stuck main thread, not a slow call.
-		return !host.exited() && !host.hung() && host.silence() <= m_options.deadlines.job;
+		// Silence longer than any call may take is a stuck main thread, not a slow call.
+		return !host.exited() && !host.hung() && host.silence() <= m_options.silenceLimit;
 	}
 
 	bool HostManager::awayFromGroup(const Instance& instance) const
