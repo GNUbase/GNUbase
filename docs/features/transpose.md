@@ -84,9 +84,8 @@ and 2.4 and 2.3 MB more per shifted event. That was bound by the one disk thread
 a sixteenth of a core, which offline rendering waits for, and an idle machine wouldn't have changed that (#1735). The
 disk streamer now has several threads, half the hardware threads and at most 8, and each fills the next stream that no
 other one fills ([warp.md](warp.md)). The same comparison with `--quick`, at idle priority on a machine about 80 % busy
-with other work, main against the change, twice each: following the root key 0.71 to 0.81 times real time for 16 events
-and 0.18 times for 64 on one disk thread, 2.0 to 2.8 times and 1.0 to 1.1 times on 8 disk threads; as they are,
-unchanged at 2.9 times.
+with other work, twice each: following the root key 0.71 to 0.81 times real time for 16 events and 0.18 times for 64 on
+one disk thread, 2.0 to 2.8 times and 1.0 to 1.1 times on 8 disk threads; as they are, unchanged at 2.9 times.
 
 ## UI
 
