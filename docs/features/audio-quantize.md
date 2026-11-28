@@ -29,6 +29,12 @@ made by hand stays: resetting returns to the original, unquantized state (p. 367
 quantizing is part of it. Which crossfade that was is our reading of the state, not something the reference manual
 spells out.
 
+Copies of an audio part (`event.copy`, `event.duplicate`, `event.fillLoop`) keep their events' origins, with the
+crossfades in them from the copies of the events, or from none where that event isn't in the part (#2166); so do the
+events a shared copy gets when its group syncs. As for a moved part, an origin counts only on a copy in the place where
+quantizing left the source, such as a part copied straight down onto another track: resetting it puts back its own
+hand-made crossfade and removes the Crossfade step's.
+
 Conforming or relinking media moves both saved timings and slice origins into the new file frames, in every track
 version ([pool.md](pool.md)). Reset Quantize and the Slice Rules' Reset therefore restore the same source section after
 a sample-rate conversion, bounded by the new end after a shorter relink. Saved crossfades scale each side with its own
@@ -274,7 +280,8 @@ slicing the slices again, with a locked slice, with the event's fade out and on 
 slicing, also across a save and a load, and after the event's audio part moved or its start was sized with the contents,
 also onto a musical track across a save and a load; copies of slices with no origin, and a duplicated or imported track
 resetting its own; a duplicated track, a duplicated version and an imported track resetting quantized and crossfaded
-events and slices of a crossfaded event to the crossfades from the copies of their events; the Warp Marker Creation
+events and slices of a crossfaded event to the crossfades from the copies of their events, as a plain or shared copy
+of an audio part does for quantized events; the Warp Marker Creation
 Rules' Reset keeping the user's own marker, after warp quantizing and across a save and a load, with a locked event, and
 leaving a marker added where a removed one was; warp quantizing a selection range, rendered, with a range the event
 doesn't reach, a second range and its errors; the cutting positions where Slice then cuts, none without hitpoints, and

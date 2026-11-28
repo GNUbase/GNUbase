@@ -411,13 +411,12 @@ namespace gnubase::engine
 					ids[event->id] = project.newId();
 					events.push_back(*event);
 				}
+				// Their crossfades and quantize origins name the copies of the events (#2166).
 				for (AudioEvent& event : events)
 				{
-					const auto from = ids.find(event.crossfade.from);
-					if (from == ids.end())
+					remapCopiedEvent(event, ids);
+					if (event.crossfade.from == 0)
 						event.crossfade = Crossfade();
-					else
-						event.crossfade.from = from->second;
 					event.id = ids.at(event.id);
 					event.front = 0;
 					event.part = copy.id;
@@ -3600,6 +3599,9 @@ namespace gnubase::engine
 				copy.part = part.id;
 				copy.position = rebased(project,
 					shifted(project, copy.position, gap.shift(copy.position.base, 1), false), part.position.base);
+				// It keeps the source's quantize origin with the crossfades from the copies of the events (#2166). As
+				// for a moved part, the origin counts only where quantizing left the source: in the same place.
+				remapCopiedEvent(copy, ids);
 				noSliceOrigin(copy);
 				const auto existing = project.audioEvents.find(copy.id);
 				if (const auto from = ids.find(event->crossfade.from); from != ids.end())

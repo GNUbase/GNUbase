@@ -1925,6 +1925,54 @@ TEST_CASE("A copied track resets its slices to the crossfade from the copy of th
 	CHECK(kept.at("mode") == "equalPower");
 }
 
+TEST_CASE("A copy of an audio part resets its quantized events to crossfades from the copies of their events",
+	"[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	// As on a copied track: the first event crossfades into the second by hand, and the quantize panel's Crossfade
+	// step crossfades the second into the third, all in an audio part. A copy of the part straight down onto another
+	// track, where its origins count, names the copies of the events in them (#2166), so resetting the copy puts its
+	// hand-made crossfade back, from the copy of the first event, and removes the one the step made. A shared copy
+	// made before quantizing gets the origins when the group syncs.
+	const Track loop = addTrack(client, dir, "loop", clicks({1000}, 4 * g_quarter));
+	const ObjectId first = loop.add(client, 1000, 0, 30000);
+	const ObjectId second = loop.add(client, 25000, 24000, 30000);
+	const ObjectId third = loop.add(client, 49000, 48000, 30000);
+	run(client, "crossfade.set", {{"from", first}, {"to", second}, {"mode", "equalPower"}});
+	const Json part = run(client, "event.toPart", {{"events", {first, second, third}}}).at("events").at(0);
+	const std::vector<std::vector<int64_t>> before = eventsOn(client, loop.track);
+	const ObjectId other = run(client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}, {"channels", 1}})
+							   .at("track")
+							   .at("id")
+							   .get<ObjectId>();
+	const std::string how = GENERATE(as<std::string>{}, "copy", "shared copy", "shared copy before quantizing");
+	CAPTURE(how);
+	const auto copy = [&](bool shared)
+	{ run(client, "event.copy", {{"events", {part}}, {"track", other}, {"shared", shared}}); };
+	if (how == "shared copy before quantizing")
+		copy(true);
+	run(client, "quantize.set", {{"preset", "1/4"}});
+	const Json events = Json::array({first, second, third});
+	run(client, "quantize.apply", {{"events", events}});
+	run(client, "quantize.crossfade", {{"events", events}});
+	REQUIRE(crossfadeOf(client, third).at("from") == second);
+	if (how != "shared copy before quantizing")
+		copy(how == "shared copy");
+
+	const std::vector<ObjectId> copies = idsOn(client, other);
+	REQUIRE(copies.size() == 3);
+	REQUIRE(crossfadeOf(client, copies.at(2)).at("from") == copies.at(1));
+	run(client, "quantize.reset", {{"events", copies}});
+	CHECK(eventsOn(client, other) == before);
+	const Json kept = crossfadeOf(client, copies.at(1));
+	REQUIRE(kept.is_object());
+	CHECK(kept.at("from") == copies.at(0));
+	CHECK(kept.at("mode") == "equalPower");
+	CHECK(!crossfadeOf(client, copies.at(2)).is_object());
+}
+
 TEST_CASE("Reset of the Warp Marker Creation Rules removes the markers Create made", "[integration]")
 {
 	const test::TempDir dir;
