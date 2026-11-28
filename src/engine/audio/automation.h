@@ -489,10 +489,10 @@ namespace gnubase::engine
 		uint32_t latency() const override;
 
 		// Command thread, before the graph compiles: where the strip leaves its audio before the fader in every block;
-		// with followMute (Mute Pre-Send when Mute, unless the mute button mutes the channel, which the send's gain
-		// does), muted as the fader mutes the channel, so that mute automation mutes the pre-fader sends too, from its
-		// sample on. A graph with the other setting than the one before glides to it over its first block, so the
-		// sends of a channel that mute automation holds muted glide out or in.
+		// with followMute (Mute Pre-Send when Mute), muted as the fader mutes the channel, so that the mute button and
+		// mute automation mute the pre-fader sends too, the automation from its sample on, and a handover between them
+		// lets nothing through. A graph with the other setting than the one before glides to it over its first block,
+		// so the sends of a muted channel glide out or in.
 		void tapPreFader(std::shared_ptr<PreFaderTap> tap, bool followMute)
 		{
 			m_tap = std::move(tap);

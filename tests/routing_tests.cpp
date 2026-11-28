@@ -673,6 +673,55 @@ TEST_CASE("Mute Pre-Send when Mute: a send that becomes pre-fader under mute aut
 	CHECK(wrong == 0);
 }
 
+TEST_CASE("Mute Pre-Send when Mute: handing over between the mute button and mute automation lets no audio through",
+	"[integration]")
+{
+	const int blockSize = GENERATE(64, 100);
+	INFO("block size " << blockSize);
+	const int64_t step = int64_t{4} * blockSize;
+	Sends mixer(blockSize);
+	run(mixer.client, "settings.set", {{"key", "audio.mutePreSends"}, {"value", true}});
+	mixer.set({{"monitor", true}, {"mute", true}});
+	sendPreFader(mixer);
+	run(mixer.client, "transport.play");
+	run(mixer.client, "audio.render", {{"frames", step}});
+	const ObjectId lane =
+		run(mixer.client, "automationLane.add", {{"track", mixer.trackId}, {"target", {{"type", "mute"}}}})
+			.at("lane")
+			.at("id")
+			.get<ObjectId>();
+	run(mixer.client, "audio.render", {{"frames", step}});
+	// The lane's first point takes over from the button, and without points the button mutes again.
+	const Json point =
+		run(mixer.client, "automationPoint.add", {{"lane", lane}, {"points", {{{"position", 0}, {"value", 1.0}}}}})
+			.at("points")
+			.at(0);
+	run(mixer.client, "audio.render", {{"frames", step}});
+	run(mixer.client, "automationPoint.remove", {{"lane", lane}, {"points", {point.at("id")}}});
+	run(mixer.client, "audio.render", {{"frames", step}});
+	// Reading off and on again.
+	run(mixer.client, "automationPoint.add", {{"lane", lane}, {"points", {{{"position", 0}, {"value", 1.0}}}}});
+	run(mixer.client, "audio.render", {{"frames", step}});
+	run(mixer.client, "automationLane.set", {{"lane", lane}, {"read", false}});
+	run(mixer.client, "audio.render", {{"frames", step}});
+	run(mixer.client, "automationLane.set", {{"lane", lane}, {"read", true}});
+	run(mixer.client, "audio.render", {{"frames", step}});
+	// Unmuted, the channel and its send are heard.
+	run(mixer.client, "automationLane.set", {{"lane", lane}, {"read", false}});
+	mixer.set({{"mute", false}});
+	run(mixer.client, "audio.render", {{"frames", step}});
+	const std::vector<float> output = mixer.output(8 * step);
+	REQUIRE(output.size() == static_cast<size_t>(8 * step));
+	size_t wrong = 0;
+	size_t first = 0;
+	for (size_t i = 0; i < static_cast<size_t>(7 * step); ++i)
+		if (output[i] != 0.0f && wrong++ == 0)
+			first = i;
+	INFO(wrong << " frames not silent, the first at " << first << ": " << output[first]);
+	CHECK(wrong == 0);
+	CHECK(std::any_of(output.begin() + (7 * step), output.end(), [](float sample) { return sample != 0.0f; }));
+}
+
 TEST_CASE("a send wider than its destination is converted like an output", "[integration]")
 {
 	// A stereo track's pre-fader send into a mono effect channel: L and R merge at -3.01 dB each, and the mono

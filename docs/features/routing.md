@@ -65,14 +65,13 @@ in [busses.md](busses.md) and [folder-tracks.md](folder-tracks.md), the fader in
   (`graph::FadingSend`) until a rebuild finds it silent; if one of these nodes would close a loop, the rebuild drops
   them all, and every send leaving a destination stops at once. A pre-fader send doesn't follow the mute button, as with
   the reference's default (Mute Pre-Send when Mute off), unless `audio.mutePreSends` is on, but it is silent while its
-  channel isn't heard because another is soloed or its track is disabled. With the setting, the mute button sets the
-  send's gain to 0 when the graph is built, and the setting changing rebuilds it, so the send glides out or in over a
-  block; mute automation, which plays on the audio thread, mutes the tap itself (not that of a channel the mute button
-  mutes, so the send glides once): the fader scales it by its mute, frame by frame, so the pre-fader sends glide out
-  and in with the channel from the automation's sample on. A graph built after the setting changed glides from how far
-  the last one muted the tap (`ChannelState::preSendsMuted`) to its own over its first block (`MutedTap`), so the
-  pre-fader sends of a channel that mute automation holds muted glide out or in, as the send's gain does for the mute
-  button; a channel's first tap, as when a send becomes pre-fader, starts at its own.
+  channel isn't heard because another is soloed or its track is disabled. With the setting, the fader's mute mutes the
+  tap itself, frame by frame, from the mute button as from mute automation (the button plays as the mute lane's value
+  where no automation reads), so the pre-fader sends glide out and in with the channel, from the automation's sample on,
+  and a handover between the button and the automation lets nothing through. The setting changing rebuilds the graph;
+  one built after it changed glides from how far the last one muted the tap (`ChannelState::preSendsMuted`) to its own
+  over its first block (`MutedTap`), so the pre-fader sends of a muted channel glide out or in once; a channel's first
+  tap, as when a send becomes pre-fader, starts at its own.
 - **Wider sends.** A send in a wider format than its destination is converted while the destination sums its inputs,
   like an output ([channel-formats.md](channel-formats.md)): a stereo channel's send into a mono effect channel merges
   L and R at -3.01 dB each.
@@ -115,10 +114,11 @@ context menu, where the reference has it.
   old one, into the new one from silence), a send gliding out of a destination that now plays into its channel stops at
   once, and solo keeps the effect channels a soloed track sends to; outputs into effect channels; Mute Pre-Send when
   Mute with the mute button, with mute automation at two block sizes on a stereo channel, a channel with a plugin slot
-  and a mono one with a panner, switched while the mute button or mute automation mutes the channel, and a send that
-  becomes pre-fader under mute automation; a stereo send into a mono effect channel; `track.add`'s `tracks` and
-  `send` for group and effect tracks, the tracks it leaves out (also with `send`, and those whose routing would close
-  a loop), its undo, and `projectFolder`.
+  and a mono one with a panner, switched while the mute button or mute automation mutes the channel, a handover
+  between the mute button and mute automation that lets nothing through, and a send that becomes pre-fader under mute
+  automation; a stereo send into a mono effect channel; `track.add`'s `tracks` and `send` for group and effect tracks,
+  the tracks it leaves out (also with `send`, and those whose routing would close a loop), its undo, and
+  `projectFolder`.
 - `tests/dawproject_tests.cpp` saves and loads sends, and reads them and outputs into effect channels from
   `project.xml` alone.
 - `tests/mixerwindow_tests.cpp`: the Sends section picks a destination, switches a send on and before the fader,
