@@ -7,6 +7,7 @@
 #include "engine/engine.h"
 #include "testutils/heldjob.h"
 #include "testutils/stopandjoin.h"
+#include "testutils/testutils.h"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -1608,4 +1609,58 @@ TEST_CASE("the loudness measurement goes on when a lost device returns, and star
 		CHECK(loudness.at("seconds").get<double>() == Approx(1.0).margin(0.1));
 		CHECK(loudness.at("integrated").get<double>() == Approx(-6.02).margin(0.1));
 	}
+}
+
+TEST_CASE("measurement presets keep the thresholds and those another process saved meanwhile", "[unit]")
+{
+	// Reference manual p. 539: presets of the meter display's thresholds, in the user setting meter.presets. Two
+	// engines on one settings folder stand for two GNUbase processes.
+	const gnubase::test::TempDir dir;
+	Engine engine(gnubase::audio::makeBackends(), dir.path());
+	Client client(engine);
+	Engine otherEngine(gnubase::audio::makeBackends(), dir.path());
+	Client other(otherEngine);
+	const auto presets = [&client] { return run(client, "settings.get", {{"key", "meter.presets"}}).at("value"); };
+
+	// A preset holds all eight thresholds, the current ones unless given.
+	run(client, "settings.set", {{"key", "meter.integratedReference"}, {"value", -16.0}});
+	run(client, "meter.savePreset", {{"name", "Streaming"}});
+	run(other, "meter.savePreset", {{"name", "Broadcast"}, {"values", {{"meter.truePeakReference", -2.0}}}});
+	run(client, "meter.savePreset", {{"name", "Loud"}, {"values", {{"meter.momentaryMaxTolerance", 2.0}}}});
+	const Json saved = presets();
+	REQUIRE(saved.size() == 3);
+	CHECK(saved.at("Streaming").size() == 8);
+	CHECK(saved.at("Streaming").at("meter.integratedReference") == -16.0);
+	CHECK(saved.at("Streaming").at("meter.truePeakReference") == -1.0);
+	CHECK(saved.at("Broadcast").at("meter.truePeakReference") == -2.0);
+	CHECK(saved.at("Loud").at("meter.momentaryMaxTolerance") == 2.0);
+	CHECK(saved.at("Loud").at("meter.integratedReference") == -16.0);
+
+	// Each value must be a threshold that fits its setting, and the name not empty.
+	CHECK_THAT(reject(client, "meter.savePreset", {{"name", "x"}, {"values", {{"meter.truePeakReference", 9.0}}}}),
+		ContainsSubstring("meter.truePeakReference"));
+	CHECK_THAT(reject(client, "meter.savePreset", {{"name", "x"}, {"values", {{"meter.scale", "din"}}}}),
+		ContainsSubstring("meter.scale"));
+	CHECK_THAT(reject(client, "meter.savePreset", {{"name", ""}}), ContainsSubstring("name"));
+	// Nor can settings.set put any other setting into a preset, which couldn't be loaded.
+	CHECK_THAT(reject(client, "settings.set", {{"key", "meter.presets"}, {"value", {{"x", {{"meter.scale", "din"}}}}}}),
+		ContainsSubstring("meter.presets"));
+
+	// Removing one keeps the others, also those the other process saved.
+	run(client, "meter.removePreset", {{"name", "Streaming"}});
+	CHECK(presets().size() == 2);
+	CHECK(presets().contains("Broadcast"));
+	CHECK_THAT(reject(client, "meter.removePreset", {{"name", "Streaming"}}), ContainsSubstring("Streaming"));
+}
+
+TEST_CASE("the alignment level is one of the levels of its list", "[unit]")
+{
+	// Reference manual p. 534: -9, -12, -14, -15, -18, -20 or -22 dBFS.
+	const gnubase::test::TempDir dir;
+	Engine engine(gnubase::audio::makeBackends(), dir.path());
+	Client client(engine);
+	run(client, "settings.set", {{"key", "meter.alignmentLevel"}, {"value", -9}});
+	CHECK(run(client, "settings.get", {{"key", "meter.alignmentLevel"}}).at("value") == -9);
+	CHECK_THAT(reject(client, "settings.set", {{"key", "meter.alignmentLevel"}, {"value", -16}}),
+		ContainsSubstring("meter.alignmentLevel"));
 }

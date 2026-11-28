@@ -10,6 +10,7 @@
 #include "platform/files.h"
 
 #include <algorithm>
+#include <array>
 #include <exception>
 #include <filesystem>
 #include <optional>
@@ -159,6 +160,12 @@ namespace gnubase::engine::settings
 
 	namespace
 	{
+		// The meter display's thresholds (reference manual p. 539), which its measurement presets hold.
+		constexpr std::array<const char*, 8> g_meterThresholds = {"meter.momentaryMaxReference",
+			"meter.momentaryMaxTolerance", "meter.shortTermReference", "meter.shortTermTolerance",
+			"meter.integratedReference", "meter.integratedTolerance", "meter.truePeakReference",
+			"meter.truePeakTolerance"};
+
 		void require(bool condition, const std::string& message)
 		{
 			if (!condition)
@@ -270,6 +277,64 @@ namespace gnubase::engine::settings
 
 	namespace
 	{
+		// meter.savePreset and meter.removePreset: the meter display's measurement presets of its thresholds
+		// (docs/features/metering.md, reference manual p. 539).
+		void registerMeterPresetCommands(Engine& engine, Store& store, const Changed& changed)
+		{
+			const Json name = {{"type", "string"}, {"description", "The preset's name."}};
+			const std::string presets = "meter.presets";
+			engine.registerCommand(
+				{"meter.savePreset", 1,
+					"Saves a measurement preset of the meter display's thresholds (the user setting meter.presets, "
+					"reference manual p. 539): the values of the settings meter.momentaryMaxReference, "
+					"meter.momentaryMaxTolerance and so on for shortTerm, integrated and truePeak, those not given "
+					"their current ones. Each must fit its setting. Replaces a preset of the same name. Loading one "
+					"is settings.set with its values.",
+					{{"type", "object"},
+						{"properties",
+							{{"name", name},
+								{"values",
+									{{"type", "object"},
+										{"description",
+											"Thresholds' values by setting, by default the current ones."}}}}},
+						{"required", Json::array({"name"})}, {"additionalProperties", false}},
+					{{"type", "object"}}, false},
+				[&store, changed, presets](CommandContext& context)
+				{
+					const Json& parameters = context.parameters();
+					const auto preset = parameters.at("name").get<std::string>();
+					require(!preset.empty(), "name must not be empty");
+					const Json given = parameters.value("values", Json::object());
+					for (const auto& item : given.items())
+						require(std::find(g_meterThresholds.begin(), g_meterThresholds.end(), item.key()) !=
+								g_meterThresholds.end(),
+							item.key() + " is no threshold of the meter display");
+					Json saved = Json::object();
+					for (const char* setting : g_meterThresholds)
+						saved[setting] = given.value(setting, store.value(setting));
+					for (const Definition& definition : store.format().definitions)
+						if (saved.contains(definition.key))
+							if (const std::string problem =
+									validate(saved.at(definition.key), definition.schema, definition.key);
+								!problem.empty())
+								throw CommandError(problem);
+					changePresets(context, store, changed, [&](Json& all) { all[preset] = saved; }, presets);
+					return Json::object();
+				});
+			engine.registerCommand({"meter.removePreset", 1, "Removes one of the meter display's measurement presets.",
+									   {{"type", "object"}, {"properties", {{"name", name}}},
+										   {"required", Json::array({"name"})}, {"additionalProperties", false}},
+									   {{"type", "object"}}, false},
+				[&store, changed, presets](CommandContext& context)
+				{
+					const auto preset = context.parameters().at("name").get<std::string>();
+					changePresets(
+						context, store, changed, [&preset](Json& all)
+						{ require(all.erase(preset) == 1, "no measurement preset " + preset); }, presets);
+					return Json::object();
+				});
+		}
+
 		// keyCommands.*: the key commands presets and files (docs/features/key-commands.md, reference manual p. 1559).
 		void registerKeyCommandCommands(Engine& engine, Store& store, const Changed& changed)
 		{
@@ -590,9 +655,9 @@ namespace gnubase::engine::settings
 					Json{{"type", "boolean"}}, true, true},
 				{"meter.alignmentLevel",
 					"Alignment level (reference manual p. 534): where the meter display's broadcast scales "
-					"(meter.scale "
-					"din, ebu, british and nordic) put their alignment level, -30 to -6 dBFS.",
-					Json{{"type", "number"}, {"minimum", -30}, {"maximum", -6}}, -18.0},
+					"(meter.scale din, ebu, british and nordic) put their alignment level: -9, -12, -14, -15, -18, "
+					"-20 or -22 dBFS.",
+					Json{{"type", "number"}, {"enum", {-9, -12, -14, -15, -18, -20, -22}}}, -18.0},
 				{"meter.fallback",
 					"Meters' Fallback (reference manual p. 1614): how fast the channel meters' and the master meter's "
 					"bars fall after a "
@@ -653,10 +718,10 @@ namespace gnubase::engine::settings
 				{"meter.presets",
 					"The measurement presets of the meter display's thresholds (reference manual p. 539), by name: "
 					"each the values of the settings meter.momentaryMaxReference, meter.momentaryMaxTolerance and so "
-					"on for shortTerm, integrated and truePeak. Loading one is settings.set with its values.",
-					Json{{"type", "object"},
-						{"additionalProperties", {{"type", "object"}, {"additionalProperties", {{"type", "number"}}}}}},
-					Json::object()},
+					"on for shortTerm, integrated and truePeak (meter.savePreset). Loading one is settings.set with "
+					"its "
+					"values.",
+					Json{{"type", "object"}}, Json::object()},
 				{"meter.resetOnStart",
 					"Reset on Start: the loudness meter, and the main mix's peak and RMS maxima, start over when "
 					"playback starts (see meter.get).",
@@ -1199,6 +1264,16 @@ namespace gnubase::engine::settings
 					"event display across only; when off, it zooms the track heights too (docs/features/tools.md).",
 					Json{{"type", "boolean"}}, true, true},
 			};
+			// A measurement preset holds only the meter display's thresholds, each as its setting takes it.
+			Json thresholds = Json::object();
+			for (const Definition& definition : result.definitions)
+				if (std::find(g_meterThresholds.begin(), g_meterThresholds.end(), definition.key) !=
+					g_meterThresholds.end())
+					thresholds[definition.key] = definition.schema;
+			for (Definition& definition : result.definitions)
+				if (definition.key == "meter.presets")
+					definition.schema["additionalProperties"] = {
+						{"type", "object"}, {"properties", thresholds}, {"additionalProperties", false}};
 			return result;
 		}();
 		return format;
@@ -1291,6 +1366,7 @@ namespace gnubase::engine::settings
 
 		registerPresetCommands(engine, store, changed);
 		registerKeyCommandCommands(engine, store, changed);
+		registerMeterPresetCommands(engine, store, changed);
 
 		engine.registerCommand(
 			{"settings.reset", 1,

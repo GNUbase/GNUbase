@@ -286,6 +286,10 @@ TEST_CASE("a channel meter's bars are on the +3 dB digital scale, with its marks
 	{ return mark.at("box").at("y").get<double>() + (mark.at("box").at("height").get<double>() / 2.0); };
 	CHECK(std::abs(middle(marks.at(0)) - height(0.0)) < 1.5);
 	CHECK(std::abs(middle(marks.at(5)) - height(-30.0)) < 1.5);
+	// Its headroom above 0 dB is a red line there (p. 534).
+	const Json headroom = mixer(".mixer-meter-scale .meter-headroom");
+	REQUIRE(headroom.size() == 1);
+	CHECK(std::abs(headroom.at(0).at("box").at("y").get<double>() - height(0.0)) < 1.5);
 }
 
 TEST_CASE("a channel meter's Global Meter Settings menu holds its peaks for a time, forever or not at all, and resets "

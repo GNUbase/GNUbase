@@ -472,19 +472,12 @@ namespace gnubase::ui
 		if (target->IsClassSet("meter-preset-save") || target->IsClassSet("meter-preset-remove"))
 		{
 			// Save keeps the thresholds as they are under the typed name, Remove removes the listed preset (p. 539).
-			engine::Json presets = m_presets;
-			const char* field = target->IsClassSet("meter-preset-save") ? ".meter-preset-name" : ".meter-presets";
-			const auto* control = rmlui_dynamic_cast<Rml::ElementFormControl*>(m_root->QuerySelector(field));
+			const bool save = target->IsClassSet("meter-preset-save");
+			const auto* control = rmlui_dynamic_cast<Rml::ElementFormControl*>(
+				m_root->QuerySelector(save ? ".meter-preset-name" : ".meter-presets"));
 			const std::string name = control != nullptr ? control->GetValue() : std::string();
-			if (name.empty() || (target->IsClassSet("meter-preset-remove") && presets.erase(name) == 0))
-				return;
-			if (target->IsClassSet("meter-preset-save"))
-				for (const auto& threshold : g_thresholds)
-					for (const char* part : {"Reference", "Tolerance"})
-						if (const auto value = m_thresholds.find(std::string("meter.") + threshold.first + part);
-							value != m_thresholds.end())
-							presets[name][value->first] = value->second;
-			m_binding.send("settings.set", {{"key", "meter.presets"}, {"value", presets}});
+			if (!name.empty() && (save || m_presets.contains(name)))
+				m_binding.send(save ? "meter.savePreset" : "meter.removePreset", {{"name", name}});
 			return;
 		}
 		if (target->IsClassSet("meter-unit"))

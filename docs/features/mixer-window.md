@@ -136,7 +136,8 @@ An audio channel's strip has its meter next to the fader (`.mixer-meter`, refere
 strip one without a fader: a `<meter>` per audio channel of the channel's meter (both sides of a mono channel on a
 stereo destination), one for a MIDI channel, its notes' velocity, on the +3 dB digital scale (pp. 467-468, 1614), -60 to
 +3 dB, with the peak since the last frame and its peak mark, the scale's marks (`.mixer-meter-scale`, 0 to -30 dB every
-6 dB, then -40 and -50) between the fader and the bars, and under it, beside the fader's volume, the Meter Peak Level
+6 dB, then -40 and -50, and the headroom above 0 dB as a red line, `.meter-headroom`, p. 534) between the fader and the
+bars, and under it, beside the fader's volume, the Meter Peak Level
 (`.mixer-peak`), the highest of those maxima, which a click resets: every channel's (`meter.reset` with `meters`
 `channels`), not the master meter's. The bars come once the engine measured the channel, after it first played. The
 mixers read them through `ui::MeterReader`, the UI's one reader of the meters, which the right zone's meter display
@@ -159,8 +160,7 @@ below their -60 dB end to silence: the UI keeps each bar's level and lowers it b
 Channel selection and the agents and Move Selected Channels commands that work on it, dragging several channels at
 once and the green drop line; the Zones tab (locking channels to the left and right), the History and Snapshots tabs and
 the right zone; the channel overview, the meter bridge, Channel Latency, the inserts section (#113), routing several selected channels at once (p. 471) and the
-channel meters' colors (the +3 dB digital scale's color handles), the scale's headroom marks (p. 534) and clipping
-indicators (pp. 467-468, [metering.md](metering.md)); selecting the channel that Find Track/Channel finds, channel visibility configurations, linking mixers ([link-groups.md](link-groups.md) links channels), the zoom palette and the transport buttons of the toolbar (the state buttons: solo-mute-listen.md); the track pictures browser and pictures in the track list; and faders of busses. The
+channel meters' colors (the +3 dB digital scale's color handles) and clipping indicators (pp. 467-468, [metering.md](metering.md)); selecting the channel that Find Track/Channel finds, channel visibility configurations, linking mixers ([link-groups.md](link-groups.md) links channels), the zoom palette and the transport buttons of the toolbar (the state buttons: solo-mute-listen.md); the track pictures browser and pictures in the track list; and faders of busses. The
 windows' places are kept in `ui.layout` and workspaces ([workspaces.md](workspaces.md)).
 
 ## Checks
