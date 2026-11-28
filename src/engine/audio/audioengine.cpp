@@ -1529,6 +1529,7 @@ namespace gnubase::engine
 		for (audio::MidiBuffer& buffer : m_padOutput)
 			buffer.clear();
 		m_midi.take(block, format.sampleRate, m_midiInput, m_padOutput, program.chordPadKeys);
+		m_midi.notesPlayed(m_midiInput, m_padOutput); // for the key editors' step and MIDI input (#2154)
 		const size_t bytes = block.frames * sizeof(float);
 		for (const BusLink& link : program.inputs)
 		{
@@ -1571,7 +1572,6 @@ namespace gnubase::engine
 				m_padOutput.at(player), program.chordPadKeys.pattern, block.frames, ticksPerFrame);
 			MidiTap::thru(m_padOutput.at(player), program.sequencers, program.padThru.at(player));
 		}
-		m_midi.notesPlayed(m_midiInput, m_padOutput); // for the key editors' step and MIDI input (#2154)
 		for (size_t i = 0; i < program.sequencers.size() && i < program.inputTransformers.size(); ++i)
 			if (const InputTransform& transform = program.inputTransformers[i]; transform.processor)
 				transform.processor->process(program.sequencers[i].second->input(), transform.rules);

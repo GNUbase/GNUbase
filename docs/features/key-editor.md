@@ -46,16 +46,16 @@ saved, and a new project closes the editors.
 - **Live MIDI input** (#679). While an open editor has step or MIDI input on, the editors listen to the MIDI inputs
   (`midi.activityListen` with the listener `keyEditor` and `post` `editor.played`), and each run of `midi.activity`
   posts the notes the tracks got to `editor.played` (#2154): those of all MIDI inputs, so that a control surface's
-  buttons outside them insert nothing, the on-screen keyboard's, and the chord pads', so that a pad's remote key puts
-  in the pad's chord, not its own pitch. The audio thread takes them after the pads played and gives them a queue of
-  their own, which an MPE controller's expression doesn't crowd out. The keys pressed until all of them are up again
-  are one chord, which then goes into `editor.input` with each note's note-on velocity and note-off velocity (a
-  note-on of velocity 0 counts as 64): one undo step per chord, in the editor whose step or MIDI input went on last,
-  else the first one that has it on. Waiting for the release gives the chord all its keys and their release
-  velocities. When notes were lost, as when the queue was full or a device started, the keys still down after the
-  notes that came are forgotten with their chord, since their note-offs may have gone, and the next key starts afresh.
-  With no editor's input on any more, the editors stop listening, and the next start begins afresh, without what was
-  held or played meanwhile.
+  buttons outside them insert nothing, the on-screen keyboard's, and the chord pads', so that a pad's remote key puts in
+  the pad's chord, not its own pitch: its chord as the players voice it, before Snap Playback to Musical Grid and the
+  pattern player mode. The audio thread gives them a queue of their own, which an MPE controller's expression doesn't
+  crowd out. The keys pressed until all of them are up again are one chord, which then goes into `editor.input` with
+  each note's note-on velocity and note-off velocity (a note-on of velocity 0 counts as 64): one undo step per chord, in
+  the editor whose step or MIDI input went on last, else the first one that has it on. Waiting for the release gives the
+  chord all its keys and their release velocities. When notes were lost, as when the queue was full or a device started,
+  the keys still down after the notes that came are forgotten with their chord, since their note-offs may have gone, and
+  the next key starts afresh. With no editor's input on any more, the editors stop listening, and the next start begins
+  afresh, without what was held or played meanwhile.
   `midi.activity` runs only while an audio device runs, at most ten times a second; offline a test runs it.
 - **Chords** (`src/engine/midi/chords.h`). The types are the Chord Editing section's: the triads major, minor,
   diminished, augmented, sus2 and sus4, and the 4-note chords major7, minor7, dominant7, halfDiminished7,
@@ -208,10 +208,9 @@ the notes, not the project window's selected events.
 
 ## Not yet
 
-The on-screen keyboard into step and MIDI input (`midi.activity` leaves it out); Left and Right moving the step input
-cursor and lengthening a held chord; the Mute tool on notes (notes have no mute yet; it mutes the
-Articulations lane's articulations), the Range Selection, Zoom and Time Warp tools, and the Line tool in the note
-display (it draws on the controller lanes); the selection rectangle, the trim tool's drag across several notes and the
+The Mute tool on notes (notes have no mute yet; it mutes the Articulations lane's articulations), the Range Selection,
+Zoom and Time Warp tools, and the Line tool in the note display (it draws on the controller lanes); the selection
+rectangle, the trim tool's drag across several notes and the
 draw tool's modifiers for velocity, pitch and position; the nudge buttons, Solo Editor, Record in Editor, pitch
 visibility, the Scale Assistant, the status line and Set up Window Layout;
 horizontal zoom and scrolling; the key at the mouse's pitch lit while the mouse moves in the note display (p. 1204);

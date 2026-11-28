@@ -71,10 +71,10 @@ namespace gnubase::engine
 		void take(const audio::DeviceBlock& block, double sampleRate, graph::EventBuffer& allInputs, PadBuffers& pads,
 			const ChordPadKeys& padKeys) noexcept;
 
-		// Audio thread, once per block after the chord pads played (Snap Playback, the pattern): while a listener of
-		// midi.activityListen has a post, the notes the tracks get from all MIDI inputs, the on-screen keyboard's too,
-		// and from the chord pads, every player's, go to midi.activity's posts. They have a queue of their own, so that
-		// no other input, such as an MPE controller's expression, crowds them out (#2154).
+		// Audio thread, once per block after take: while a listener of midi.activityListen has a post, the notes the
+		// tracks get from all MIDI inputs, the on-screen keyboard's too, and the chord pads' chords as every player
+		// voices them, before Snap Playback and the pattern player mode, go to midi.activity's posts. They have a queue
+		// of their own, so that no other input, such as an MPE controller's expression, crowds them out (#2154).
 		void notesPlayed(const graph::EventBuffer& allInputs, const PadBuffers& pads) noexcept;
 
 		// Any thread but an audio thread: a message from the on-screen keyboard (midi.keyboard), which belongs to all
