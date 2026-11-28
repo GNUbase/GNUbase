@@ -93,10 +93,13 @@ sends `editor.*` commands.
   Closing the editor window, or hiding the lower zone while the Editor panel is docked there, closes the view, so Keep
   Editor Contents goes off (p. 1153); another tab of the lower zone in front of it doesn't. A new project closes both.
   Until the engine answers that `editor.close`, an `editor.changed` with the view open that was already on its way,
-  for example from following the selection, doesn't open the window or show the lower zone again. The Editor tab
-  coming to the front while the view `lower` is closed, as when the user picks it from the tab bar or shows the lower
-  zone with it in front, opens the view with the project window's selected parts (p. 1153, #625). The app asks the
-  engine first, so that an `editor.open` on its way, such as the editor window's Open in Lower Zone, keeps its parts.
+  for example from following the selection, doesn't open the window or show the lower zone again. The Editor tab is a
+  fixed tab of the lower zone that shows the editor for the project window's selected parts (pp. 87-88, 1153, #625):
+  in front while the view `lower` is closed, as when the user picks it from the tab bar, shows the lower zone with it
+  in front or its view closes (Open in Separate Window, an `editor.close` from another client, a new project), it
+  opens the view with them, and again whenever the selection changes; without a selection it stays empty. Return and a
+  double click still open the editor where Double-click opens Editor in a Window says. The app asks the engine first,
+  so that an `editor.open` on its way, such as the editor window's Open in Lower Zone, keeps its parts.
 - **Project reads** (#625). Each `ui::MidiEditor` (up to five: the lower zone's editor, both Visibility tabs, the
   editor window's editor and its inspector) needs the project after every change, but those that ask while the binding
   hands on the same answer or event share one `project.get` (`ui::ProjectReads`, which `app::AppUi` owns). One that
@@ -128,10 +131,7 @@ The setup panes of the toolbar and the info line (p. 1575), which only the proje
 Independent Track Loop, the global tracks' events and editing them, Find Tracks, track visibility configurations and
 agents, the Track Display and its settings, selecting tracks in the Visibility tab, the preference Editor Content
 Follows Event Selection, Open Editor Commands open Editors in a Window/in Lower Zone (p. 1603: the Audio and MIDI menus'
-open commands, such as Mod+E, which here is Open/Close Editor), and saving the global track setup with the project. The
-lower zone's Editor tab that stays in front while its view closes (after Open in Separate Window, an `editor.close` from
-another client or a new project) shows an empty editor until it comes to the front again or Edit > Open Editor in Lower
-Zone (#625).
+open commands, such as Mod+E, which here is Open/Close Editor), and saving the global track setup with the project.
 
 ## Checks
 

@@ -2814,6 +2814,8 @@ namespace gnubase::app
 			// the Mixer, it follows the selection there.
 			if (open && !wasOpen && !m_docking.showing("editor"))
 				m_docking.open("editor");
+			if (!open && wasOpen)
+				m_emptyEditorTab = false; // so that the tab shows the selection again, even if it opened in between
 			return;
 		}
 		const bool shown = m_editor.window != 0 && m_shell.find(m_editor.window) != nullptr;
@@ -2906,13 +2908,16 @@ namespace gnubase::app
 		{ return m_editorViews.value(editor, engine::Json::object()).value("open", false); };
 		if (open("lower") && m_docking.windowOf("editor") == nullptr && !m_docking.visible("project", "lower"))
 			closeEditor("lower");
-		// The Editor tab coming to the front without an open editor, as when the user picks it from the tab bar or
-		// shows the lower zone with it, opens the editor with the project window's selected parts (p. 1153).
-		const bool editorTab = m_docking.showing("editor");
-		if (editorTab && !m_editorTabShown && !open("lower") && m_closing.count("lower") == 0)
+		// The Editor tab is a fixed tab of the lower zone that shows the project window's selected parts (pp. 87-88,
+		// 1153). In front without an open editor, as when the user picks it from the tab bar, shows the lower zone with
+		// it or its editor closes (Open in Separate Window, editor.close from another client, a new project), it opens
+		// the editor with them, and does again when the selection changes; without a selection it stays empty.
+		const bool emptyTab = m_docking.showing("editor") && !open("lower") && m_closing.count("lower") == 0;
+		const bool changed = m_eventDisplay && m_eventDisplay->selection() != m_followed;
+		if (emptyTab && (!m_emptyEditorTab || changed))
 			openLowerIfClosed();
-		m_editorTabShown = editorTab;
-		if (!m_eventDisplay || m_eventDisplay->selection() == m_followed)
+		m_emptyEditorTab = emptyTab;
+		if (!changed)
 			return;
 		// Editor Content Follows Event Selection (p. 1153): the MIDI parts, or else the audio parts, selected in the
 		// project window.
