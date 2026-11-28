@@ -600,13 +600,14 @@ namespace gnubase::ui
 		ask();
 	}
 
-	// The horizontal zoom shows from the whole sample down to 64 frames around the middle of what it showed, the
-	// scroll slider moves that along the sample, and the vertical zoom raises the waveform up to 64 times.
+	// The narrowest view, as a share of the sample: 64 frames, or the whole sample when it is shorter.
 	double SamplerPanel::minimumWidth() const
 	{
 		return m_length > 64 ? 64.0 / static_cast<double>(m_length) : 1.0;
 	}
 
+	// The horizontal zoom shows from the whole sample down to 64 frames around the middle of what it showed, the
+	// scroll slider moves that along the sample, and the vertical zoom raises the waveform up to 64 times.
 	void SamplerPanel::zoom(const std::string& slider, double value)
 	{
 		if (slider == "sampler-vertical-zoom")
