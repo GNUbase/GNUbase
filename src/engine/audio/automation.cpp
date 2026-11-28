@@ -814,7 +814,7 @@ namespace gnubase::engine
 	}
 
 	void ChannelFader::process(const graph::ProcessContext& context, const Panning& panning, PreFaderTap* muted,
-		PreFaderTap* unpanned) noexcept
+		PreFaderTap* unpanned, PreFaderTap* panned) noexcept
 	{
 		uint32_t position = 0;
 		for (const graph::ProcessEvent& event : context.eventsIn)
@@ -822,7 +822,7 @@ namespace gnubase::engine
 			const uint32_t offset = std::min(event.offset, context.frames);
 			if (offset > position)
 			{
-				render(context, panning, muted, unpanned, position, offset);
+				render(context, panning, muted, unpanned, panned, position, offset);
 				position = offset;
 			}
 			if (event.type != graph::ProcessEvent::Type::Parameter)
@@ -839,12 +839,16 @@ namespace gnubase::engine
 					event.ramp);
 		}
 		if (position < context.frames)
-			render(context, panning, muted, unpanned, position, context.frames);
+			render(context, panning, muted, unpanned, panned, position, context.frames);
 	}
 
 	void ChannelFader::render(const graph::ProcessContext& context, const Panning& panning, PreFaderTap* muted,
-		PreFaderTap* unpanned, uint32_t begin, uint32_t end) noexcept
+		PreFaderTap* unpanned, PreFaderTap* panned, uint32_t begin, uint32_t end) noexcept
 	{
+		std::array<float*, g_maxMeterChannels> pannedAudio{};
+		const int pannedChannels = panned != nullptr ? std::min(panned->channels(), g_maxMeterChannels) : 0;
+		for (int c = 0; c < pannedChannels; ++c)
+			pannedAudio[static_cast<size_t>(c)] = panned->channel(c);
 		// While nothing glides, one set of gains serves every frame; otherwise each frame gets its own.
 		const bool gliding = m_volume.length != 0 || m_pan.length != 0 || m_panLeft.length != 0 ||
 			m_panRight.length != 0 || m_audible.length != 0;
@@ -856,6 +860,15 @@ namespace gnubase::engine
 			const double pan = gliding ? m_pan.next() : m_pan.value;
 			const double panLeft = gliding ? m_panLeft.next() : m_panLeft.value;
 			const double panRight = gliding ? m_panRight.next() : m_panRight.value;
+			if (pannedChannels > 0)
+			{
+				for (int c = 0; c < std::min(context.channels, pannedChannels); ++c)
+					std::memcpy(
+						pannedAudio[static_cast<size_t>(c)] + i, context.audio[c] + i, (until - i) * sizeof(float));
+				applyGains({pannedAudio.data(), std::min(context.channels, pannedChannels), context.frames,
+							   context.eventsIn, context.eventsOut, context.transport},
+					panning, i, until, 1.0, pan, panLeft, panRight);
+			}
 			applyGains(context, panning, i, until, volume * audible, pan, panLeft, panRight);
 			if (muted != nullptr && audible != 1.0)
 				for (int c = 0; c < std::min(context.channels, muted->channels()); ++c)
@@ -1511,7 +1524,8 @@ namespace gnubase::engine
 		m_faderOut.clear();
 		m_state->fader->process(
 			{context.audio, context.channels, context.frames, events, m_faderOut, context.transport}, m_panning,
-			m_tapFollowsMute ? m_tap.get() : nullptr, m_unpanned.get());
+			m_tapFollowsMute ? m_tap.get() : nullptr, m_unpanned.get(),
+			m_renderPoint == RenderPoint::Panner ? m_render.get() : nullptr);
 		// A mono channel's panner makes its output stereo, as graph::describe gives its node.
 		const ChannelFormat wider = pannerOutput(m_panning.panner);
 		const int outputs = wider == ChannelFormat::None ? context.channels : channelCount(wider);

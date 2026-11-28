@@ -317,6 +317,8 @@ namespace gnubase::engine
 		Json input = Json::object();
 		const bool preFader = render.freeze ||
 			render.parameters.value("processing", std::string("channelSettings")) != "completeSignalPath";
+		// A mixdown with Channel Settings renders after the panners (track.renderInPlace).
+		const bool panned = preFader && !render.freeze && render.parameters.value("mixdown", false);
 		for (const char* key : {"sampleRate", "tempo", "panLaw", "rootKey", "transpose", "autoFades"})
 			if (whole.contains(key))
 				input[key] = whole.at(key);
@@ -352,9 +354,13 @@ namespace gnubase::engine
 				{"notes", "listen", "monitor", "recordEnable", "input", "midiInput", "inputTransformer"})
 				channel.erase(key);
 			if (preFader && track.type != TrackType::Midi)
-				for (const char* key : {"volume", "pan", "panner", "panLeft", "panRight", "panBypass", "sends", "mute",
-						 "solo", "soloDefeat"})
+			{
+				for (const char* key : {"volume", "sends", "mute", "solo", "soloDefeat"})
 					channel.erase(key);
+				if (!panned)
+					for (const char* key : {"pan", "panner", "panLeft", "panRight", "panBypass"})
+						channel.erase(key);
+			}
 			if (render.freeze)
 			{
 				channel.erase("eq");
@@ -367,9 +373,10 @@ namespace gnubase::engine
 				if (lane.track == id)
 				{
 					const auto type = lane.target.type;
-					const bool fader = type == AutomationTargetType::Volume || type == AutomationTargetType::Pan ||
-						type == AutomationTargetType::PanLeft || type == AutomationTargetType::PanRight ||
-						type == AutomationTargetType::Mute;
+					const bool pan = type == AutomationTargetType::Pan || type == AutomationTargetType::PanLeft ||
+						type == AutomationTargetType::PanRight;
+					const bool fader =
+						type == AutomationTargetType::Volume || type == AutomationTargetType::Mute || (pan && !panned);
 					if (!preFader || track.type == TrackType::Midi || !fader)
 						input["automation"].push_back(toJson(lane));
 				}
@@ -801,7 +808,8 @@ namespace gnubase::engine
 				"media folder. mixdown true (Mix down to One Audio File) sums the tracks' renders from the start "
 				"of the earliest range to the end of the latest into one file on one new track, named name and "
 				"(Rendered), or Mixdown (Rendered), below the first track; it needs several tracks that play "
-				"through one output, completeSignalPath and oneEvent.",
+				"through one output, oneEvent and no dry processing. With channelSettings it renders after the "
+				"panners, without the faders and mutes, and the new track gets no settings: centred at 0 dB.",
 				{{"type", "object"}, {"additionalProperties", false},
 					{"properties",
 						{{"tracks", ids}, {"events", {{"type", "array"}, {"items", integer}, {"minItems", 1}}},
@@ -839,8 +847,8 @@ namespace gnubase::engine
 				if (mixdown)
 				{
 					require(tracks.size() > 1, "mixdown needs several tracks");
-					require(parameters.value("processing", std::string()) == "completeSignalPath",
-						"mixdown renders the complete signal path: give processing completeSignalPath");
+					require(parameters.value("processing", std::string()) != "dry",
+						"mixdown renders the tracks' settings: it can't be dry");
 					require(parameters.value("mode", std::string("oneEvent")) == "oneEvent",
 						"mixdown makes one event: mode must be oneEvent");
 					const auto output = [&project](ObjectId id)
@@ -883,7 +891,7 @@ namespace gnubase::engine
 				if (mode == "dry")
 					point = "source";
 				else if (mode == "channelSettings")
-					point = "strip";
+					point = mixdown ? "panner" : "strip"; // one new track can't take several panners (pp. 279-280)
 				const RenderSnapshot& snapshot = m_snapshots.latest();
 				std::vector<std::vector<EventRender>> groups;
 				for (const ObjectId id : tracks)
@@ -1063,7 +1071,7 @@ namespace gnubase::engine
 						{"index",
 							std::distance(siblings.begin(), std::find(siblings.begin(), siblings.end(), source.id)) +
 								1}};
-					if (mode == "completeSignalPath")
+					if (mode == "completeSignalPath" || !render->mixdown.empty())
 						trackParameters["channels"] = mediaFile.at("channels");
 					else
 						trackParameters["format"] = formatName(from.format);
@@ -1096,9 +1104,9 @@ namespace gnubase::engine
 					if (!first)
 						continue;
 
-					// The settings that weren't rendered.
+					// The settings that weren't rendered; a mixdown's new track stays centred at 0 dB.
 					Channel& channel = project.channels.at(project.trackById.at(track).channel);
-					if (mode != "completeSignalPath")
+					if (mode != "completeSignalPath" && render->mixdown.empty())
 					{
 						channel.sends = from.sends;
 						channel.volume = from.volume;

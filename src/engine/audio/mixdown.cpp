@@ -6,6 +6,7 @@
 #include "engine/audio/audioengine.h"
 #include "engine/audiofile/audiofile.h"
 #include "engine/audiofile/resampler.h"
+#include "engine/document/channelformat.h"
 #include "engine/document/rendersnapshot.h"
 #include "engine/document/serialize.h"
 #include "engine/dsp/dither.h"
@@ -386,7 +387,10 @@ namespace gnubase::engine
 					const auto channel = std::find_if(channels.begin(), channels.end(),
 						[&target](const RenderChannel& candidate) { return candidate.id == target.object; });
 					require(channel != channels.end(), target.name + " is a bus: only channels render from a point");
-					target.channels = channelCount(channel->format);
+					// After the panner, in the format it makes: a mono channel's stereo on a stereo output.
+					const ChannelFormat panned = pannerOutput(channel->panner);
+					target.channels = channelCount(
+						*point == RenderPoint::Panner && panned != ChannelFormat::None ? panned : channel->format);
 					target.tap = std::make_shared<PreFaderTap>(target.channels);
 				}
 				else
@@ -595,6 +599,8 @@ namespace gnubase::engine
 				point = RenderPoint::Inserts;
 			else if (from == "strip")
 				point = RenderPoint::Strip;
+			else if (from == "panner")
+				point = RenderPoint::Panner;
 			const auto tail =
 				static_cast<time::Samples>(std::llround(parameters.value("tail", 0.0) * snapshot.sampleRate));
 			std::error_code error;
@@ -760,7 +766,8 @@ namespace gnubase::engine
 				"time. point renders channels from inside their strip instead of after "
 				"the fader and panner (output, the default), in the channel's format, as render in place and freeze "
 				"do: source is what plays on the channel, before its pre section and plugin slots; inserts is after "
-				"the slots, before the strip's other sections; strip is after those, before the fader. tail renders "
+				"the slots, before the strip's other sections; strip is after those, before the fader; panner is after "
+				"the panner, in the format it makes, without the fader and the mute. tail renders "
 				"up to that many seconds (0 to 60) after end, ending after the last sample a 24-bit file doesn't hold "
 				"as silence. The transport and its settings are as before afterwards; a device "
 				"continues running, and separate plugin instances render in offline mode. Refused while the device "
@@ -781,7 +788,7 @@ namespace gnubase::engine
 					"broadcastWave": {"type": "object", "additionalProperties": false, "properties": {
 						"description": {"type": "string"}, "author": {"type": "string"},
 						"reference": {"type": "string"}}},
-											"point": {"type": "string", "enum": ["output", "strip", "inserts", "source"]},
+											"point": {"type": "string", "enum": ["output", "panner", "strip", "inserts", "source"]},
 											"tail": {"type": "number", "minimum": 0, "maximum": 60}}})"),
 				{{"type", "object"}, {"properties", {{"job", Jobs::schema()}}}, {"required", {"job"}}}, false},
 			[this, &engine](CommandContext& context)

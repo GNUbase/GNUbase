@@ -235,15 +235,16 @@ namespace gnubase::engine
 
 		// Audio thread. The context has the channel's own channels; a mono panner writes the second one of its
 		// stereo output after them. muted, if any, is scaled by the mute alone, frame by frame as the channel is;
-		// unpanned, if any, by the gain and the mute, without the panner.
+		// unpanned, if any, by the gain and the mute, without the panner; panned, if any, with the panner's output
+		// channels, gets the audio through the panner alone, without the gain and the mute.
 		void process(const graph::ProcessContext& context, const Panning& panning, PreFaderTap* muted = nullptr,
-			PreFaderTap* unpanned = nullptr) noexcept;
+			PreFaderTap* unpanned = nullptr, PreFaderTap* panned = nullptr) noexcept;
 
 	private:
 		using Ramp = ParameterRamp;
 
 		void render(const graph::ProcessContext& context, const Panning& panning, PreFaderTap* muted,
-			PreFaderTap* unpanned, uint32_t begin, uint32_t end) noexcept;
+			PreFaderTap* unpanned, PreFaderTap* panned, uint32_t begin, uint32_t end) noexcept;
 
 		Ramp m_volume;
 		Ramp m_pan;
@@ -407,12 +408,13 @@ namespace gnubase::engine
 
 	// Where mixdown.export's point takes a channel's audio from inside its strip (docs/features/render-in-place.md):
 	// what its source plays, before the pre section and the plugin slots; after the slots, before the strip's other
-	// sections; or after those, before the fader.
+	// sections; after those, before the fader; or after the panner, without the fader and the mute.
 	enum class RenderPoint : uint8_t
 	{
 		Source,
 		Inserts,
 		Strip,
+		Panner,
 	};
 
 	// Which part of a channel a strip runs: all of it, or, on a channel with plugin slots, what comes before them in

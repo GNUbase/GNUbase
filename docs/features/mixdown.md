@@ -30,8 +30,8 @@ Mixdown dialog and Quick Audio Export. The offline rendering it builds on is `au
   exporting without that plugin; so must one still loading live, which is about to play. The private plugins are made
   in offline mode, so that their own `setProcessMode` is offline before they are activated, and the live plugins never
   leave real-time mode for an export.
-- **Render points.** `point` renders channels from inside their strip (before the slots, after them, or before the
-  fader) instead of after the fader and panner, and `tail` adds up to 60 s that end where the audio does, for render
+- **Render points.** `point` renders channels from inside their strip (before the slots, after them, before the
+  fader, or after the panner without the fader) instead of after the fader and panner, and `tail` adds up to 60 s that end where the audio does, for render
   in place and freeze ([render-in-place.md](render-in-place.md)).
 - **The device's sample rate.** The processing graph runs at the device's rate and audio events play at the
   project's, so both export commands refuse while the device runs at another rate than the project.

@@ -330,6 +330,7 @@ TEST_CASE("mixdown.export renders a channel from a point inside its strip", "[in
 	const std::vector<float> inserts = at("inserts");
 	const std::vector<float> strip = at("strip");
 	const std::vector<float> output = at("output");
+	const std::vector<float> panner = at("panner");
 	// A mono channel's points before the panner are mono; the ramp's left channel plays on it.
 	REQUIRE(source.size() == 6000);
 	CHECK(inserts.size() == 6000);
@@ -339,6 +340,12 @@ TEST_CASE("mixdown.export renders a channel from a point inside its strip", "[in
 	CHECK(std::abs(inserts[99] - source[99]) < 1e-6f); // +6 dB, then -6 dB
 	CHECK(firstDifference(strip, inserts) == -1);      // the strip's sections are off
 	CHECK(std::abs(peakOf(output) - (peakOf(strip) * std::pow(10.0f, -10.0f / 20.0f) * 0.70794578f)) < 1e-4f);
+	// After the panner without the fader (Mix down to One Audio File with Channel Settings): the output, before -10 dB.
+	REQUIRE(panner.size() == output.size());
+	float error = 0.0f;
+	for (size_t i = 0; i < output.size(); ++i)
+		error = std::max(error, std::abs((panner[i] * std::pow(10.0f, -10.0f / 20.0f)) - output[i]));
+	CHECK(error < 1e-6f);
 
 	CHECK_THAT(reject(project.client, "mixdown.export",
 				   {{"folder", project.folder.path().u8string()}, {"name", "bus"}, {"start", 0}, {"end", 100},
@@ -1748,8 +1755,9 @@ TEST_CASE("render in place mixes tracks down to one audio file (#760)", "[integr
 	CHECK_THAT(reject(project.client, "track.renderInPlace",
 				   {{"tracks", {one.track}}, {"processing", "completeSignalPath"}, {"mixdown", true}}),
 		ContainsSubstring("several tracks"));
-	CHECK_THAT(reject(project.client, "track.renderInPlace", {{"tracks", both}, {"mixdown", true}}),
-		ContainsSubstring("complete signal path"));
+	CHECK_THAT(
+		reject(project.client, "track.renderInPlace", {{"tracks", both}, {"processing", "dry"}, {"mixdown", true}}),
+		ContainsSubstring("dry"));
 	CHECK_THAT(
 		reject(project.client, "track.renderInPlace",
 			{{"tracks", both}, {"processing", "completeSignalPath"}, {"mixdown", true}, {"mode", "separateEvents"}}),
@@ -1759,6 +1767,47 @@ TEST_CASE("render in place mixes tracks down to one audio file (#760)", "[integr
 	CHECK_THAT(reject(project.client, "track.renderInPlace",
 				   {{"tracks", both}, {"processing", "completeSignalPath"}, {"mixdown", true}}),
 		ContainsSubstring("one output"));
+}
+
+TEST_CASE(
+	"a mixdown with Channel Settings renders the pans and leaves the new track centred at 0 dB (#760)", "[integration]")
+{
+	// Reference manual pp. 279-280: Mix down to One Audio File works with Channel Settings too, but one new track can't
+	// take several panners: the pans go into the file, before the faders and the mutes, and the new track is centred.
+	Session project;
+	const Session::Track one = project.addTrack("One");
+	const Session::Track two = project.addTrack("Two", 1);
+	run(project.client, "channel.set", {{"channel", one.channel}, {"volume", -3.0}, {"mute", true}});
+	run(project.client, "channel.set", {{"channel", two.channel}, {"volume", -6.0}, {"pan", -0.5}});
+	const Json effect = run(project.client, "track.add", {{"type", "effect"}});
+	run(project.client, "channel.set",
+		{{"channel", two.channel},
+			{"sends", {{{"send", 1}, {"destination", effect.at("channel").at("id")}, {"on", true}}}}});
+	run(project.client, "audio.render", {{"frames", 4096}});
+	const Json mixed = run(project.client, "track.renderInPlace",
+		{{"tracks", {one.track, two.track}}, {"mixdown", true}, {"name", "Panned"}});
+	REQUIRE(mixed.at("tracks").size() == 1);
+	const std::vector<float> panned = samplesOf(mediaPath(project, mixed.at("media").at(0)));
+	Json channel;
+	const Json state = run(project.client, "project.get");
+	for (const Json& each : state.at("channels"))
+		if (each.at("track") == mixed.at("tracks").at(0))
+			channel = each;
+	REQUIRE(channel.is_object());
+	CHECK(channel.at("format") == "stereo");
+	CHECK(channel.at("volume") == 0.0);
+	CHECK(channel.at("pan") == 0.0);
+	CHECK(std::none_of(channel.at("sends").begin(), channel.at("sends").end(),
+		[](const Json& send) { return send.at("on").get<bool>(); }));
+	run(project.client, "history.undo");
+
+	// The same as the complete signal paths with the faders at 0 dB and nothing muted.
+	run(project.client, "channel.set", {{"channel", one.channel}, {"volume", 0.0}, {"mute", false}});
+	run(project.client, "channel.set", {{"channel", two.channel}, {"volume", 0.0}});
+	run(project.client, "audio.render", {{"frames", 4096}});
+	const Json complete = run(project.client, "track.renderInPlace",
+		{{"tracks", {one.track, two.track}}, {"processing", "completeSignalPath"}, {"mixdown", true}});
+	CHECK(nullTest(panned, samplesOf(mediaPath(project, complete.at("media").at(0)))) < 1e-6f);
 }
 
 TEST_CASE("a frozen instrument track's MIDI send to another instrument track stays out of the graph", "[integration]")
