@@ -432,26 +432,28 @@ namespace gnubase::ui
 			if (Rml::Element* bar = dialog->GetElementById(backup.rendering ? "render-progress" : "backup-progress"))
 				bar->SetAttribute("value", job.at("progress").get<double>());
 		}
-		// The job may have ended before its command's result came: job.get tells.
+		// The job may have ended before its command's result came: job.get tells. Its progress is older than that of a
+		// job.progress that came meanwhile, which the engine may send before the answer (#2172).
 		m_binding.send("job.get", {{"job", id}},
-			[this](const engine::Result& state)
+			[this, id](const engine::Result& state)
 			{
 				if (!state.ok())
 					return;
 				const Json& job = state.value.at("job");
 				if (job.at("state") != "running")
 					backupEnded(job);
-				else
-					backupProgress(job.at("id").get<uint64_t>(), job.at("progress").get<double>(),
-						job.at("detail").get<std::string>());
+				else if (const auto found = m_backups.find(id); found != m_backups.end() && !found->second.progressed)
+					backupProgress(id, job.at("progress").get<double>(), job.at("detail").get<std::string>());
 			});
 	}
 
 	void ProjectFiles::backupProgress(uint64_t job, double progress, const std::string& detail)
 	{
 		const auto backup = m_backups.find(job);
-		auto* dialog =
-			backup != m_backups.end() ? dynamic_cast<Rml::ElementDocument*>(backup->second.progress.get()) : nullptr;
+		if (backup == m_backups.end())
+			return;
+		backup->second.progressed = true;
+		auto* dialog = dynamic_cast<Rml::ElementDocument*>(backup->second.progress.get());
 		if (dialog == nullptr)
 			return;
 		if (Rml::Element* bar =
