@@ -539,7 +539,7 @@ namespace gnubase::app
 		engine::Json m_editorViews = engine::Json::object(); // the engine's, by editor
 		std::set<std::string> m_closing;                     // the editors closeEditor closes, until the engine answers
 		std::vector<uint64_t> m_followed;                    // the selection the editors last followed
-		bool m_editorTabShown = false;                       // in the last followSelection
+		bool m_emptyEditorTab = false; // the Editor tab in front with its view closed, in the last followSelection
 		std::vector<ui::Subscription> m_editorSubscriptions;
 		// The key commands dialog (#161) and the user's key commands and macros, ui.keyCommands and ui.macros.
 		void addKeyCommandsDialog();

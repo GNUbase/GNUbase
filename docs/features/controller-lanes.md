@@ -142,19 +142,19 @@ editor's lanes.
 - `tests/controllerlanes_ui_tests.cpp` drives the app with `ui::Automation`: the lane-type buttons inside their headers
   and the footer's buttons inside the footer in every theme, also with the keyboard focus' frame; velocity bars at their
   notes, dragged, painted and drawn with the line tool; a lane from the Create Controller Lane menu, events drawn,
-  painted, selected, dragged and erased; the line tool's line, square, parabola, sine, triangle and Paint modes from its
-  menu, which shows only after the second click; Ctrl painting only where the mouse went; poly pressure lanes taking the
-  selected note's pitch and program change lanes; Show Used Controllers, a lane's type, Select All Events on Lane,
-  Remove This Lane, play probability drawn, applied and reset, Apply and Reset MIDI Velocity Variance over two parts as
-  one undo step, Show/Hide and Show Velocity Lane Only; a right click below a lane's name adding a lane and removing
-  that one; the line tool and painting on a lane whose events are on another channel; drags released outside the lanes
-  and over another document of the window, and never released (#864); a right release and press during a value drag
-  ending nothing; the line tool released left of the part and over the toolbar; a value drag over the selected notes of
-  two parts as one undo step; the same undo names over one part and two for value drags and painting on all four note
-  lanes, controller value drags, adding attributes and deleting attributes, directions or both on the Articulations
-  lane, and controller painting and lines with and without events to replace; a poly pressure lane with two selected
-  notes; with Acoustic Feedback, a velocity drag playing its note at the velocity pressed and then at the one it sets,
-  the draw tool the note it paints, and nothing with it off; Auto Select Controllers with a note moved; a preset saved
-  with Add Preset, loaded, removed with Remove Preset, renamed and deleted with Organize Presets; events drawn on a
-  lane playing back; a step that another event now starts with losing its width (#1580). `tests/uithemes_tests.cpp`: every theme draws play probability and velocity
-  variance bars dashed.
+  painted, selected, dragged and erased; the line tool's line, also with Quantize Link on the 1/4 grid (#832), square,
+  parabola, sine, triangle and Paint modes from its menu, which shows only after the second click; Ctrl painting only
+  where the mouse went; poly pressure lanes taking the selected note's pitch and program change lanes; Show Used
+  Controllers, a lane's type, Select All Events on Lane, Remove This Lane, play probability drawn, applied and reset,
+  Apply and Reset MIDI Velocity Variance over two parts as one undo step, Show/Hide and Show Velocity Lane Only; a right
+  click below a lane's name adding a lane and removing that one; the line tool and painting on a lane whose events are
+  on another channel; drags released outside the lanes and over another document of the window, and never released
+  (#864); a right release and press during a value drag ending nothing; the line tool released left of the part and over
+  the toolbar; a value drag over the selected notes of two parts as one undo step; the same undo names over one part and
+  two for value drags and painting on all four note lanes, controller value drags, adding attributes and deleting
+  attributes, directions or both on the Articulations lane, and controller painting and lines with and without events to
+  replace; a poly pressure lane with two selected notes; with Acoustic Feedback, a velocity drag playing its note at the
+  velocity pressed and then at the one it sets, the draw tool the note it paints, and nothing with it off; Auto Select
+  Controllers with a note moved; a preset saved with Add Preset, loaded, removed with Remove Preset, renamed and deleted
+  with Organize Presets; events drawn on a lane playing back; a step that another event now starts with losing its width
+  (#1580). `tests/uithemes_tests.cpp`: every theme draws play probability and velocity variance bars dashed.

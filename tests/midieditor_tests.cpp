@@ -253,7 +253,8 @@ TEST_CASE("the lower zone's editor follows the project window's selection unless
 	click(app, std::nullopt, "#lower-zone #editor-move");
 	REQUIRE(app.waitUntil([&] { return app.appUi().editorWindow() != nullptr; }));
 	CHECK(parts(view(app, "window")) == std::vector<uint64_t>{f.keys2});
-	REQUIRE(app.waitUntil([&] { return view(app, "lower").at("open") == false; }));
+	// The Editor tab stays in front and shows the selection again, without Keep Editor Contents (pp. 87-88, #625).
+	REQUIRE(app.waitUntil([&] { return parts(view(app, "lower")) == std::vector<uint64_t>{f.bass1}; }));
 	CHECK(view(app, "lower").at("keepContents") == false);
 	// And back: Open in Lower Zone, once the window shows the parts (before it has its view from the engine, it
 	// leaves clicks alone).
@@ -318,6 +319,19 @@ TEST_CASE(
 		return ui::Target{"", 0, ui::Point{static_cast<int>(x), static_cast<int>(y)}};
 	};
 	const auto focused = [&app](const char* zone) { return has(elements(app, std::nullopt, zone).at(0), "focused"); };
+	// Hiding the lower zone closes its editor; while the Editor tab shows, it would show the selection again (#625).
+	// First the UI has the open view: one still on its way brings the tab forward again.
+	const auto hideLower = [&app]
+	{
+		REQUIRE(app.waitUntil(
+			[&]
+			{
+				const ui::MidiEditor* lower = app.appUi().lowerZoneEditor();
+				return lower != nullptr && lower->view().value("open", false);
+			}));
+		app.appUi().docking().setVisible("project", "lower", false);
+		REQUIRE(app.waitUntil([&] { return view(app, "lower").at("open") == false; }));
+	};
 
 	// Return (Open/Close Editor) opens the selected part in the lower zone's editor by default (reference manual pp.
 	// 87, 1603), which shows the zone and takes the keyboard focus (p. 100).
@@ -332,8 +346,7 @@ TEST_CASE(
 	CHECK(app.appUi().editorWindow() == nullptr);
 
 	// A double click on the part does the same.
-	app.call("editor.close", {{"editor", "lower"}});
-	REQUIRE(app.waitUntil([&] { return view(app, "lower").at("open") == false; }));
+	hideLower();
 	REQUIRE(app.appUi().docking().focus("project", "main"));
 	app.ui().click(std::nullopt, at(5.0), ui::MouseButton::Left, 2, {});
 	REQUIRE(app.waitUntil([&] { return parts(view(app, "lower")) == std::vector<uint64_t>{part}; }));
@@ -349,8 +362,7 @@ TEST_CASE(
 			.at("id")
 			.get<uint64_t>();
 	REQUIRE(app.waitUntil([&] { return f.display.project().at("audioParts").size() == 1; }));
-	app.call("editor.close", {{"editor", "lower"}});
-	REQUIRE(app.waitUntil([&] { return view(app, "lower").at("open") == false; }));
+	hideLower();
 	REQUIRE(app.appUi().docking().focus("project", "main"));
 	f.select({audioPart});
 	app.ui().key(std::nullopt, "Return");
@@ -362,8 +374,7 @@ TEST_CASE(
 	// With Double-click opens Editor in a Window (p. 1603), both open the editor window and leave the focus in the
 	// main zone.
 	app.call("settings.set", {{"key", "editing.doubleClickOpensEditorIn"}, {"value", "window"}});
-	app.call("editor.close", {{"editor", "lower"}});
-	REQUIRE(app.waitUntil([&] { return view(app, "lower").at("open") == false; }));
+	hideLower();
 	REQUIRE(app.appUi().docking().focus("project", "main"));
 	f.select({part});
 	app.ui().key(std::nullopt, "Return");
@@ -526,30 +537,43 @@ TEST_CASE("the lower zone's Editor tab in front without an open editor opens it 
 		for (int i = 0; i < 5; ++i)
 			app.shell().step(std::chrono::milliseconds(0));
 	};
+	// Until the UI has the engine's views: the binding hands on the events that came before an answer first.
+	const auto caughtUp = [&app]
+	{
+		const auto answered = std::make_shared<bool>(false);
+		app.appUi().binding().send(
+			"editor.get", {{"editor", "lower"}}, [answered](const engine::Result&) { *answered = true; });
+		REQUIRE(app.waitUntil([&] { return *answered; }));
+	};
 	// Picked from the tab bar, the Editor tab shows the project window's selected parts (p. 1153).
 	f.select({f.keys1});
 	app.appUi().docking().open("editor");
 	REQUIRE(app.waitUntil([&] { return parts(view(app, "lower")) == std::vector<uint64_t>{f.keys1}; }));
 
-	// Closed from another client, it stays closed while the tab stays in front, and opens again when the tab comes to
-	// the front again.
+	// The tab stays when its editor closes, and shows the selection again (pp. 87-88): showing other parts and closed
+	// from another client, the editor opens again with the selected parts.
+	app.call("editor.open", {{"editor", "lower"}, {"parts", {f.keys2}}});
+	REQUIRE(app.waitUntil([&] { return parts(view(app, "lower")) == std::vector<uint64_t>{f.keys2}; }));
+	app.call("editor.close", {{"editor", "lower"}});
+	REQUIRE(app.waitUntil([&] { return parts(view(app, "lower")) == std::vector<uint64_t>{f.keys1}; }));
+	CHECK(app.appUi().docking().showing("editor"));
+	// Without a selection it stays empty until there is one.
+	f.select({});
 	app.call("editor.close", {{"editor", "lower"}});
 	REQUIRE(app.waitUntil([&] { return view(app, "lower").at("open") == false; }));
-	f.select({f.bass1});
 	steps();
 	CHECK(view(app, "lower").at("open") == false);
 	CHECK(app.appUi().docking().showing("editor"));
-	app.appUi().docking().open("mixer");
-	REQUIRE(app.waitUntil([&] { return app.appUi().docking().showing("mixer"); }));
-	steps();
-	app.appUi().docking().open("editor");
+	f.select({f.bass1});
 	REQUIRE(app.waitUntil([&] { return parts(view(app, "lower")) == std::vector<uint64_t>{f.bass1}; }));
 
 	// Behind the Mixer it stays closed; Open in Lower Zone from the editor window brings the tab forward with the
 	// window's parts, not the project window's selection.
-	app.call("editor.close", {{"editor", "lower"}});
+	caughtUp(); // the view opening brings the tab forward
 	app.appUi().docking().open("mixer");
 	REQUIRE(app.waitUntil([&] { return app.appUi().docking().showing("mixer"); }));
+	app.call("editor.close", {{"editor", "lower"}});
+	caughtUp();
 	f.select({f.keys1});
 	steps();
 	CHECK(view(app, "lower").at("open") == false);
@@ -563,6 +587,13 @@ TEST_CASE("the lower zone's Editor tab in front without an open editor opens it 
 	REQUIRE(app.waitUntil([&] { return parts(view(app, "lower")) == std::vector<uint64_t>{f.keys2}; }));
 	steps();
 	CHECK(parts(view(app, "lower")) == std::vector<uint64_t>{f.keys2});
+
+	// A new project closes it and selects nothing: the tab stays in front, empty.
+	app.call("project.new");
+	REQUIRE(app.waitUntil([&] { return view(app, "lower").at("open") == false; }));
+	steps();
+	CHECK(view(app, "lower").at("open") == false);
+	CHECK(app.appUi().docking().showing("editor"));
 }
 
 TEST_CASE("the MIDI editors share one project read for each change (#625)", "[ui]")
