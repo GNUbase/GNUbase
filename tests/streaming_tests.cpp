@@ -48,8 +48,28 @@ namespace
 		// Seeks wait while hold is set, so a test can look at a stream whose disk thread hasn't refilled it yet.
 		void holdSeeksWhile(const std::atomic<bool>* hold) { m_hold = hold; }
 
+		// Reads wait until open is set, for at most 10 s; waitedOut() tells whether one gave up.
+		void waitInReadsFor(const std::atomic<bool>* open) { m_waitFor = open; }
+		bool waitedOut() const { return m_waitedOut.load(); }
+
+		// Reads set opens, which another reader can wait for.
+		void openWhenRead(std::atomic<bool>* opens) { m_opens = opens; }
+
+		// True if two threads read at once.
+		bool overlapped() const { return m_overlapped.load(); }
+
 		size_t read(float* buffer, size_t frames) override
 		{
+			if (++m_reading > 1)
+				m_overlapped.store(true);
+			if (m_opens != nullptr)
+				m_opens->store(true);
+			const auto deadline = std::chrono::steady_clock::now() + 10s;
+			while (m_waitFor != nullptr && !m_waitFor->load() && !m_waitedOut.load())
+			{
+				m_waitedOut.store(std::chrono::steady_clock::now() > deadline);
+				std::this_thread::sleep_for(1ms);
+			}
 			if (m_delay.count() > 0)
 				std::this_thread::sleep_for(m_delay);
 			const auto count = static_cast<size_t>(std::min<gnubase::time::Samples>(
@@ -59,6 +79,7 @@ namespace
 					buffer[(i * static_cast<size_t>(m_info.channels)) + static_cast<size_t>(channel)] =
 						value(m_position + static_cast<gnubase::time::Samples>(i), channel);
 			m_position += static_cast<gnubase::time::Samples>(count);
+			--m_reading;
 			return count;
 		}
 
@@ -75,6 +96,11 @@ namespace
 		std::chrono::microseconds m_delay;
 		gnubase::time::Samples m_position = 0;
 		const std::atomic<bool>* m_hold = nullptr;
+		const std::atomic<bool>* m_waitFor = nullptr;
+		std::atomic<bool>* m_opens = nullptr;
+		std::atomic<bool> m_waitedOut{false};
+		std::atomic<int> m_reading{0};
+		std::atomic<bool> m_overlapped{false};
 	};
 
 	// Waits until the disk thread has filled the stream's buffer, as the transport will before playing.
@@ -376,6 +402,49 @@ TEST_CASE("seeking during playback never plays audio from before the seek", "[in
 	CHECK(wrong.foreign == 0);
 	CHECK(wrong.silent <= dropouts);
 	CHECK(dropouts == 0);
+}
+
+TEST_CASE("the disk threads fill streams at once, and each stream from one thread at a time", "[integration]")
+{
+	// One disk thread can't run a stretcher for each of many shifted events in real time (#1735): with several,
+	// a stream whose reads take long holds up only its own thread. Here the first stream's reads wait for the
+	// second's: on a single disk thread they would wait in vain.
+	DiskStreamer streamer(2);
+	CHECK(streamer.threads() == 2);
+	std::atomic<bool> secondRead{false};
+	auto first = std::make_unique<SignalReader>(1, 48000.0, 20000);
+	auto second = std::make_unique<SignalReader>(1, 48000.0, 20000);
+	first->waitInReadsFor(&secondRead);
+	second->openWhenRead(&secondRead);
+	const SignalReader& waiting = *first;
+	const auto a = streamer.open(std::move(first), 48000.0);
+	const auto b = streamer.open(std::move(second), 48000.0);
+	REQUIRE(waitUntilReady(*a));
+	REQUIRE(waitUntilReady(*b));
+	CHECK_FALSE(waiting.waitedOut());
+
+	// Four threads and slow reads: no stream is ever read by two threads at once, and every one plays its file,
+	// which fits into its buffer.
+	DiskStreamer four(4);
+	DiskStreamSettings settings;
+	settings.blockFrames = 512;
+	settings.blocks = 16;
+	std::vector<const SignalReader*> readers;
+	std::vector<std::shared_ptr<DiskStream>> streams;
+	for (int i = 0; i < 8; ++i)
+	{
+		auto reader = std::make_unique<SignalReader>(1, 48000.0, 8192, 200us);
+		readers.push_back(reader.get());
+		streams.push_back(four.open(std::move(reader), 48000.0, settings));
+	}
+	for (size_t i = 0; i < streams.size(); ++i)
+	{
+		INFO("stream " << i);
+		REQUIRE(waitUntilReady(*streams[i]));
+		const std::vector<float> output = play(*streams[i], 8192, 64, false);
+		CHECK(mismatches(output, 1, 0) == 0);
+		CHECK_FALSE(readers[i]->overlapped());
+	}
 }
 
 TEST_CASE("streams play files at the output sample rate, and seeking stays exact", "[integration]")

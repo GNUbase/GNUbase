@@ -2,6 +2,7 @@
 #include "engine/audiofile/diskstream.h"
 
 #include "engine/audiofile/resampler.h"
+#include "platform/rt/workerpool.h"
 
 #include <algorithm>
 #include <cmath>
@@ -291,14 +292,22 @@ namespace gnubase::engine
 		return done;
 	}
 
-	DiskStreamer::DiskStreamer(std::chrono::microseconds idle) : m_idle(idle), m_thread([this] { run(); })
+	size_t DiskStreamer::defaultThreads()
 	{
+		return std::clamp<size_t>(rt::hardwareThreads() / 2, 1, 8);
+	}
+
+	DiskStreamer::DiskStreamer(size_t threads)
+	{
+		for (size_t i = 0; i < std::max<size_t>(threads, 1); ++i)
+			m_threads.emplace_back([this] { run(); });
 	}
 
 	DiskStreamer::~DiskStreamer()
 	{
 		m_stopping.store(true);
-		m_thread.join();
+		for (std::thread& thread : m_threads)
+			thread.join();
 	}
 
 	std::shared_ptr<DiskStream> DiskStreamer::open(
@@ -327,10 +336,16 @@ namespace gnubase::engine
 			}
 			bool worked = false;
 			for (const auto& stream : streams)
+			{
+				// Another disk thread fills it: its disk-thread state is that one's until it lets go.
+				if (stream->m_filling.exchange(true, std::memory_order_acquire))
+					continue;
 				for (size_t i = 0; i < stream->m_settings.blocks && stream->fill(); ++i)
 					worked = true;
+				stream->m_filling.store(false, std::memory_order_release);
+			}
 			if (!worked)
-				std::this_thread::sleep_for(m_idle);
+				std::this_thread::sleep_for(std::chrono::milliseconds(1));
 		}
 	}
 }

@@ -76,13 +76,17 @@ that sustained audio doesn't click there (#1564). An event that nothing can shif
 Independent or without a root key step and transpose events, gets no warp or pitch map at all (#1555), so a project
 without global transposition pays nothing for it; it plays its file as before.
 
-What following the root key costs, `gnubase-bench --case transposedEvents` ([performance.md](performance.md)): 16 and
-64 mono audio events in C on tracks of their own, played as they are and in a project in D, each render in a process of
-its own. One Release run on Windows with 32 hardware threads, on a machine that other builds kept busy (#1644): as they
-are 2.8 times faster than real time for 16 and 64 events, following the root key 0.99 times for 16 and 0.33 times for
-64, and 2.4 and 2.3 MB more per shifted event. A project that shifts many events at once is bound by their stretchers
-on the disk threads, which offline rendering waits for; a measurement on an idle machine, and cheaper stretchers if it
-holds, are #1735.
+What following the root key costs, `gnubase-bench --case transposedEvents` ([performance.md](performance.md)): 16 and 64
+mono audio events in C on tracks of their own, played as they are and in a project in D, each render in a process of its
+own. One Release run on Windows with 32 hardware threads, on a machine that other builds kept busy (#1644): as they are
+2.8 times faster than real time for 16 and 64 events, following the root key 0.99 times for 16 and 0.33 times for 64,
+and 2.4 and 2.3 MB more per shifted event. That was bound by the one disk thread that ran all the stretchers, each about
+a sixteenth of a core, which offline rendering waits for, and an idle machine wouldn't have changed that (#1735). The
+disk streamer now has several threads, half the hardware threads and at most 8, and each fills the next stream that no
+other one fills ([warp.md](warp.md)). The same comparison with `--quick`, at idle priority on a machine about 80 % busy
+with other work, main against the change, twice each: following the root key 0.71 to 0.81 times real time for 16 events
+and 0.18 times for 64 on one disk thread, 2.0 to 2.8 times and 1.0 to 1.1 times on 8 disk threads; as they are,
+unchanged at 2.9 times.
 
 ## UI
 

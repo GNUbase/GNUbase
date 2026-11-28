@@ -117,12 +117,13 @@ the end of the stretch, or at the definition's beats, would reset less often, bu
 audio up to half the stretch away from the map (at 8 times, the end of the clip's audio half way through it), so the
 reader keeps to the segments.
 
-The disk thread that fills every voice's stream does the stretching. Measured with events of a loop that musical mode
+The disk threads that fill the voices' streams do the stretching. Measured with events of a loop that musical mode
 stretches from 90 to 120 BPM on the quality preset, playing in real time on the dummy device while other builds kept the
 machine busy: a Debug build keeps up with 4 such events and drops out with 8 (about a second of 2). The `[realtime]`
-test plays 4; a Release build, which CI runs the tests in, is several times faster. Spreading the voices over more disk
-threads is a follow-up if real projects need it. A changed map, as after a tempo change, opens new voices; the stretcher
-allocates when one opens, never on the disk thread's reads.
+test plays 4; a Release build, which CI runs the tests in, is several times faster. That was on one disk thread; since
+#1735 there are several, half the hardware threads and at most 8, and each takes the next stream that no other one
+fills, so the voices spread over them. A changed map, as after a tempo change, opens new voices; the stretcher allocates
+when one opens, never on the disk thread's reads.
 
 Flattening reads through the same reader and applies the clip's fades as playback does, so a flattened event sounds
 exactly as it played (the render tests compare them, with and without fades); offline mode's better quality for it is a
@@ -168,7 +169,7 @@ and scrubbing play warped events unstretched; flattening in offline mode; the au
 stretcher's range playing as long as the segment (the reader gets back onto the map at its end); a `Warps` element in
 seconds that stretches a whole clip, and one whose audio is in beats, on import, and in beats the points that bend
 between beats, as musical mode with free warp markers exports them (the import keeps the whole beats, so the markers are
-lost); more disk threads for many warped events.
+lost).
 
 ## Checks
 
