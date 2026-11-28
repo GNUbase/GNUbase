@@ -400,6 +400,7 @@ namespace gnubase::app
 		void addAudioFunctions();
 		bool runAudioFunction(const std::string& command, ui::Window& window, Rml::Element* zone);
 		bool poolAudioTarget(ui::Window& window, Rml::Element* zone);
+		void addSamplerKeys();
 		void dropSampleRegion(const engine::Json& region, float x, float y);
 		// The Auto Fades dialog (resources/ui/auto-fades.rml) for the project, or for a track (not 0).
 		void openAutoFades(ui::Window& window, uint64_t track);

@@ -1054,7 +1054,7 @@ namespace gnubase::ui
 		{
 		case Rml::EventId::Mousedown:
 			// The keys go to the key commands of the panel's focus zone, which zoom the display (p. 717).
-			if (Rml::Element* display = find("sampler-display"); display != nullptr)
+			if (const Rml::Element* display = find("sampler-display"); display != nullptr)
 				for (const Rml::Element* each = target; each != nullptr; each = each->GetParentNode())
 					if (each == display)
 					{

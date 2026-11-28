@@ -1225,7 +1225,7 @@ TEST_CASE("key commands zoom the display while the panel has the keyboard focus"
 	// Reference manual p. 717 (#1122): the zoom's key commands, those of the project window's zoom.
 	Fixture f;
 	f.open();
-	ui::EventDisplay& display = *f.display;
+	const ui::EventDisplay& display = *f.display;
 	const double projectScale = display.view().scale;
 	const auto attribute = [&](const std::string& selector, const char* name)
 	{ return f.elements(selector).at(0).at("attributes").value(name, std::string()); };
