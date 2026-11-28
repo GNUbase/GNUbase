@@ -753,6 +753,10 @@ TEST_CASE("Close Gaps crossfades selected slices without moving their starts", "
 			.at("event")
 			.at("id");
 	f.call("event.toPart", {{"events", {f.event, second}}});
+	// The crossfade is the default crossfade (reference manual p. 391).
+	f.call("settings.set",
+		{{"key", "editing.defaultCrossfade"},
+			{"value", {{"mode", "equalPower"}, {"shape", "equalPower"}, {"outShape", "equalPower"}}}});
 	const Json before = f.call("project.get");
 	const size_t steps = f.call("history.get").at("steps").size();
 	const Json result = f.call("event.closeGaps", {{"events", {second, f.event}}});
@@ -772,6 +776,7 @@ TEST_CASE("Close Gaps crossfades selected slices without moving their starts", "
 			CHECK(event.at("offset") == 48000);
 			CHECK(event.at("length") == 24000);
 			CHECK(event.at("crossfade").at("from") == f.event);
+			CHECK(event.at("crossfade").at("mode") == "equalPower");
 		}
 	}
 	CHECK(f.call("history.get").at("steps").size() == steps + 1);

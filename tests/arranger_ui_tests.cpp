@@ -1075,6 +1075,67 @@ TEST_CASE("the inspector's Current Arranger Chain list moves and copies steps dr
 	CHECK(order() == std::vector<uint64_t>{c, b, a, a, b});
 }
 
+TEST_CASE("arranger events dragged from the lane drop into the inspector's Current Arranger Chain list", "[ui]")
+{
+	// Reference manual p. 409: an arranger event dragged from the project window goes into the chain where it is
+	// dropped and stays where it is; one of the events selected brings them all, in timeline order.
+	Window window;
+	const auto add = [&window](int64_t from, int64_t to)
+	{ return window.app.call("arranger.add", {{"position", from}, {"end", to}}).at("event").at("id").get<uint64_t>(); };
+	const uint64_t a = add(0, 4 * g_quarter);
+	const uint64_t b = add(4 * g_quarter, 8 * g_quarter);
+	const uint64_t c = add(8 * g_quarter, 12 * g_quarter);
+	window.app.call("arranger.setChain", {{"steps", {{{"event", a}}, {{"event", b}}}}});
+	const auto order = [&window]
+	{
+		const Json arranger = window.app.call("arranger.get");
+		std::vector<uint64_t> events;
+		for (const Json& chain : arranger.at("chains"))
+			if (chain.at("id") == arranger.at("chain"))
+				for (const Json& step : chain.at("steps"))
+					events.push_back(step.at("event").get<uint64_t>());
+		return events;
+	};
+	const std::string track = "listitem[type=arranger] .track-name";
+	REQUIRE(
+		window.app.waitUntil([&] { return window.shown(track) == 1 && window.shown(".arranger-lane-event") == 3; }));
+	window.app.appUi().docking().open("inspector");
+	window.display.setTool(ui::Tool::ObjectSelection);
+	window.app.ui().click(std::nullopt, {track, 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+	const auto row = [](int index)
+	{ return ".inspector .inspector-arranger-steps [step=\"" + std::to_string(index) + "\"] .name"; };
+	REQUIRE(window.app.waitUntil([&] { return window.shown(row(1)) == 1; }));
+	const auto upper = [&window](const std::string& selector)
+	{
+		const Json box = window.box(selector);
+		return ui::Point{static_cast<int>(std::lround(box.at("x").get<double>() + (box.at("width").get<double>() / 2))),
+			static_cast<int>(std::lround(box.at("y").get<double>() + (box.at("height").get<double>() / 4)))};
+	};
+	const auto drag = [&window](ui::Point from, ui::Point to, const std::vector<std::string>& modifiers = {})
+	{
+		window.app.ui().drag(std::nullopt, {"", 0, from}, {"", 0, to}, modifiers);
+		window.app.shell().step(std::chrono::milliseconds(0));
+	};
+	const Json before = window.events();
+
+	// C dropped on A's upper half goes before it, and stays where it is on the lane.
+	drag(window.at(5.0), upper(row(0)));
+	REQUIRE(window.app.waitUntil([&] { return order() == std::vector<uint64_t>{c, a, b}; }));
+	window.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(window.events() == before);
+
+	// A and C selected on the lane, A dragged onto B's upper half: A and C go in before it, in timeline order. Each
+	// press is on another event than the one before, as two soon after each other on one open it.
+	window.app.ui().click(std::nullopt, {"", 0, window.at(1.0)}, ui::MouseButton::Left, 1, {});
+	window.app.ui().click(std::nullopt, {"", 0, window.at(5.0)}, ui::MouseButton::Left, 1, {"ctrl"});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(window.app.waitUntil([&] { return window.shown(row(2)) == 1; }));
+	drag(window.at(1.0), upper(row(2)));
+	REQUIRE(window.app.waitUntil([&] { return order() == std::vector<uint64_t>{c, a, a, c, b}; }));
+	window.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(window.events() == before);
+}
+
 TEST_CASE("arranger events selected on the lane deselect the automation points and points deselect them", "[ui]")
 {
 	// #2076: automation points are among the selections that arranger events selected deselect, and back.

@@ -498,7 +498,7 @@ namespace gnubase::ui
 			{
 				// The next nudge goes on from here, even before transport.changed says so.
 				setCursor(stepped(m_cursorSample, direction));
-				m_binding.send("transport.locate", {{"position", m_cursorSample}});
+				m_nudged = m_binding.send("transport.locate", {{"position", m_cursorSample}});
 			};
 		};
 		// A range command for the selection range, if there is one (reference manual pp. 287-294), with a length

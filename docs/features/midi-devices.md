@@ -16,8 +16,9 @@ program and bank it sends to its instrument (#136, reference manual pp. 1108–1
   plays over it where it is. `project.get` shows them with the channel, the project file keeps them in GNUbase's entry,
   and undo takes them back.
 - **MIDI devices** (pp. 1109–1114) are the user setting `midi.devices`, so they belong to the user, not to a project, as
-  in the reference: devices by name, each with banks, each bank a name and patches, each patch a name, a program, an
-  optional bank and an optional folder it is listed in. `midiDevice.install` installs one: with `template` `gm` General
+  in the reference: devices by name, each with banks, each bank a name, patches and optional folders, each patch a name,
+  a program, an optional bank and an optional folder it is listed in, a path with `/` between nested folders
+  (`Keys/Pianos`). A bank's `folders` are folders it keeps while no patch is in them. `midiDevice.install` installs one: with `template` `gm` General
   MIDI's 128 programs in the bank GM, in folders by family (the reference's GM Device), or with `empty`, the default, no
   banks (Define New). `midiDevice.remove` removes one. Banks and patches are edited with `midiDevice.set` (one installed
   device's `name` and `banks`, returning the device) or `settings.set`; both check the same schema. A MIDI track names a
@@ -37,13 +38,20 @@ program and bank it sends to its instrument (#136, reference manual pp. 1108–1
   new one (Define New) with the name typed and selects it; Remove Device removes the selected one. Changes go to the
   engine at once (its Lua runs `midiDevice.install` and `midiDevice.remove`), and failures show at the bottom. The open
   dialog follows `settings.changed`, keeping the selected device while it is installed, and groups patches by folder
-  even when they are interleaved in the setting. Enable Edit unlocks Create Bank, New Preset and Add Multiple Presets,
-  renaming a bank, folder or preset, editing a preset's program (1 to 128), optional bank (blank or 1 to 16384) and
-  folder, and removing a bank, folder or preset. Apply writes these edits with `midiDevice.set`; invalid numbers leave
+  even when they are interleaved in the setting. Enable Edit unlocks Create Bank, New Folder, New Preset and Add
+  Multiple Presets, renaming a bank, folder or preset, editing a preset's program (1 to 128), optional bank (blank or 1
+  to 16384) and folder, removing a bank, folder or preset, and moving presets by drag and drop (p. 1111). Apply writes these edits with `midiDevice.set`; invalid numbers leave
   the setting unchanged. A preset's folder field groups it with other presets of that folder; a blank field puts it
   directly in its bank. Add Multiple Presets takes a count and uses the selected preset's name (with numbered suffixes),
   starting program, bank and folder, or starts at program 1 without a template. The range must fit programs 1 to 128.
   Backspace in the patch tree removes its selected bank, folder or preset when Enable Edit is on.
+- **Folders** (p. 1111). New Folder makes a folder ("New Folder", numbered when the name is taken) in the selected bank
+  or folder, or in the selected preset's folder, and keeps it while it is empty; New Preset and Add Multiple Presets add
+  theirs in the selected folder too. Folders nest: the tree shows a folder's subfolders and presets in the order they
+  first appear in the bank's patches, then its folders without presets. Renaming a folder (a name without `/`) takes the
+  folders and presets inside it along, and removing it removes them. A preset dragged onto a bank or a folder goes to
+  its end, one dragged onto a preset goes before it, into that preset's bank and folder. The folder it leaves stays,
+  also once it has no preset left.
 - **Bank Assignment** (pp. 1109, 1111). A device with several banks can give a MIDI channel one of them:
   `bankAssignment`, the bank's index in `banks` by the channel's number from `"1"` to `"16"`, which `midiDevice.set`
   replaces (a channel it leaves out uses all banks) and keeps by index when it is left out, dropping indices past the
@@ -54,8 +62,8 @@ program and bank it sends to its instrument (#136, reference manual pp. 1108–1
   of the banks after it keep theirs (`tests/mididevices_ui_tests.cpp`, `tests/midipatches_tests.cpp`).
 - **Export Setup and Import Setup** (pp. 1110, 1115). `midiDevice.export` writes every installed device, with its banks,
   patches and Bank Assignment, into a MIDI device setup file: XML of GNUbase's own, `<MidiDevices>` with a
-  `<Device name>` each, its `<Bank name>`s with their `<Patch name program bank folder>`s and its
-  `<BankAssignment channel bank>`s, programs and banks from 0 as in `midi.devices`. The reference's setup files have a
+  `<Device name>` each, its `<Bank name>`s with their `<Patch name program bank folder>`s and `<Folder name>`s, and
+  its `<BankAssignment channel bank>`s, programs and banks from 0 as in `midi.devices`. The reference's setup files have a
   format of their own, which GNUbase doesn't read. `midiDevice.readSetup` lists a file's devices without installing
   them, and `midiDevice.import` installs the ones it names, or all: a name that is installed already or that the file
   doesn't have installs none, and the file's devices are checked against the schema of `midi.devices`. The manager's
@@ -69,8 +77,7 @@ program and bank it sends to its instrument (#136, reference manual pp. 1108–1
 
 - Devices playing through a MIDI output port: MIDI tracks don't play to MIDI ports yet, so a device has no Output
   and doesn't replace the track's output routing as in the reference (p. 1113); the track names it beside its output.
-- The remaining manager editing commands (New Folder for empty or nested folders and drag and drop; pp. 1111–1112).
-  Preset events other than bank select MSB and LSB and program change (p. 1112), the reference's other device scripts
+- Preset events other than bank select MSB and LSB and program change (p. 1112), the reference's other device scripts
   (XG and the instruments'), device maps and device panels with their automation (pp. 1115–1117), and the program
   selector in the track list.
 
@@ -85,8 +92,9 @@ program and bank it sends to its instrument (#136, reference manual pp. 1108–1
   program change alone without a bank, nothing without a program, and a device's patch; stopping after a part's program
   and controllers without resending the track's values, Return to Start resending them, rerouting while stopped and
   playing, loading ignoring program and bank on non-MIDI channels, the device bank limit checked, and `midiDevice.set`
-  replacing banks and empty lists without changing other devices or accepting missing devices or malformed banks;
-  `midiDevice.export` writing a setup that `midiDevice.readSetup` lists without installing and `midiDevice.import`
+  replacing banks, empty lists and a bank's empty and nested folders without changing other devices or accepting
+  missing devices or malformed banks;
+  `midiDevice.export` writing a setup, with its banks' folders, that `midiDevice.readSetup` lists without installing and `midiDevice.import`
   installs, chosen devices or all, refusing taken names, names the file doesn't have, files that are missing or aren't
   setups, broken patches and a device twice. On a MIDI track's channel ([mixer.md](mixer.md)): the patch, MIDI volume
   and pan going out on it and again on another; its parts', automation's (a controller, pitch bend and channel pressure)
@@ -111,6 +119,9 @@ program and bank it sends to its instrument (#136, reference manual pp. 1108–1
   external installs, settings edits and removals while preserving selection, closing and reopening, interleaved folders
   shown once with all their patches, and Enable Edit creating, renaming and removing banks, folders and presets, editing
   program, optional bank and folder, escaping names, Backspace removal, adding a preset range from a template, and
-  refusing invalid numbers or an overflowing range without changing settings; Export Setup writing every device into the
+  refusing invalid numbers or an overflowing range without changing settings; New Folder making empty and nested
+  folders with unique names, a renamed folder taking its subfolders along and refusing `/`, a preset added in a nested
+  folder, presets dragged onto another bank, onto a preset and onto a folder, a folder removed with what is inside it,
+  and a drag without Enable Edit moving nothing; Export Setup writing every device into the
   file chosen and Import Setup offering the file's devices, the installed ones unchecked, installing the checked ones
   and showing why a taken name installs none.

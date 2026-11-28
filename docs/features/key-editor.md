@@ -19,6 +19,7 @@ saved, and a new project closes the editors.
 | `insertVelocity` | The velocity of drawn notes and of input that doesn't record it (0-1, default 100/127) | p. 1195 |
 | `lengthQuantize` | The length of new notes: a note value (`1/16`, `1/8T`, `1/4.`) or `link`, the quantize grid's | p. 1196 |
 | `acousticFeedback` | Acoustic Feedback: the editor plays a note while it is moved, at the pitch it is dragged to, a note while it is drawn, and a note whose velocity the velocity lane edits, at the velocity a value drag sets or the draw tool paints (controller-lanes.md), until the mouse is released, on the active track's instrument as a key of the keyboard does (off by default) | pp. 1192, 1259 |
+| `indicateTranspositions`, `transpositions` | Indicate Transpositions: the note display shows each note at the pitch it plays, its part's own transpose, the root key's step and the transpose track's added as playback adds them (transpose.md). While it is on, `transpositions` gives each MIDI part the view shows as `{part, steps}`, each step `{position, semitones}` in project ticks from the part's start and where a transpose event changes it, and nothing while it is off. A note drawn gets the pitch that plays at the row under the mouse, a move changes a note's pitch by the rows dragged, and its preview and Acoustic Feedback show the transposition where it lands; the drum editor shows the notes' own pitches | pp. 419, 1260 |
 | `showExpression`, `expressionDoubleClick`, `expressionType` | Show Note Expression Data, Double-Click Opens Note Expression Editor and the expression the expression editor edits ([note-expression.md](note-expression.md)) | pp. 1303, 1308-1309 |
 
 `editor.set` changes them; `editor.get` and `editor.changed` report them.
@@ -26,6 +27,7 @@ saved, and a new project closes the editors.
 | Command | What it does | Reference |
 |---|---|---|
 | `editor.input` | Notes played, such as a chord from a MIDI keyboard: with step input they go into the active part at the step input cursor as notes of the length quantize's length, and the cursor moves on by a step of the quantize grid; with MIDI input the first selected note takes the played pitch and velocities, and the next note is selected | pp. 1219-1220 |
+| `editor.played` | MIDI input into the editors' step and MIDI input, which the engine runs with what the MIDI inputs receive while an editor's input is on: the keys pressed until all are up again go into `editor.input` as one chord | pp. 1219-1220 |
 | `note.chord` | The chord notes of a part make (query) | p. 1216 |
 | `note.voicing` | Fits notes to a chord type, or inverts them or drops notes | pp. 1215-1217 |
 | `note.move` | Moves notes into another MIDI part, by `ticks` on the project's timeline and by `semitones` in pitch, keeping their ids and every other field, with the selected controller events (`controllers`) shifted in time: what a drag between in-place editors sends ([in-place-editor.md](in-place-editor.md)) | pp. 1188, 1261 |
@@ -40,6 +42,15 @@ saved, and a new project closes the editors.
   release velocity, as far as Record Pitch, Record Note On Velocity and Record Note Off Velocity say; the other notes
   of a chord are added with its position and length. With Keep Existing Notes all played notes are added and the
   selected note stays. Then the next note of its part is selected, for a series of notes.
+- **Live MIDI input** (#679). While an open editor has step or MIDI input on, the editors listen to the MIDI inputs
+  (`midi.activityListen` with the listener `keyEditor` and `post` `editor.played`), and each run of `midi.activity`
+  posts what the inputs received to `editor.played`. Only notes of the ports in all MIDI inputs count, so that a
+  control surface's buttons insert nothing. The keys pressed until all of them are up again are one chord, which then
+  goes into `editor.input` with each note's note-on velocity and note-off velocity (a note-on of velocity 0 counts as
+  0.5): one undo step per chord, in the editor whose step or MIDI input went on last, else the first one that has it
+  on. Waiting for the release gives the chord all its keys and their release velocities. With no editor's input on
+  any more, the editors stop listening, and the next start begins afresh, without what was held or played meanwhile.
+  `midi.activity` runs only while an audio device runs, at most ten times a second; offline a test runs it.
 - **Chords** (`src/engine/midi/chords.h`). The types are the Chord Editing section's: the triads major, minor,
   diminished, augmented, sus2 and sus4, and the 4-note chords major7, minor7, dominant7, halfDiminished7,
   diminished7 and minorMajor7. Recognizing ignores octaves and order, so arpeggiated notes count; of several roots the
@@ -68,6 +79,8 @@ the edits of several parts go in one `history.transaction`.
     button.key-input[setting=showExpression|expressionDoubleClick]
                                       Show Note Expression Data and Double-Click Opens Note Expression Editor
                                       (not in the drum editor); .checked while on
+    button.key-input[setting=indicateTranspositions]
+                                      Indicate Transpositions (not in the drum editor); .checked while on
   .info-line.key-editor-info          the first selected note: textdisplay[field=start|end|length|pitch|velocity|
                                       releaseVelocity|channel]; .empty without, .multiple with several selected
   .editor-parts                       an .editor-part-row[track] per track, its .editor-part[part] at their time
@@ -180,17 +193,20 @@ the notes, not the project window's selected events.
   right click without a modifier key; off, a right click with one. A click on a tool chooses it. The other right click
   opens nothing yet, as the key editor has no context menu: the grid's `contextmenu` or `modifiercontextmenu` is
   empty. A right click doesn't change the selection.
+- **Event Colors** (pp. 1133-1134, [colors.md](colors.md)): the toolbar's `#key-event-colors` opens
+  `#key-event-colors-menu`, which sets the view's `eventColors`: Default (the style sheets' note colors), Part or Sound
+  Slot. The drum editor and the in-place editor have it too.
 - **Clicking a part** in the row of parts activates it, as `MidiEditor` handles clicks on `[part]` (p. 1152); a click
   on a note activates its part too.
 
 ## Not yet
 
-Live MIDI keyboard input into `editor.input` (it waits for the MIDI recording input path, #97); Left and Right moving
-the step input cursor and lengthening a held chord; the Mute tool on notes (notes have no mute yet; it mutes the
+The on-screen keyboard into step and MIDI input (`midi.activity` leaves it out); Left and Right moving the step input
+cursor and lengthening a held chord; the Mute tool on notes (notes have no mute yet; it mutes the
 Articulations lane's articulations), the Range Selection, Zoom and Time Warp tools, and the Line tool in the note
 display (it draws on the controller lanes); the selection rectangle, the trim tool's drag across several notes and the
 draw tool's modifiers for velocity, pitch and position; the nudge buttons, Solo Editor, Record in Editor, pitch
-visibility, the Scale Assistant, Indicate Transpositions, event colors, the status line and Set up Window Layout;
+visibility, the Scale Assistant, the status line and Set up Window Layout;
 horizontal zoom and scrolling; the key at the mouse's pitch lit while the mouse moves in the note display (p. 1204);
 drum map names in the key editor and articulation names; Add to Chord Track, Match with Chord Track, Create Chord
 Events and the chord insert tools; quantizing from the toolbar (#132) and the Length section's functions (#133); the
@@ -203,9 +219,14 @@ key editor's context menu.
   the length quantize, the quantize grid's step, the insert velocity, a rest by moving the cursor, one undo step,
   replacing and keeping existing notes, Move Insert Mode (also by a note longer than a step) and a cursor outside the
   part, the channel of a note that stays and notes ending at the part's end; MIDI input with and without Record Pitch,
-  a chord, Keep Existing Notes and no selection; the undo step's name; chord recognition, fitting and voicings;
-  `note.chord` and `note.voicing` with undo and their errors; Acoustic Feedback off at first, set as view state
-  without an undo step.
+  a chord, Keep Existing Notes and no selection; the undo step's name; notes played on the MIDI inputs
+  (`editor.played`) going in as chords once all their keys are up, with their velocities, one undo step each, nothing
+  from a port outside all MIDI inputs or while input is off, and a dummy MIDI keyboard playing through `midi.activity`
+  into the editor whose input went on last, then into the other one, and nothing played while both were off; chord recognition, fitting and voicings;
+  `note.chord` and `note.voicing` with undo and their errors; Acoustic Feedback off at first and the event colors, set
+  as view state without an undo step; Indicate Transpositions off at first, as view state, its steps from transpose
+  events within the part (not before or after it) with the root key's step and the part's own transpose, muted
+  transpose events and an Independent part.
 - `tests/keyeditor_ui_tests.cpp` drives the app with `ui::Automation`: the keyboard and notes at their time and pitch,
   keys lit for selected notes; the piano keyboard at 1024x600, at dp ratios of 1.5 and 1: white keys of equal height
   across the keyboard, black keys narrower on their rows, the mouse on the right part of a white key beside a black key
@@ -234,6 +255,12 @@ key editor's context menu.
   scrolled without a row height to scale and no height left on the rows for a later style, the zoom snapping to 1 near
   it, and scrolling the note display, while a click there zooms nothing, and a click and a drag there leaving a note an
   earlier press selected and the history alone; the lower zone's key editor at its default size giving the note display
-  more room than the controller lanes, at dp ratios 1 and 2, and the lanes whole in a lower zone of 400 dp; the editor
+  more room than the controller lanes, at dp ratios 1 and 1.5, and the lanes whole in a lower zone of 400 dp; the editor
   window's lane keeping its 64 dp and the note display its 40%, and the in-place editor's lanes keeping their height
-  with its toolbar shown.
+  with its toolbar shown; the Event Colors menu's Part, notes in their part's own color or else their track's, a
+  selected note without it, and Default; the menu in the drum editor and in the in-place editor, where with Active Part
+  the other parts' notes keep the style sheets' look; Indicate Transpositions from the toolbar showing a note after a
+  transpose event on the row it plays at, a note drawn there getting the pitch that plays at that row, a move changing
+  the pitch by the rows dragged, and every note on its own row again once it is off; a note dragged across a transpose
+  event shown and played by Acoustic Feedback at the pitch it lands on, before and after the release; the drum editor,
+  which keeps the view's setting, without the toggle and with the notes on their own rows.

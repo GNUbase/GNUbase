@@ -20,6 +20,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -258,17 +259,20 @@ namespace gnubase::engine
 	};
 
 	// A MIDI or instrument track's note expression setup (#1513, pp. 1300-1302,
-	// docs/features/note-expression-setup.md): bypass plays its notes without their expression, and inputs has the
-	// expressions' input assignments other than ExpressionInput::none.
+	// docs/features/note-expression-setup.md): bypass plays its notes without their expression, inputs has the
+	// expressions' input assignments other than ExpressionInput::none, and hidden the expressions the inspector's
+	// visibility hides from the note expression editor and the note display (#2120, p. 1301).
 	struct NoteExpressionSetup
 	{
 		bool bypass = false;
 		// NOLINTNEXTLINE(readability-redundant-member-init): see Channel::instrumentParameters
 		std::map<plugin::NoteExpression, ExpressionInput> inputs = {};
+		// NOLINTNEXTLINE(readability-redundant-member-init): see Channel::instrumentParameters
+		std::set<plugin::NoteExpression> hidden = {};
 
 		bool operator==(const NoteExpressionSetup& other) const
 		{
-			return bypass == other.bypass && inputs == other.inputs;
+			return bypass == other.bypass && inputs == other.inputs && hidden == other.hidden;
 		}
 	};
 
@@ -663,6 +667,28 @@ namespace gnubase::engine
 	inline std::tuple<ObjectId, int64_t, ObjectId> stackKey(const AudioEvent& event)
 	{
 		return {frontOf(event), event.rank, event.id};
+	}
+
+	// Points a copy of an audio event at the copies of the events it names: the event its crossfade comes from, also
+	// in its quantize and slice origins (#2136), and, for a slice, the event it was cut from (`slicedFrom`, #1668).
+	// copies maps the copied events' ids to their copies'; an event it doesn't map isn't copied, and the copy names
+	// none (0).
+	inline void remapCopiedEvent(AudioEvent& event, const std::map<ObjectId, ObjectId>& copies)
+	{
+		const auto remap = [&copies](ObjectId& id)
+		{
+			const auto copy = copies.find(id);
+			id = copy == copies.end() ? 0 : copy->second;
+		};
+		remap(event.crossfade.from);
+		remap(event.slicedFrom);
+		if (event.quantizeOrigin)
+		{
+			remap(event.quantizeOrigin->original.crossfade.from);
+			remap(event.quantizeOrigin->quantized.crossfade.from);
+		}
+		if (event.sliceOrigin)
+			remap(event.sliceOrigin->timing.crossfade.from);
 	}
 
 	// A container of audio events on an audio track (#471, reference manual p. 250). Its events are the audio events
@@ -1698,6 +1724,9 @@ namespace gnubase::engine
 		std::vector<std::pair<ObjectId, ObjectId>> soloNotes; // each a part and a note of it
 		// What each mixer hides (#106), by mixer: lower, window1 to window4. Settings, not part of undo.
 		std::map<std::string, MixerView> mixers;
+		// Undo and Redo Visibility Change (reference manual p. 457), by mixer: the views before its last visibility
+		// changes (first) and those it undid (second), the newest last. Not part of undo or the file.
+		std::map<std::string, std::pair<std::vector<MixerView>, std::vector<MixerView>>> mixerHistory;
 		// What the track list hides (#166). A setting, not part of undo.
 		TrackVisibility trackVisibility;
 		// The track heights and folded folders (#491). Settings, not part of undo.

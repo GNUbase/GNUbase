@@ -34,7 +34,8 @@ namespace gnubase::ui
 		constexpr int64_t g_minVelocity = 1; // a note on with velocity 0 is a note off
 		constexpr double g_maxController = 4294967295.0;
 		constexpr int64_t g_bendCenter = 8192;
-		constexpr float g_edge = 6.0F; // dp at a note's end where the object selection tool resizes it
+		constexpr int64_t g_maxBank = 16383; // MIDI's bank select: 14 bits
+		constexpr float g_edge = 6.0F;       // dp at a note's end where the object selection tool resizes it
 
 		// What the root hears in the bubble phase.
 		constexpr std::array<Rml::EventId, 6> g_events = {Rml::EventId::Mousedown, Rml::EventId::Mousemove,
@@ -383,6 +384,8 @@ namespace gnubase::ui
 					row.number = controller.value("number", 0);
 					row.value = controller.value("value", 0.0);
 					row.channel = controller.value("channel", 0);
+					if (controller.contains("bank"))
+						row.bank = controller.at("bank").get<int>();
 					row.data = controller.value("data", std::vector<int>());
 					row.articulation = controller.value("articulation", std::string());
 					row.reset = controller.value("reset", false);
@@ -465,6 +468,8 @@ namespace gnubase::ui
 				return std::lround(row.value * g_maxVelocity);
 			if (type == "controller" || type == "polyPressure")
 				return toMidi1(row.value);
+			if (type == "program" && row.bank)
+				return *row.bank;
 		}
 		if (field == "secondary" && type == "note")
 			return std::lround(row.release * g_maxVelocity);
@@ -591,7 +596,7 @@ namespace gnubase::ui
 			for (const auto& [field, name] : g_fields)
 			{
 				const bool editable = row.editable &&
-					(number(row, field) ||
+					(number(row, field) || (field == std::string("value") && row.type == "program") ||
 						(field == std::string("attributes") &&
 							(row.type == "sysEx" || row.type == "articulation" || row.isNote())));
 				const bool menu =
@@ -789,18 +794,43 @@ namespace gnubase::ui
 		m_binding.send("editor.set", std::move(parameters));
 	}
 
-	// Sends the changes, each part's note.* or controller.* command: one alone, several in a history.transaction.
-	void ListEditor::edit(const std::string& description, std::map<std::pair<uint64_t, std::string>, Json> changes)
+	// Sends the changes, each part's note.* or controller.* command: one alone, so that an edit that changes nothing
+	// counts as no change, several in a history.transaction named as the engine names its lone command, "Change notes"
+	// or "Remove controllers", or for notes and controller events together "Change events", "Remove events" or "Add
+	// events": a gesture keeps its undo name however many parts it reaches (#2138).
+	void ListEditor::edit(std::map<std::pair<uint64_t, std::string>, Json> changes)
 	{
 		Json commands = Json::array();
+		bool notes = false;
+		bool controllers = false;
 		for (auto& [key, items] : changes)
+		{
+			const bool note = key.second.rfind("note.", 0) == 0;
+			notes = notes || note;
+			controllers = controllers || !note;
 			commands.push_back({{"command", key.second},
-				{"parameters",
-					{{"part", key.first}, {key.second.rfind("note.", 0) == 0 ? "notes" : "controllers", items}}}});
+				{"parameters", {{"part", key.first}, {note ? "notes" : "controllers", items}}}});
+		}
 		if (commands.size() == 1)
+		{
 			m_binding.send(commands[0].at("command").get<std::string>(), commands[0].at("parameters"));
+		}
 		else if (!commands.empty())
+		{
+			// Every command of a gesture does the same: add, remove or set.
+			const std::string& command = changes.begin()->first.second;
+			const std::string verb = command.substr(command.find('.') + 1);
+			std::string description = "Change ";
+			if (verb == "add")
+				description = "Add ";
+			else if (verb == "remove")
+				description = "Remove ";
+			if (notes && controllers)
+				description += "events";
+			else
+				description += notes ? "notes" : "controllers";
 			m_binding.send("history.transaction", {{"description", description}, {"commands", std::move(commands)}});
+		}
 	}
 
 	// A value typed into the event list (p. 1254): for a selected event, every selected event that has the field
@@ -813,13 +843,13 @@ namespace gnubase::ui
 			if (const std::optional<std::vector<int>> data = parseHex(typed); data && edited.type == "sysEx")
 			{
 				changes[{edited.part, "controller.set"}].push_back({{"id", edited.id}, {"data", *data}});
-				edit("Change SysEx", std::move(changes));
+				edit(std::move(changes));
 			}
 			else if (edited.isNote())
 			{
 				// The note's attributes, names separated by commas; empty clears them (p. 1291).
 				changes[{edited.part, "note.set"}].push_back({{"id", edited.id}, {"articulations", splitNames(typed)}});
-				edit("Change Articulations", std::move(changes));
+				edit(std::move(changes));
 			}
 			else if (edited.type == "articulation")
 			{
@@ -831,9 +861,14 @@ namespace gnubase::ui
 				if (!name.empty())
 				{
 					changes[{edited.part, "controller.set"}].push_back({{"id", edited.id}, {"articulation", name}});
-					edit("Change Articulation", std::move(changes));
+					edit(std::move(changes));
 				}
 			}
+			return;
+		}
+		if (field == "value" && edited.type == "program")
+		{
+			editBank(edited, typed);
 			return;
 		}
 		const std::optional<int64_t> typedValue = parse(field, typed, edited);
@@ -881,7 +916,35 @@ namespace gnubase::ui
 				change["number"] = std::clamp<int64_t>(value, 0, 127);
 			changes[{row->part, row->isNote() ? "note.set" : "controller.set"}].push_back(change);
 		}
-		edit("Change events", std::move(changes));
+		edit(std::move(changes));
+	}
+
+	// A program change's bank, typed into its Main Value: for a selected one, every selected program change takes it,
+	// by as much as the typed one where both have a bank, with Ctrl (Cmd) the same; nothing typed takes the banks away.
+	void ListEditor::editBank(const Row& edited, const std::string& typed)
+	{
+		const std::optional<int64_t> bank = parse("value", typed, edited);
+		if (!bank && !Rml::StringUtilities::StripWhitespace(typed).empty())
+			return;
+		std::vector<const Row*> rows = {&edited};
+		if (selected(edited))
+			rows = selectedRows();
+		std::map<std::pair<uint64_t, std::string>, Json> changes;
+		for (const Row* row : rows)
+		{
+			if (!row->editable || row->type != "program")
+				continue;
+			Json value = nullptr;
+			if (bank)
+			{
+				int64_t to = *bank;
+				if (!m_ctrl && edited.bank && row->bank)
+					to = *row->bank + (*bank - *edited.bank);
+				value = std::clamp<int64_t>(to, 0, g_maxBank);
+			}
+			changes[{row->part, "controller.set"}].push_back({{"id", row->id}, {"bank", value}});
+		}
+		edit(std::move(changes));
 	}
 
 	// Draws an event of the Insert Event Type (p. 1254): a note of the length quantize's length and the insert
@@ -941,7 +1004,7 @@ namespace gnubase::ui
 		for (const Row* row : selectedRows())
 			if (row->editable)
 				changes[{row->part, row->isNote() ? "note.remove" : "controller.remove"}].push_back(row->id);
-		edit("Delete", std::move(changes));
+		edit(std::move(changes));
 	}
 
 	void ListEditor::openArticulationMenu(const Row& row)
@@ -971,7 +1034,7 @@ namespace gnubase::ui
 				{{"id", row->id}, {"articulations", toggleAttribute(*map, row->articulations, name)}});
 		else if (name != row->articulation)
 			changes[{row->part, "controller.set"}].push_back({{"id", row->id}, {"articulation", name}});
-		edit("Change Articulations", std::move(changes));
+		edit(std::move(changes));
 	}
 
 	void ListEditor::click(Rml::Element& target, bool ctrl)
@@ -1321,7 +1384,7 @@ namespace gnubase::ui
 				changes[{row.part, row.isNote() ? "note.set" : "controller.set"}].push_back(change);
 			}
 			m_values.clear();
-			edit("Change values", std::move(changes));
+			edit(std::move(changes));
 		}
 		else if (gesture == Gesture::Resize && m_pressed)
 		{
@@ -1334,7 +1397,7 @@ namespace gnubase::ui
 				if (row->editable && row->isNote() && delta != 0)
 					changes[{row->part, "note.set"}].push_back(
 						{{"id", row->id}, {"length", std::max<int64_t>(row->length + delta, 1)}});
-			edit("Resize", std::move(changes));
+			edit(std::move(changes));
 		}
 		else if (gesture == Gesture::Move && m_pressed)
 		{
@@ -1366,7 +1429,7 @@ namespace gnubase::ui
 				copied["position"] = position;
 				changes[{row->part, row->isNote() ? "note.add" : "controller.add"}].push_back(std::move(copied));
 			}
-			edit(m_copy ? "Copy" : "Move", std::move(changes));
+			edit(std::move(changes));
 		}
 	}
 }

@@ -259,6 +259,8 @@ TEST_CASE("the in-place editor edits notes as the key editor does, and the event
 		[](const Json& each) { return each.at("pitch") == 62 && each.at("position") == 2 * g_quarter; }));
 
 	// With the toolbar shown, the draw tool draws a note at the snapped time.
+	// The toolbar wraps to three rows in Linux CI's 1024 pixels wide window: a taller lane keeps rows for the notes.
+	f.display.setTrackHeight(f.track, 300);
 	f.click(f.triangle());
 	f.click(f.editor() + " .key-tool[key-tool=draw]");
 	REQUIRE(f.has(f.editor() + " .key-tool[key-tool=draw]", "checked"));
@@ -1034,6 +1036,8 @@ TEST_CASE("with Acoustic Feedback an in-place editor plays the notes it moves an
 	f.scroll(61);
 
 	// The toolbar's button turns it on.
+	// The toolbar wraps to three rows in Linux CI's 1024 pixels wide window: a taller lane keeps rows for the notes.
+	f.display.setTrackHeight(f.track, 300);
 	f.click(f.triangle());
 	f.click(f.editor() + " .key-input[setting=acousticFeedback]");
 	REQUIRE(f.app.waitUntil([&] { return f.view().at("acousticFeedback") == true; }));
@@ -1220,6 +1224,8 @@ TEST_CASE(
 	f.display.zoomIn(); // once: after a second step the note lies outside the 1024 pixels wide window of Linux CI
 	f.settle(2);
 	f.display.select({otherPart});
+	// The toolbar wraps to three rows in Linux CI's 1024 pixels wide window: a taller lane keeps rows for the notes.
+	f.display.setTrackHeight(f.track, 300);
 	f.click(f.triangle());
 	f.settle(2);
 	f.scroll(60);
@@ -1390,4 +1396,30 @@ TEST_CASE("an in-place editor joins a dense note's expression steps by its pixel
 	f.display.zoomIn();
 	f.settle(2);
 	CHECK(linesFit() > before * 1.5);
+}
+
+TEST_CASE("an in-place editor's toolbar has Indicate Transpositions", "[ui]")
+{
+	// Indicate Transpositions in the in-place editor's toolbar (#1766, reference manual p. 1260): the part follows a
+	// project root key of D from its own C, so its notes show 2 rows up.
+	Fixture f;
+	f.app.call("project.set", {{"rootKey", "D"}});
+	f.app.call("midiPart.set", {{"part", f.part}, {"rootKey", "C"}});
+	f.app.call("editor.inPlace", {{"tracks", {f.track}}, {"open", true}});
+	f.settle(2);
+	f.click(f.triangle());
+	f.click(f.editor() + " .key-input[setting=indicateTranspositions]");
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("indicateTranspositions") == true; }));
+	f.scroll(63);
+	const auto on = [&f](uint64_t id, int64_t ticks, int pitch)
+	{
+		const Json found = f.elements(f.note(id));
+		if (found.empty())
+			return false;
+		const auto y = static_cast<double>(f.at(ticks, pitch).point.value_or(ui::Point{}).y);
+		const Json shown = found.at(0).at("box");
+		return shown.at("y").get<double>() <= y && y <= shown.at("y").get<double>() + shown.at("height").get<double>();
+	};
+	CHECK(
+		f.app.waitUntil([&] { return on(f.notes[0], g_bar + 10, 62) && on(f.notes[1], g_bar + g_quarter + 10, 66); }));
 }

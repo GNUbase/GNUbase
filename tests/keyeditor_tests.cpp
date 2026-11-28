@@ -5,14 +5,22 @@
 #include "engine/engine.h"
 #include "engine/midi/chords.h"
 #include "engine/time/tempomap.h"
+#include "platform/audio/device.h"
+#include "platform/hosttime.h"
+#include "platform/midi/dummyport.h"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <chrono>
+#include <cstdint>
+#include <functional>
+#include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -32,9 +40,21 @@ namespace
 		return chord ? chord->name() : "none";
 	}
 
+	// Only the dummy MIDI backend, so that step input, which listens to the MIDI inputs, opens no real ones.
+	std::vector<std::unique_ptr<midi::Backend>> dummyMidi(midi::DummyBackend** backend = nullptr)
+	{
+		auto dummy = std::make_unique<midi::DummyBackend>();
+		if (backend != nullptr)
+			*backend = dummy.get();
+		std::vector<std::unique_ptr<midi::Backend>> backends;
+		backends.push_back(std::move(dummy));
+		return backends;
+	}
+
 	struct Fixture
 	{
-		Fixture()
+		explicit Fixture(std::vector<std::unique_ptr<midi::Backend>> midiBackends = dummyMidi())
+			: engine(audio::makeBackends(), {}, std::move(midiBackends))
 		{
 			track = call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
 			part = call("midiPart.add", {{"track", track}, {"position", 4 * g_quarter}, {"length", 4 * g_quarter}})
@@ -401,6 +421,45 @@ TEST_CASE("the key editor's Acoustic Feedback is view state and off at first", "
 	CHECK(!f.fails("editor.set", {{"editor", "window"}, {"acousticFeedback", "on"}}).empty());
 }
 
+TEST_CASE("Indicate Transpositions gives the transposition the parts' notes play with", "[unit]")
+{
+	// Indicate Transpositions (#1766, reference manual pp. 419, 1260): off at first, without transpositions.
+	Fixture f;
+	CHECK(f.view().at("indicateTranspositions") == false);
+	CHECK(f.view().at("transpositions") == Json::array());
+	const int64_t revision = f.call("project.revision").at("revision").get<int64_t>();
+	const auto steps = [&f]
+	{
+		const Json shown = f.call("editor.set", {{"editor", "window"}, {"indicateTranspositions", true}});
+		REQUIRE(shown.at("transpositions").size() == 1);
+		CHECK(shown.at("transpositions").at(0).at("part") == f.part);
+		return shown.at("transpositions").at(0).at("steps");
+	};
+	const auto step = [](int64_t position, int semitones)
+	{ return Json{{"position", position}, {"semitones", semitones}}; };
+	CHECK(steps() == Json::array({step(4 * g_quarter, 0)}));
+	CHECK(f.call("project.revision").at("revision").get<int64_t>() == revision); // no undo step
+
+	// A transpose event within the part, one before it and one after it; the root key's step and the part's own
+	// transpose add to them.
+	f.call("transpose.add", {{"position", 6 * g_quarter}, {"value", 3}});
+	f.call("transpose.add", {{"position", 0}, {"value", -1}});
+	f.call("transpose.add", {{"position", 8 * g_quarter}, {"value", 7}});
+	CHECK(steps() == Json::array({step(4 * g_quarter, -1), step(6 * g_quarter, 3)}));
+	f.call("project.set", {{"rootKey", "D"}});
+	f.call("midiPart.set", {{"part", f.part}, {"rootKey", "C"}, {"transpose", 12}});
+	CHECK(steps() == Json::array({step(4 * g_quarter, 13), step(6 * g_quarter, 17)}));
+	// Muted transpose events leave the rest, which no longer changes within the part.
+	f.call("transpose.setTrack", {{"mute", true}});
+	CHECK(steps() == Json::array({step(4 * g_quarter, 14)}));
+	f.call("midiPart.set", {{"part", f.part}, {"globalTranspose", "independent"}});
+	CHECK(steps() == Json::array({step(4 * g_quarter, 12)}));
+
+	f.call("editor.set", {{"editor", "window"}, {"indicateTranspositions", false}});
+	CHECK(f.view().at("transpositions") == Json::array());
+	CHECK(!f.fails("editor.set", {{"editor", "window"}, {"indicateTranspositions", "on"}}).empty());
+}
+
 TEST_CASE("the note expression settings of the key editor are view state", "[unit]")
 {
 	Fixture f;
@@ -420,4 +479,133 @@ TEST_CASE("the note expression settings of the key editor are view state", "[uni
 	CHECK(f.view().at("expressionType") == "brightness");
 	CHECK(f.call("project.revision").at("revision").get<int64_t>() == revision); // no undo step
 	CHECK(!f.fails("editor.set", {{"editor", "window"}, {"expressionType", "loudness"}}).empty());
+}
+
+TEST_CASE("the MIDI editors' event colors are view state", "[unit]")
+{
+	// The Event Colors menu (reference manual pp. 1133-1134): the theme's note colors at first, Part or Sound Slot.
+	Fixture f;
+	CHECK(f.view().at("eventColors") == "default");
+	const int64_t revision = f.call("project.revision").at("revision").get<int64_t>();
+	CHECK(f.call("editor.set", {{"editor", "window"}, {"eventColors", "part"}}).at("eventColors") == "part");
+	CHECK(f.call("editor.set", {{"editor", "window"}, {"eventColors", "soundSlot"}}).at("eventColors") == "soundSlot");
+	CHECK(f.view().at("eventColors") == "soundSlot");
+	CHECK(f.call("project.revision").at("revision").get<int64_t>() == revision); // no undo step
+	CHECK(!f.fails("editor.set", {{"editor", "window"}, {"eventColors", "rainbow"}}).empty());
+}
+
+TEST_CASE("notes played on the MIDI inputs go into step input as chords once all their keys are up", "[unit]")
+{
+	// Reference manual pp. 1219-1220: editor.played, as midi.activity posts it.
+	Fixture f;
+	const auto played = [&f](const std::vector<std::vector<int>>& messages, bool inAllInputs = true)
+	{
+		Json received = Json::array();
+		for (const std::vector<int>& bytes : messages)
+			received.push_back({{"bytes", bytes}, {"inAllInputs", inAllInputs}});
+		return f.call("editor.played", {{"received", received}}).at("chords");
+	};
+	// Off, nothing goes in.
+	CHECK(played({{0x90, 60, 127}, {0x80, 60, 0}}).empty());
+	f.call("editor.set", {{"editor", "window"}, {"stepInput", true}, {"lengthQuantize", "1/16"}});
+	// A chord: the keys pressed until all are up, with their note-on and note-off velocities.
+	CHECK(played({{0x90, 64, 127}, {0x91, 60, 0x40}, {0x80, 64, 127}}).empty());
+	const Json chords = played({{0x90, 60, 0}});
+	REQUIRE(chords.size() == 1);
+	CHECK(chords[0].size() == 2);
+	f.call("editor.set", {{"editor", "window"}, {"recordReleaseVelocity", true}}); // after the chord went in
+	// A port outside all MIDI inputs plays nothing in; then a note.
+	CHECK(played({{0x90, 50, 100}, {0x80, 50, 0}}, false).empty());
+	CHECK(played({{0x90, 67, 100}, {0xB0, 64, 127}, {0x80, 67, 0}}).size() == 1);
+	const Json notes = f.partNotes();
+	REQUIRE(notes.size() == 3);
+	CHECK(notes[0].at("pitch") == 60);
+	CHECK(notes[0].at("velocity").get<double>() == Approx(64.0 / 127.0).margin(1e-4));
+	CHECK(notes[1].at("pitch") == 64);
+	CHECK(notes[1].at("velocity") == 1.0);
+	CHECK(notes[2].at("position") == g_sixteenth);
+	CHECK(notes[2].at("pitch") == 67);
+	CHECK(notes[2].at("releaseVelocity") == 0.0);
+	CHECK(f.call("history.get").at("steps").back().at("action") == "Note input");
+	// Each chord is an undo step of its own.
+	f.call("history.undo");
+	CHECK(f.partNotes().size() == 2);
+}
+
+TEST_CASE("a MIDI keyboard plays into the key editor whose step or MIDI input went on last", "[integration]")
+{
+	// Reference manual pp. 1219-1220.
+	midi::DummyBackend* backend = nullptr;
+	Fixture f(dummyMidi(&backend));
+	backend->addLoopback("Keys");
+	backend->addLoopback("Surface"); // a control surface, outside all MIDI inputs
+	f.call("audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}});
+	f.call("midi.ports"); // opens the inputs
+	f.call("midi.setPort", {{"id", "Surface"}, {"input", true}, {"inAllInputs", false}});
+	const std::unique_ptr<midi::Output> keys = backend->openOutput("Keys");
+	const std::unique_ptr<midi::Output> surface = backend->openOutput("Surface");
+	const auto sendTo = [](midi::Output& output, uint8_t status, uint8_t pitch, uint8_t velocity)
+	{
+		audio::MidiMessage message;
+		message.size = 3;
+		message.bytes = {status, pitch, velocity};
+		constexpr HostTime second = 1000000000;
+		output.send(message, hostTime() - second);
+	};
+	const auto send = [&keys, &sendTo](uint8_t status, uint8_t pitch, uint8_t velocity)
+	{ sendTo(*keys, status, pitch, velocity); };
+	// Renders until the condition holds: offline the test runs midi.activity, which the engine runs itself while a
+	// device runs; it posts editor.played, which posts editor.input.
+	const auto until = [&f](const std::function<bool()>& condition)
+	{
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+		while (std::chrono::steady_clock::now() < deadline)
+		{
+			f.call("audio.render", {{"frames", 64}});
+			f.call("midi.activity");
+			if (condition())
+				return true;
+			std::this_thread::sleep_for(std::chrono::milliseconds(5));
+		}
+		return false;
+	};
+	const std::vector<uint64_t> ids = f.notes({{0, 60}, {g_sixteenth, 62}});
+	f.call("editor.set", {{"editor", "window"}, {"midiInput", true}, {"selection", f.selection({ids[0]})}});
+	// The lower zone's editor turned its step input on last: notes go there.
+	f.call("editor.open", {{"editor", "lower"}, {"parts", Json::array({f.part})}});
+	f.call("editor.set", {{"editor", "lower"}, {"stepInput", true}});
+	f.call("editor.set", {{"editor", "lower"}, {"stepPosition", 5 * g_quarter}});
+	send(0x90, 72, 100);
+	send(0x80, 72, 0);
+	CHECK(until([&f] { return f.partNotes().size() == 3; }));
+	CHECK(f.partNotes()[2].at("pitch") == 72);
+	CHECK(f.partNotes()[2].at("position") == g_quarter);
+	// Its step input off, the window's MIDI input takes them: the selected note gets the pitch.
+	f.call("editor.set", {{"editor", "lower"}, {"stepInput", false}});
+	send(0x90, 48, 100);
+	send(0x80, 48, 0);
+	CHECK(until([&f, &ids] { return f.pitches({ids[0]}) == std::vector<int>{48}; }));
+	CHECK(f.view().at("selection") == f.selection({ids[1]}));
+	// With both off, the editors stop listening: what is played then goes nowhere, not into the next input.
+	f.call("editor.set", {{"editor", "window"}, {"midiInput", false}});
+	send(0x90, 50, 100);
+	send(0x80, 50, 0);
+	f.call("audio.render", {{"frames", 64}});
+	f.call("editor.set", {{"editor", "window"}, {"midiInput", true}});
+	// The control surface's notes go nowhere either: had they gone in, the selected note would get 55, not 52.
+	sendTo(*surface, 0x90, 55, 100);
+	sendTo(*surface, 0x80, 55, 0);
+	bool surfaceReceived = false; // in before the keys' note, so that it would go into the selected note first
+	for (int tries = 0; tries < 2000 && !surfaceReceived; ++tries)
+	{
+		f.call("audio.render", {{"frames", 64}});
+		surfaceReceived = !f.call("midi.activity").at("received").empty();
+		if (!surfaceReceived)
+			std::this_thread::sleep_for(std::chrono::milliseconds(5));
+	}
+	CHECK(surfaceReceived);
+	send(0x90, 52, 100);
+	send(0x80, 52, 0);
+	CHECK(until([&f, &ids] { return f.pitches({ids[1]}) == std::vector<int>{52}; }));
+	CHECK(f.partNotes().size() == 3);
 }

@@ -179,7 +179,8 @@ namespace gnubase::engine
 			{"sampler.create", 1,
 				"Creates a sampler track (reference manual pp. 143-144, 711): an instrument track whose channel plays "
 				"the built-in sampler, named name (default: Sampler and a number), at the end of the track list or as "
-				"track.add places it with parent and index, playing into output as track.add's does. " +
+				"track.add places it with parent and index, playing into output as track.add's does, from midiInput as "
+				"channel.set's (default all, p. 144). " +
 					sectionText +
 					" Without a sample it starts empty. The sample's start and end are the sampler's Start and End "
 					"parameters, shares of the clip. Emits track.added and channel.changed, and for path media.added, "
@@ -187,7 +188,7 @@ namespace gnubase::engine
 					"its channel.",
 				objectSchema({{"event", integer}, {"clip", integer}, {"path", {{"type", "string"}}}, {"start", integer},
 					{"end", integer}, {"name", {{"type", "string"}}}, {"parent", integer}, {"index", integer},
-					{"output", integer}}),
+					{"output", integer}, {"midiInput", {{"type", "string"}, {"enum", {"all", "chordPads", "none"}}}}}),
 				resultSchema, false},
 			"Create sampler track",
 			[&model](Project& project, CommandContext& context)
@@ -206,6 +207,7 @@ namespace gnubase::engine
 				Channel& channel = project.channels.at(added.at("channel").at("id").get<ObjectId>());
 				if (sample)
 					load(channel, section);
+				channel.midiInput = parameters.value("midiInput", channel.midiInput);
 				return result(project, channel, context);
 			});
 

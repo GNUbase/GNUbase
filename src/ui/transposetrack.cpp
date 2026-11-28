@@ -18,6 +18,7 @@
 #include <array>
 #include <cmath>
 #include <string>
+#include <tuple>
 
 namespace gnubase::ui
 {
@@ -603,6 +604,12 @@ namespace gnubase::ui
 		const std::optional<std::pair<uint64_t, float>> drag = std::exchange(m_drag, std::nullopt);
 		if (!drag)
 			return;
+		if (m_kind == LaneKind::Arranger && m_edge == Edge::None && dropOutside(event, drag->first))
+		{
+			m_moved.reset();
+			place();
+			return;
+		}
 		const double dx = (mouseX - drag->second) / ratio;
 		const Event* moved = find(drag->first);
 		if (!moveTo(drag->first, dx) || !m_moved || moved == nullptr)
@@ -659,6 +666,35 @@ namespace gnubase::ui
 					{{{"event", found.id},
 						{"position", nearestBar(seconds(found.start) + (dx * m_display.view().scale))}}}}},
 				answered);
+	}
+
+	bool GlobalEventLane::dropOutside(Rml::Event& event, uint64_t dragged)
+	{
+		Rml::Element* target = event.GetTargetElement();
+		for (const Rml::Element* up = target; up != nullptr; up = up->GetParentNode())
+			if (up == m_element.get())
+				return false;
+		if (target == nullptr)
+			return false;
+		std::vector<const Event*> dropped;
+		if (std::find(m_selection.begin(), m_selection.end(), dragged) != m_selection.end())
+		{
+			for (const uint64_t id : m_selection)
+				if (const Event* each = find(id))
+					dropped.push_back(each);
+		}
+		else if (const Event* each = find(dragged))
+		{
+			dropped.push_back(each);
+		}
+		std::sort(dropped.begin(), dropped.end(),
+			[](const Event* a, const Event* b) { return std::tie(a->start, a->id) < std::tie(b->start, b->id); });
+		std::string ids;
+		for (const Event* each : dropped)
+			ids += (ids.empty() ? "" : " ") + std::to_string(each->id);
+		const Rml::Dictionary parameters = {
+			{"events", Rml::Variant(ids)}, {"mouse_y", Rml::Variant(event.GetParameter<float>("mouse_y", 0.0F))}};
+		return !ids.empty() && !target->DispatchEvent(g_arrangerDrop, parameters);
 	}
 
 	std::pair<double, double> GlobalEventLane::drawn(double from, double dx) const

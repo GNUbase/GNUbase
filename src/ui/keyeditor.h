@@ -2,6 +2,7 @@
 #pragma once
 
 #include "engine/engine.h"
+#include "ui/cursors.h"
 #include "ui/enginebinding.h"
 
 #include <RmlUi/Core/EventListener.h>
@@ -12,6 +13,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -181,10 +183,10 @@ namespace gnubase::ui
 		// one undo step. A part that gives only controller events sends a note.move with no notes.
 		void moveToInPlace(const Rml::Event& event, Rml::Element& grid, uint64_t track);
 		// What a press on a note's box starts: a resize near its ends, else a move.
-		Gesture edgeGesture(Rml::Element* target, const Rml::Event& event) const;
-		// The note display's pointer for where the mouse is (docs/features/pointers.md): resize where a press resizes
-		// a note, else the tool's.
-		void showPointer(Rml::Event& event);
+		Gesture edgeGesture(Rml::Element* target, float mouseX) const;
+		// The note display's pointer for where the mouse is (docs/features/pointers.md), over the element at the x in
+		// the window, with the modifiers held: resize where a press resizes a note, else the tool's.
+		void showPointer(Rml::Element& target, float mouseX, HeldModifiers keys);
 		// Starts drawing a note at the snapped position under the press, as the draw tool's press does.
 		void startDraw(double ticks);
 		// Takes the drawn note out of the grid, into m_removedDrawn.
@@ -237,6 +239,8 @@ namespace gnubase::ui
 		// shows their points of the view's expressionType.
 		void renderExpression();
 		std::pair<int64_t, int64_t> expressionSpan() const;
+		// Whether the note expression setup of a part's track hides an expression (#2120, p. 1301).
+		bool expressionHidden(uint64_t part, const std::string& type) const;
 		// The draw tool's points or the erase tool's sweep at the mouse in the expression editor.
 		void paint(const Rml::Event& event);
 		// Ends its gesture: the selected notes it reached get the points it drew in the range it swept, as
@@ -267,6 +271,8 @@ namespace gnubase::ui
 		void editSound(int pitch, const std::string& field, const std::string& text);
 		void place(Rml::Element& element, int64_t start, int64_t length, int pitch) const;
 		std::string partsRml() const;
+		void noteColors(const std::string& colors, const engine::Json& part, const engine::Json& track,
+			const std::map<uint64_t, const engine::Json*>& maps);
 
 		// The note display's point under the mouse: project ticks and pitch.
 		std::pair<double, int> at(const Rml::Event& event) const;
@@ -281,6 +287,11 @@ namespace gnubase::ui
 		static int64_t soundSnap(const engine::Json& map, int pitch); // a drum sound's snap, in ticks
 		// The length of new notes of the pitch: with Drum-Map Link its sound's snap.
 		int64_t lengthQuantize(int pitch) const;
+		// Indicate Transpositions (#1766, reference manual pp. 419, 1260): the semitones the view's transpositions give
+		// a part's notes at the ticks, 0 while it is off and in the drum editor. The note display shows each note at
+		// its pitch shown, which a drawn note's pitch has under the mouse; edits move the pitch by the rows dragged.
+		int transposition(uint64_t part, int64_t ticks) const;
+		int shownPitch(const Note& note) const;
 		// The pitch rows away from pitch in the display's order, or -1 beyond its ends.
 		int shifted(int pitch, int rows) const;
 		const Note* note(uint64_t part, uint64_t id) const;
@@ -344,8 +355,13 @@ namespace gnubase::ui
 		std::optional<std::pair<int64_t, int64_t>> m_range; // setTimeRange's
 		const time::TempoMap* m_tempo = nullptr;            // and its tempo map
 		bool m_scrolled = false;
-		std::string m_notesRml;      // the notes' elements as last set
-		std::string m_expressionRml; // the expression editor's lines as last set
+		std::string m_notesRml; // the notes' elements as last set
+		// The notes' colors that the Event Colors menu chooses (pp. 1133-1134), by part and note: none for the style
+		// sheets' color.
+		std::map<std::pair<uint64_t, uint64_t>, std::string> m_noteColors;
+		std::string m_expressionRml;                                    // the expression editor's lines as last set
+		std::set<std::pair<uint64_t, std::string>> m_hiddenExpressions; // by part, as its track's setup hides them
+		std::string m_expressionItems;                                  // Parameter Selection's items as last set
 
 		Gesture m_gesture = Gesture::None;
 		std::pair<double, int> m_pressedAt;
@@ -372,7 +388,8 @@ namespace gnubase::ui
 		std::vector<Rml::ObserverPtr<Rml::Element>> m_menus;
 		std::string m_lineMode = "line"; // the line tool's (#128)
 		std::unique_ptr<ControllerLanes> m_lanes;
-		bool m_expressionOpen = false;                  // the expression editor (p. 1308)
+		float m_mouseX = 0.0F;         // the last mouse move's x in the window, for showPointer while the mouse rests
+		bool m_expressionOpen = false; // the expression editor (p. 1308)
 		std::pair<uint64_t, uint64_t> m_expressionNote; // the note double-clicked to open it: part, id
 		float m_expressionWide = 0.0F;       // the grid's width placeExpression placed it for, which fitLines follows
 		std::map<int64_t, double> m_painted; // the draw tool's points in it, project ticks

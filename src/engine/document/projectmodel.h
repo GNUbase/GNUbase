@@ -101,15 +101,6 @@ namespace gnubase::engine
 	// part copies of its events, and a copy without others is no longer shared.
 	void syncSharedParts(const SharedParts& before, Project& project, CommandContext& context);
 
-	// Cutting a range in a cycle marker (markers.cpp, reference manual p. 425), for range.cut and range.delete: the
-	// part of the range from start to end (project samples) is taken out of each cycle marker on the marker tracks
-	// among tracks that the range lies in without covering it whole. One that starts or ends with the range gets
-	// shorter; one that it lies inside otherwise is split in two, the part after the range a new cycle marker with the
-	// first free number, the same name and color. Position markers stay, as do cycle markers that the range covers
-	// whole or reaches out of.
-	void cutCycleMarkers(Project& project, time::Samples start, time::Samples end, const std::vector<ObjectId>& tracks,
-		CommandContext& context);
-
 	// What range.copy and range.cut keep for range.paste (eventedits.cpp): the events, parts and automation of a
 	// selection range, cut at its edges, or the events and parts they name whole, where they were. Not part of the
 	// project or of undo.
@@ -330,6 +321,12 @@ namespace gnubase::engine
 		// Why the last auto save failed, without its file, if it did since one succeeded or the project was saved or
 		// opened: a due auto save that fails for the same reason again is quiet.
 		std::optional<std::string> m_autoSaveFailure;
+		// The series an untitled project's auto saves are numbered in, "Untitled2" for Untitled2-01.bak, chosen at its
+		// first auto save, and the project name, as a file name, that it was chosen for; empty until then (#635).
+		std::string m_autoSaveSeries;
+		std::string m_autoSaveSeriesName;
+		// For a project opened from the auto save of a project file, that file (project.location's autoSaveOf).
+		std::string m_autoSaveOf;
 		std::filesystem::path m_settingsDirectory; // the user settings' folder, empty without one
 		std::shared_ptr<settings::Store> m_recent; // the recent projects
 		bool m_automationFollowsEvents = false;    // a setting, not part of the project

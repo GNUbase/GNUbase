@@ -685,6 +685,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         # The chain steps selected, for Remove Selected
         (".arranger-row.selected", {"background-color": mix(c["surface"], c["accent"], .25)}),
         ("listview thead td.sorted", {"color": c["accent"]}),
+        ("listview thead td .sort-arrow", {"decorator": skin("dropdown-arrow")}),
         # Tabs
         ("tabset tabs", {"decorator": skin("tabbar")}),
         ("tabset tab", {"decorator": skin("tab-normal"), "color": c["textMuted"]}),
@@ -980,6 +981,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".mixer-channel", {"border-right-width": f"{widths['hairline']}dp", "border-right-color": c["border"]}),
         (".mixer-channel-name.colored", {"color": "#ffffff", "border-radius": f"{theme['radii']['small']}dp"}),
         (".mixer-channel-name.colored.bright", {"color": "#000000"}),
+        # The channel meters' scale marks, small enough that each fits between its neighbors
+        (".mixer-meter-scale span", {"font-size": "8dp"}),
         # The MIDI editors (docs/features/midi-editors.md): parts outside the part editing mode dimmed, the active part
         # and track lit, and the Visibility tab's checks: a check mark, or a rectangle while some parts show
         (".midi-editor .editor-part, .in-place-editor .editor-part",

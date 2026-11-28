@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Changing the notes and controllers of a MIDI part (#27): note.set and controller.set, the key editor's split and
 // glue tools (#1419): note.split and note.glue, its chord editing (#127): note.chord and note.voicing, and a track's
-// note expression setup (#1513): noteExpression.set, and Convert to Note Expression (#1515): noteExpression.convert.
+// note expression setup (#1513, #2120): noteExpression.set, and Convert to Note Expression (#1515):
+// noteExpression.convert.
 // Like every command that changes the project, each is one undo step and changes nothing if it fails
 // (ProjectModel::add).
 #include "engine/document/document.h"
@@ -19,6 +20,7 @@
 #include <iterator>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -137,8 +139,13 @@ namespace gnubase::engine
 			const auto channel = midi ? project.channels.find(track->second.channel) : project.channels.end();
 			require(channel != project.channels.end(), "no MIDI or instrument track " + std::to_string(id));
 			NoteExpressionSetup& setup = channel->second.noteExpression;
+			const std::set<plugin::NoteExpression> hidden = setup.hidden;
 			setup = noteExpressionFromJson(parameters, setup, false);
 			context.emit("channel.changed", {{"channel", toJson(channel->second)}});
+			// The editors show the notes without the hidden expressions (#2120): not a step of channels only, which
+			// they need not read the project for (ui::changedOnly).
+			if (setup.hidden != hidden)
+				context.emit("noteExpression.changed", {{"track", id}, {"noteExpression", toJson(setup)}});
 			return {{"track", id}, {"noteExpression", toJson(setup)}};
 		}
 
@@ -676,16 +683,21 @@ namespace gnubase::engine
 				"expression points, and each of inputs sets an expression's input assignment, the MIDI message "
 				"mapped to it (input: none, pitchBend, aftertouch or cc0 to cc127, as midi.setPort names them) and "
 				"the range of the expression's values that it goes over, min and max in the expression's unit and "
-				"range (see note.add), min above max for a reversed one. What a call leaves out stays as it was. "
+				"range (see note.add), min above max for a reversed one. hidden lists the expressions the "
+				"inspector's visibility hides from the key editor's note expression editor and its notes (all of "
+				"them visible by default). What a call leaves out stays as it was. "
 				"The setup belongs to the track and is saved with the project; project.get lists it as the "
 				"channel's noteExpression, whose inputs are the expressions that have a message or a range other "
 				"than the whole one. Refuses, changing nothing, a track that is no MIDI or instrument track, unknown "
-				"expressions and messages and values out of range. Emits channel.changed. Returns the track and its "
+				"expressions and messages and values out of range. Emits channel.changed, and noteExpression.changed "
+				"with the track and its setup when hidden changes. Returns the track and its "
 				"setup.",
 				{{"type", "object"}, {"additionalProperties", false}, {"required", {"track"}},
 					{"properties",
 						{{"track", integer}, {"bypass", {{"type", "boolean"}}},
-							{"inputs", {{"type", "array"}, {"items", expressionInput}}}}}},
+							{"inputs", {{"type", "array"}, {"items", expressionInput}}},
+							{"hidden",
+								{{"type", "array"}, {"items", {{"type", "string"}, {"enum", g_expressionNames}}}}}}}},
 				{{"type", "object"}, {"required", {"track", "noteExpression"}},
 					{"properties", {{"track", integer}, {"noteExpression", {{"type", "object"}}}}}},
 				false},

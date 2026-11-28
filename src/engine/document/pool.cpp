@@ -15,9 +15,9 @@
 #include "engine/jobs/jobs.h"
 #include "engine/media/backup.h"
 #include "platform/files.h"
+#include "platform/text.h"
 
 #include <algorithm>
-#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -85,14 +85,6 @@ namespace gnubase::engine
 			std::sort(ids.begin(), ids.end());
 			ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
 			return ids;
-		}
-
-		// Folds ASCII letters to lower case; other characters stay as they are.
-		std::string lower(std::string text)
-		{
-			std::transform(text.begin(), text.end(), text.begin(),
-				[](char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); });
-			return text;
 		}
 
 		void requireFolder(const Project& project, ObjectId folder)
@@ -361,7 +353,7 @@ namespace gnubase::engine
 				if (entry.depth() == 0)
 					++begun;
 				std::error_code ignored; // a file that can't be looked at isn't one to relink
-				if (std::string name = lower(entry->path().filename().u8string());
+				if (std::string name = text::asciiLower(entry->path().filename().u8string());
 					names.count(name) != 0 && entry->is_regular_file(ignored))
 					files.emplace(std::move(name), entry->path());
 				if (throttle.due())
@@ -381,7 +373,7 @@ namespace gnubase::engine
 		{
 			std::set<std::string> names;
 			for (const Sought& media : sought)
-				names.insert(lower(fs::u8path(media.path).filename().u8string()));
+				names.insert(text::asciiLower(fs::u8path(media.path).filename().u8string()));
 			const std::multimap<std::string, fs::path> files =
 				sought.empty() ? std::multimap<std::string, fs::path>() : filesInside(folder, names, job);
 			Json relink = Json::array();
@@ -395,7 +387,7 @@ namespace gnubase::engine
 				job.progress(
 					g_walkShare + ((1.0 - g_walkShare) * static_cast<double>(i) / static_cast<double>(sought.size())),
 					name);
-				const auto [first, last] = files.equal_range(lower(name));
+				const auto [first, last] = files.equal_range(text::asciiLower(name));
 				std::vector<fs::path> candidates;
 				for (auto file = first; file != last; ++file)
 					candidates.push_back(file->second);
@@ -727,7 +719,7 @@ namespace gnubase::engine
 			if (!projectFile.empty())
 			{
 				const fs::path file = fs::u8path(projectFile);
-				folders.push_back(file.parent_path() / fs::u8path(file.stem().u8string() + " media"));
+				folders.push_back(extractedMediaFolderFor(file));
 				if (fs::exists(file, error) || error)
 					useFile(file);
 			}

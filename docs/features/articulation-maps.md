@@ -284,8 +284,8 @@ removed).
 The mute tool on notes and on controller events other than directions, which have no mute yet (#679); the
 project window's info line for the in-place editor's notes; playback techniques, aliases and fallbacks,
 symbols, categories and Add Custom Articulation, articulation combinations beyond one per group; a slot's length for
-the notes played into a track, which aren't known to end yet; Sound Slot event colors, which wait for the MIDI
-editors' event colors menu (p. 1133, [colors.md](colors.md)); the slot actions Rename and Reset Color (the slots'
+the notes played into a track, which aren't known to end yet; the list editor's Sound Slot event colors (the key, drum
+and in-place editors have them, [colors.md](colors.md)); the slot actions Rename and Reset Color (the slots'
 names and colors are typed or set through `articulationMap.set`), the keyboard preview and assigning triggers from a
 MIDI keyboard; the sound slot actions as a menu and Transpose All and Reassign All as dialogs of their own (they are
 rows of the setup); changing several maps' remote trigger mode and latch at once; Import Key Switches from the

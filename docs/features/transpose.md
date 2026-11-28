@@ -107,6 +107,9 @@ holds, are #1735.
 - **The track list** has the transpose track's controls by default (`ui.trackControls` `transpose`): Mute Transpose
   Events (`transposeMute`), Keep Transpose in Octave Range (`keepInOctave`), Switch Time Base and Lock
   (`transposeLock`).
+- **Indicate Transpositions** in the key editor's and the in-place editor's toolbar (#1766, pp. 419, 1260) shows the
+  notes at the pitches `globalTranspose` gives them, from the editor view's `transpositions`
+  ([key-editor.md](key-editor.md)).
 - **Add Track** has Transpose, once per project.
 - **Refused edits**: the event display shows why the engine refused an edit, such as a glue of parts that follow global
   transpose differently, in its notification `#edit-refused` (#1367, [event-display.md](event-display.md)).
@@ -155,5 +158,5 @@ key shown changes and after its undo.
 
 Ready-made events tagged as drums or effects set to Independent (p. 421), which waits for media files to have tags (the
 media browser, #196, then #1735); live
-MIDI input through the transpose track; Indicate Transpositions in the key editor; the transpose track's controls in the
+MIDI input through the transpose track; the transpose track's controls in the
 track controls dialog; selecting several transpose events and the Delete key.

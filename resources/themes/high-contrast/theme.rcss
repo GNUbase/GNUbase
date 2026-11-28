@@ -153,6 +153,10 @@
 	{
 		color: #ffff00;
 	}
+	listview thead td .sort-arrow
+	{
+		decorator: svg(dropdown-arrow.svg);
+	}
 	tabset tabs
 	{
 		decorator: svg-ninepatch(tabbar.svg, 6 6 6 6);
@@ -943,6 +947,10 @@
 	.mixer-channel-name.colored.bright
 	{
 		color: #000000;
+	}
+	.mixer-meter-scale span
+	{
+		font-size: 8dp;
 	}
 	.midi-editor .editor-part, .in-place-editor .editor-part
 	{

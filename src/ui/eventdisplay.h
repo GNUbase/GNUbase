@@ -576,7 +576,7 @@ namespace gnubase::ui
 		void showNamesAndContents(const std::vector<EventLanes::Lane>& lanes);
 		void setTreatMutedAudioLikeDeleted(bool on); // editing.treatMutedAudioLikeDeleted
 		void setLanes();
-		void followTransport(const engine::Json& status);
+		void followTransport(const engine::Json& status, engine::RequestId request = 0);
 		void setCursor(int64_t sample);
 		void follow();
 
@@ -1076,6 +1076,7 @@ namespace gnubase::ui
 		bool m_loading = false;
 		bool m_stale = false;
 		int64_t m_cursorSample = 0;
+		engine::RequestId m_nudged = 0; // the newest Nudge Cursor's transport.locate
 		double m_cursor = 0.0;
 		bool m_playing = false;
 

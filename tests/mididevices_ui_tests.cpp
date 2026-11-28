@@ -359,6 +359,106 @@ TEST_CASE("the MIDI device manager edits banks and presets only with Enable Edit
 	CHECK(app.waitUntil([&] { return banks().empty(); }));
 }
 
+TEST_CASE("the MIDI device manager makes empty and nested folders and moves presets by drag and drop", "[ui]")
+{
+	// Reference manual p. 1111: New Folder in the selected bank or folder, presets dragged among banks and folders.
+	test::UiApp app{{900, 640}};
+	const Json value = {{"Synth",
+		{{"banks",
+			{{{"name", "Bank"},
+				 {"patches",
+					 {{{"name", "Piano"}, {"program", 0}, {"folder", "Keys"}}, {{"name", "Lead"}, {"program", 1}}}}},
+				{{"name", "Drums"}, {"patches", {{{"name", "Kit"}, {"program", 8}}}}}}}}}};
+	app.call("settings.set", {{"key", "midi.devices"}, {"value", value}});
+	app.keys().run("window.midiDeviceManager", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&] { return !elements(app, "#midi-devices").empty(); }));
+	const auto banks = [&] { return devices(app).at("Synth").at("banks"); };
+	// The value of the first row of a bank or folder with that name, or of a preset with it before its program.
+	const auto key = [&](const std::string& name)
+	{
+		std::string found;
+		for (const Json& item : elements(app, "#patch-banks listitem"))
+		{
+			const auto text = item.value("text", std::string());
+			if (found.empty() &&
+				(text == name || (text.rfind(name, 0) == 0 && text.find("Program", name.size()) <= name.size() + 1)))
+				found = item.at("attributes").at("value").get<std::string>();
+		}
+		INFO("the row " << name);
+		REQUIRE(!found.empty());
+		return found;
+	};
+	const auto row = [&](const std::string& name) { return "#patch-banks listitem[value=" + key(name) + "]"; };
+	const auto rename = [&](const std::string& name)
+	{
+		click(app, "#patch-name");
+		app.ui().key(std::nullopt, "Mod+A");
+		app.ui().text(std::nullopt, name);
+		click(app, "#apply-patch");
+	};
+	click(app, "#enable-edit");
+
+	// An empty folder in the bank, and one in it, which keep their names unique and stay while empty.
+	click(app, row("Bank"));
+	click(app, "#new-folder");
+	REQUIRE(app.waitUntil([&] { return banks()[0].value("folders", Json::array()) == Json{"New Folder"}; }));
+	CHECK(attribute(app, "#patch-banks", "value") == key("New Folder"));
+	click(app, "#new-folder");
+	REQUIRE(app.waitUntil([&] { return banks()[0].at("folders") == Json{"New Folder", "New Folder/New Folder"}; }));
+	click(app, row("Bank"));
+	click(app, "#new-folder");
+	REQUIRE(app.waitUntil([&] { return banks()[0].at("folders").size() == 3; }));
+	CHECK(banks()[0].at("folders")[2] == "New Folder 2");
+
+	// Renaming a folder takes the folders and presets inside it along; a name with / is refused.
+	click(app, row("New Folder"));
+	rename("Pianos");
+	REQUIRE(
+		app.waitUntil([&] { return banks()[0].at("folders") == Json{"Pianos", "Pianos/New Folder", "New Folder 2"}; }));
+	click(app, row("New Folder"));
+	rename("A/B");
+	CHECK_THAT(elements(app, "#midi-devices-message")[0].value("text", std::string()), ContainsSubstring("/"));
+	rename("Grand");
+	REQUIRE(app.waitUntil([&] { return banks()[0].at("folders")[1] == "Pianos/Grand"; }));
+	click(app, "#new-preset");
+	REQUIRE(app.waitUntil([&] { return banks()[0].at("patches").size() == 3; }));
+	CHECK(banks()[0].at("patches")[2].at("folder") == "Pianos/Grand");
+	const Json rows = elements(app, "#patch-banks listitem");
+	REQUIRE(rows.size() == 10);
+	CHECK(rows[5].at("attributes").at("level") == "2"); // Grand, in Pianos
+	CHECK(rows[6].at("attributes").at("level") == "3"); // its preset
+
+	// Drag and drop: a preset onto another bank goes to its end, out of its folder; onto a preset, before it there.
+	app.ui().drag(std::nullopt, {row("Lead"), 0, std::nullopt}, {row("Drums"), 0, std::nullopt});
+	REQUIRE(app.waitUntil([&] { return banks()[1].at("patches").size() == 2; }));
+	CHECK(banks()[1].at("patches")[1] == Json{{"name", "Lead"}, {"program", 1}});
+	app.ui().drag(std::nullopt, {row("Piano"), 0, std::nullopt}, {row("Kit"), 0, std::nullopt});
+	REQUIRE(app.waitUntil([&] { return banks()[1].at("patches").size() == 3; }));
+	CHECK(banks()[1].at("patches")[0] == Json{{"name", "Piano"}, {"program", 0}});
+	// Keys only existed through Piano, and stays as an empty folder until it is removed.
+	CHECK(banks()[0].at("folders") == Json{"Pianos", "Pianos/Grand", "New Folder 2", "Keys"});
+	// Onto a later preset of the same bank: before it, counted without the dragged preset.
+	app.ui().drag(std::nullopt, {row("Piano"), 0, std::nullopt}, {row("Lead"), 0, std::nullopt});
+	REQUIRE(app.waitUntil([&] { return banks()[1].at("patches")[0].at("name") == "Kit"; }));
+	CHECK(banks()[1].at("patches")[1].at("name") == "Piano");
+	CHECK(banks()[1].at("patches")[2].at("name") == "Lead");
+	app.ui().drag(std::nullopt, {row("Kit"), 0, std::nullopt}, {row("Grand"), 0, std::nullopt});
+	REQUIRE(app.waitUntil([&] { return banks()[0].at("patches").size() == 2; }));
+	CHECK(banks()[0].at("patches")[1] == Json{{"name", "Kit"}, {"program", 8}, {"folder", "Pianos/Grand"}});
+
+	// Removing a folder removes the folders and presets inside it.
+	click(app, row("Pianos"));
+	click(app, "#remove-patch");
+	REQUIRE(app.waitUntil([&] { return banks()[0].at("folders") == Json{"New Folder 2", "Keys"}; }));
+	CHECK(banks()[0].at("patches").empty());
+
+	// Without Enable Edit, a drag moves nothing.
+	click(app, "#enable-edit");
+	app.ui().drag(std::nullopt, {row("Lead"), 0, std::nullopt}, {row("Bank"), 0, std::nullopt});
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(banks()[1].at("patches").size() == 2);
+}
+
 TEST_CASE("the MIDI device manager adds a checked range of presets from a selected template", "[ui]")
 {
 	test::UiApp app{{900, 640}};
@@ -394,6 +494,23 @@ TEST_CASE("the MIDI device manager adds a checked range of presets from a select
 		CHECK(added.at("bank") == 300);
 		CHECK(added.at("folder") == "Winds");
 	}
+
+	// With a folder selected, the presets go into it; New Folder with a preset selected goes into its folder.
+	click(app, "#patch-banks listitem[value=folder1-1]");
+	count("2");
+	REQUIRE(app.waitUntil([&] { return patches().size() == 6; }));
+	for (int i = 1; i <= 2; ++i)
+	{
+		const Json added = patches()[3 + i];
+		CHECK(added == Json{{"name", "Preset " + std::to_string(i)}, {"program", i - 1}, {"folder", "Winds"}});
+	}
+	click(app, "#patch-banks listitem[value=patch1-1]");
+	click(app, "#new-folder");
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			return devices(app).at("Synth").at("banks")[0].value("folders", Json::array()) == Json{"Winds/New Folder"};
+		}));
 }
 
 TEST_CASE("the inspector chooses the MIDI channel a MIDI track's patch goes out on", "[ui]")

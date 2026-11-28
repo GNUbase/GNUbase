@@ -782,6 +782,43 @@ TEST_CASE("controller lane presets save the lanes shown and bring them back", "[
 	f.choose("#controller-lane-setup", "#controller-setup-menu menuitem[lane-preset=Expressive]");
 	REQUIRE(f.app.waitUntil([&] { return f.lanes().size() == 3; }));
 	CHECK(f.lanes()[2] == Json{{"type", "controller"}, {"number", 11}});
+
+	// Organize Presets (#737, p. 1166) renames the first preset and deletes the second.
+	const Json expressive = presets().at(0);
+	f.app.call("settings.set",
+		{{"key", "ui.controllerLanePresets"},
+			{"value", Json::array({expressive, {{"name", "Plain"}, {"lanes", {{{"type", "velocity"}}}}}})}});
+	REQUIRE(f.app.waitUntil([&] { return !f.elements("#controller-setup-menu menuitem[lane-preset=Plain]").empty(); }));
+	f.choose("#controller-lane-setup", "#controller-setup-menu menuitem[lane-action=organizePresets]");
+	REQUIRE(f.app.waitUntil([&] { return f.elements("#zoom-presets-list .preset").size() == 2; }));
+	f.click(of("#zoom-presets-list .preset input"));
+	f.app.ui().key(f.window, "Mod+A");
+	f.app.ui().text(f.window, "Soft");
+	f.click(of("#zoom-presets-list .preset[index=\"1\"] button"));
+	f.click(of("#zoom-presets-dialog button[result=ok]"));
+	REQUIRE(f.app.waitUntil([&] { return presets().size() == 1; }));
+	CHECK(presets().at(0).at("name") == "Soft");
+	CHECK(presets().at(0).at("lanes") == expressive.at("lanes"));
+
+	// A preset renamed to the name of another that is kept keeps its old name: the setup menu finds presets by name.
+	f.app.call("settings.set",
+		{{"key", "ui.controllerLanePresets"},
+			{"value",
+				Json::array({presets().at(0), {{"name", "Plain"}, {"lanes", {{{"type", "velocity"}}}}},
+					{{"name", "Other"}, {"lanes", {{{"type", "velocity"}}}}}})}});
+	REQUIRE(f.app.waitUntil([&] { return !f.elements("#controller-setup-menu menuitem[lane-preset=Other]").empty(); }));
+	f.choose("#controller-lane-setup", "#controller-setup-menu menuitem[lane-action=organizePresets]");
+	REQUIRE(f.app.waitUntil([&] { return f.elements("#zoom-presets-list .preset").size() == 3; }));
+	f.click(of("#zoom-presets-list .preset[index=\"1\"] input"));
+	f.app.ui().key(f.window, "Mod+A");
+	f.app.ui().text(f.window, "Soft");
+	f.click(of("#zoom-presets-list .preset[index=\"2\"] input"));
+	f.app.ui().key(f.window, "Mod+A");
+	f.app.ui().text(f.window, "Third");
+	f.click(of("#zoom-presets-dialog button[result=ok]"));
+	REQUIRE(f.app.waitUntil([&] { return presets().size() == 3 && presets().at(2).at("name") == "Third"; }));
+	CHECK(presets().at(0).at("name") == "Soft");
+	CHECK(presets().at(1).at("name") == "Plain");
 }
 
 TEST_CASE("controller lanes that are gone before the presets' answer comes leave the answer alone", "[ui]")
@@ -1323,7 +1360,68 @@ TEST_CASE("the object selection tool shows a pointing hand over pitchbend events
 	CHECK(pointer(0) == "pointer");
 	CHECK(pointer(1).empty());
 	f.tool("draw");
-	CHECK(pointer(0).empty());
+	CHECK(pointer(0) == "tool-draw");
 	f.tool("objectSelection");
 	CHECK(pointer(0) == "pointer");
+}
+
+TEST_CASE("the tools show their pointers on the controller lanes where a press does what they do", "[ui]")
+{
+	// Reference manual pp. 1180-1181, 1186: the draw and line tools add events on the lanes, the erase tool removes
+	// controller events but leaves the notes' bars. Pp. 1288-1289: on the Articulations lane the draw tool adds
+	// articulations to their rows, the erase and mute tools act on articulations.
+	Fixture f;
+	f.add({4});
+	const Json map =
+		f.app
+			.call("articulationMap.add",
+				{{"name", "Strings"}, {"articulations", {{{"name", "Arco"}, {"type", "direction"}, {"group", 0}}}}})
+			.at("map")
+			.at("id");
+	f.app.call("track.set", {{"track", f.track}, {"articulationMap", map}});
+	f.app.call("editor.set",
+		{{"editor", "window"},
+			{"lanes", {{{"type", "velocity"}}, {{"type", "controller"}, {"number", 1}}, {{"type", "articulations"}}}}});
+	f.app.call("controller.add",
+		{{"part", f.part},
+			{"controllers",
+				{{{"position", 8 * g_sixteenth}, {"type", "controller"}, {"number", 1}, {"value", 0.5}},
+					{{"position", 8 * g_sixteenth}, {"type", "articulation"}, {"articulation", "Arco"}}}}});
+	const std::string step = Fixture::area(1) + " .controller-step";
+	const std::string direction = ".articulation-item.direction";
+	const std::string row = ".articulation-row[articulation-row=\"0\"]";
+	REQUIRE(f.app.waitUntil([&] { return f.elements(step).size() == 1 && f.elements(direction).size() == 1; }));
+	// The row of the articulation left of its direction, and the lanes above the bars and the step.
+	const Json rowBox = f.box(row);
+	const ui::Target emptyRow{"", 0,
+		ui::Point{f.at(0, 2, 0.5).point.value_or(ui::Point{}).x,
+			static_cast<int>(std::lround(rowBox.at("y").get<double>() + (rowBox.at("height").get<double>() / 2)))}};
+	const ui::Target velocity = f.at(0, 12, 0.9);
+	const ui::Target controller = f.at(1, 12, 0.9);
+	const auto over = [&f](const ui::Target& target)
+	{
+		f.app.ui().move(f.window, target);
+		f.app.shell().step(std::chrono::milliseconds(0));
+		return f.app.ui().windows().at("cursor").get<std::string>();
+	};
+	CHECK(over(controller).empty()); // the object selection tool
+	f.tool("draw");
+	CHECK(over(velocity) == "tool-draw");
+	CHECK(over(controller) == "tool-draw");
+	CHECK(over(of(step)) == "tool-draw");
+	CHECK(over(emptyRow) == "tool-draw");
+	f.tool("line");
+	CHECK(over(velocity) == "tool-line");
+	CHECK(over(controller) == "tool-line");
+	CHECK(over(emptyRow).empty());
+	f.tool("erase");
+	CHECK(over(of(step)) == "tool-erase");
+	CHECK(over(of(direction)) == "tool-erase");
+	CHECK(over(of(Fixture::area(0) + " .controller-bar")).empty());
+	CHECK(over(controller).empty());
+	CHECK(over(emptyRow).empty());
+	f.tool("mute");
+	CHECK(over(of(direction)) == "tool-mute");
+	CHECK(over(of(step)).empty());
+	CHECK(over(emptyRow).empty());
 }

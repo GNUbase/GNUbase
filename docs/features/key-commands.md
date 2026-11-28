@@ -61,8 +61,11 @@ it up in `app::AppUi`.
   once; the OS's key repeats don't run it again, so holding Space doesn't start and stop playback over and over.
 - **Held keys.** A UI command with a `release` runs while its key is held, such as Forward, which winds: the key going
   up ends it (`KeyCommands::released`), whatever modifiers are still down, and so does the window losing the keyboard
-  focus. `ui::Automation::key` and MCP's `ui_key` press and release a key, or only press (`down`) or release
-  (`up`) it.
+  focus, which `KeyPress::focusLost` reports; a key that RmlUi can't map (a letter of another layout, a media key) is
+  `KI_UNKNOWN` and ends nothing (#569). A button held starts it with `KeyCommands::start` and ends it with `release`.
+  `KeyCommands::run`, which menu items, scripts (`gnubase.ui.command`) and macros use, has nothing to end it, so such a
+  command runs once: it starts and ends at once, as a key pressed and released at once does (#566).
+  `ui::Automation::key` and MCP's `ui_key` press and release a key, or only press (`down`) or release (`up`) it.
 
 ## Default key map
 

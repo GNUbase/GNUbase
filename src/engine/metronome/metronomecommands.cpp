@@ -70,12 +70,9 @@ namespace gnubase::engine::metronome
 	void registerMetronomeCommands(ProjectModel& model, Engine& engine)
 	{
 		const Json integer = {{"type", "integer"}};
-		const Json settingsResult = {{"type", "object"},
-			{"properties",
-				{{"whilePlaying", {{"type", "boolean"}}}, {"whileRecording", {{"type", "boolean"}}},
-					{"audio", {{"type", "object"}}}, {"midi", {{"type", "object"}}}, {"countIn", {{"type", "object"}}},
-					{"patterns", {{"type", "array"}}}}},
-			{"required", {"whilePlaying", "whileRecording", "audio", "midi", "countIn", "patterns"}}};
+		// What metronome.set takes, all of it: the API references list the fields of audio, midi and countIn.
+		Json settingsResult = settingsSchema();
+		settingsResult["required"] = {"whilePlaying", "whileRecording", "audio", "midi", "countIn", "patterns"};
 
 		engine.registerCommand(
 			{"metronome.get", 1, "The project's metronome settings and click patterns (see metronome.set).",

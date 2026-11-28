@@ -164,6 +164,10 @@ namespace gnubase::ui
 		std::string fieldValue(const char* edits, const std::string& field, uint64_t item, std::string value) const;
 		// The number fieldValue shows for any item, not only the first: what a relative step goes from (#1632).
 		double fieldNumber(const char* edits, const std::string& field, uint64_t item, double value) const;
+		// What a relative step of gesture goes from for item: its number (fieldNumber's) where the gesture's first step
+		// found it, so that an item a step holds at its limit doesn't drift from the others while the gesture goes on
+		// (#870). A step outside a gesture (0) goes from now.
+		double gestureBase(int gesture, const std::string& field, uint64_t item, double now);
 		// The notes a selection of an in-place editor names, from the display's project, by start, then pitch.
 		std::vector<Note> notesOf(const engine::Json& selection) const;
 		// A part's start in project ticks, a linear track's position converted as the key editor does.
@@ -181,7 +185,14 @@ namespace gnubase::ui
 		bool m_dropping = false; // while another project ends the edits in progress, which then aren't taken
 		bool m_showing = false;  // while show sets the fields, whose changes aren't the user's (#1719)
 		std::optional<std::pair<std::string, std::string>> m_absoluteTake; // field and text taken with Ctrl+Enter
-		Subscription m_reset;                                              // project.reset
+		// gestureBase's: the gesture and field it is for, and each item's number where the gesture started.
+		struct GestureBases
+		{
+			int gesture = 0;
+			std::string field;
+			std::map<uint64_t, double> numbers;
+		} m_gestureBases;
+		Subscription m_reset; // project.reset
 		std::function<std::vector<uint64_t>()> m_markerSource;
 		std::vector<uint64_t> m_markerSelection; // shown
 		bool m_showsMarkers = false;             // the markers' selection changed last, or the arranger events'

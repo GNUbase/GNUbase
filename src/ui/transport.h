@@ -15,6 +15,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace Rml
@@ -101,6 +102,12 @@ namespace gnubase::ui
 		TransportControls(TransportControls&&) = delete;
 		TransportControls& operator=(TransportControls&&) = delete;
 
+		// What a button with hold runs when its mouse button goes down, as a key going down does (KeyCommands::start):
+		// the command then goes on until the button is released. Without it, run does that, once.
+		void holdWith(RunCommand start) { m_start = std::move(start); }
+		// Ends what a button held runs, as the mouse button going up does, e.g. when the window loses the focus.
+		void releaseHeld() { release(); }
+
 		// Starts editing a display as a double click does: left, right, position, length (by their time attribute,
 		// the primary one) or tempo or signature. False if the element has none that shows.
 		bool edit(const std::string& field);
@@ -113,7 +120,10 @@ namespace gnubase::ui
 		void exchangeFormats();
 
 		// The time display window's options, in ui.timeDisplay: Show Beat Count Only on or off, and its size, 0 to 4,
-		// changed by steps. onSize hears of the size whenever the setting says it, e.g. to size the window.
+		// changed by steps. onSize hears of a new size, e.g. to give the window that size's preset: of each resize, and
+		// of a size that the setting changes to once it was read. Not of the size read first, which the window opened
+		// at and the user may have sized it away from since, nor of the other options, such as Show Beat Count Only
+		// (#569).
 		void toggleBeatCountOnly();
 		void resize(int steps);
 		int size() const { return m_size; }
@@ -131,15 +141,19 @@ namespace gnubase::ui
 		std::vector<Rml::Element*> all(const std::string& selector) const; // in the root
 		void requestProject();
 		void requestQuantize();
-		void followTransport(const engine::Json& status);
+		void followTransport(const engine::Json& status, engine::RequestId request = 0);
 		void followFormats(const engine::Json& formats);
-		void followTimeDisplay(const engine::Json& options);
+		void followTimeDisplay(const engine::Json& options, engine::RequestId request);
+		// Whether an answer or event that the request (0 for none) caused is older than the newest change sent.
+		static bool older(engine::RequestId request, engine::RequestId sent);
+		// Sends a change of the transport that a wheel turn made, which the next turn goes on from (m_sentTransport).
+		void sendTransport(const std::string& command, const engine::Json& parameters);
 		void saveTimeDisplay();
 		void answered(); // one of the first queries
 		void changed(Rml::Element& element, const std::string& text);
 		void wheel(Rml::Element& element, float delta);
 		void wheelTempo();
-		void endTempoGesture();
+		void endTempoGesture(bool read = true);
 		void tap();
 		void endTap();
 		void followTapMode(const engine::Json& mode);
@@ -155,6 +169,7 @@ namespace gnubase::ui
 		engine::Engine& m_engine;
 		EngineBinding& m_binding;
 		RunCommand m_run;
+		RunCommand m_start;
 		ReleaseCommand m_release;
 		Rml::ObserverPtr<Rml::Element> m_root;
 		Rml::ObserverPtr<Rml::Element> m_document;
@@ -168,6 +183,12 @@ namespace gnubase::ui
 		bool m_stale = false;
 		bool m_beatCountOnly = false;
 		int m_size = 1;
+		bool m_displayRead = false;              // ui.timeDisplay was read or changed
+		engine::RequestId m_sentDisplay = 0;     // the newest change of it that was sent
+		engine::RequestId m_sentTransport = 0;   // the newest change of the transport that a wheel turn sent
+		const Rml::Element* m_wheelOn = nullptr; // the display the wheel turned last
+		std::chrono::steady_clock::time_point m_wheelAt;
+		double m_wheelRest = 0.0; // of its turns that didn't make a whole step yet
 		std::function<void(int)> m_sized;
 		int m_unanswered = 3; // of the first queries that onShown waits for
 		bool m_projectRead = false;
@@ -200,21 +221,24 @@ namespace gnubase::ui
 	// Rewind and Forward, and their fast variants, while their key or button is held (reference manual pp. 297,
 	// 300): start moves the project cursor by the step at once, as a click does, and after a moment winds on at four
 	// steps a second until stop. It sends transport.locate with a distance each frame; step returns whether it
-	// winds, for Shell::eachStep. Use it on the UI thread; the binding must outlive it.
+	// winds, for Shell::eachStep. Each key or button winds as its own: stopping one leaves the others that are still
+	// held winding, the one started last first, also those of one command, such as Num+ and the Forward button (#566).
+	// Use it on the UI thread; the binding must outlive it.
 	class Winding
 	{
 	public:
 		explicit Winding(EngineBinding& binding) : m_binding(binding) {}
 
-		void start(double seconds); // the step: negative to rewind
-		void stop() { m_step = 0.0; }
+		void start(const std::string& id, double seconds); // the step: negative to rewind
+		void stop(const std::string& id);
+		void stopAll() { m_winds.clear(); }
 		bool step();
 
 	private:
 		using Clock = std::chrono::steady_clock;
 
 		EngineBinding& m_binding;
-		double m_step = 0.0;
-		Clock::time_point m_last; // until when it wound
+		std::vector<std::pair<std::string, double>> m_winds; // the steps of those held, the newest last
+		Clock::time_point m_last;                            // until when it wound
 	};
 }

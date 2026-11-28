@@ -17,6 +17,7 @@
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Factory.h>
+#include <RmlUi/Core/Property.h>
 #include <RmlUi/Core/StyleSheetContainer.h>
 #include <catch2/catch_test_macros.hpp>
 
@@ -139,6 +140,18 @@ namespace
 		}
 
 		Json view() { return app.call("editor.get", {{"editor", "window"}}); }
+
+		// Whether the note is shown on the pitch's row (at() takes the time too, which the row doesn't depend on).
+		bool on(uint64_t id, double sixteenths, int pitch)
+		{
+			const Json found = elements(noteSelector(id));
+			if (found.empty())
+				return false;
+			const auto y = static_cast<double>(at(sixteenths, pitch).point.value_or(ui::Point{}).y);
+			const Json shown = found.at(0).at("box");
+			return shown.at("y").get<double>() <= y &&
+				y <= shown.at("y").get<double>() + shown.at("height").get<double>();
+		}
 
 		// Pixels of the editor window's layout in desktop coordinates, which setBounds takes: at a monitor scale of 2,
 		// as on a HiDPI Mac, half as many (#1746).
@@ -2396,15 +2409,16 @@ TEST_CASE("the expression editor stays centered on its note as the pitches zoom"
 }
 
 TEST_CASE("the lower zone's key editor at its default size gives the note display more room than the controller lanes, "
-		  "at dp ratios 1 and 2",
+		  "at dp ratios 1 and 1.5",
 	"[ui]")
 {
 	// The lower zone at its default 240 dp, with the Velocity lane and the footer below the note display: the lanes
 	// give way first, down to their footer, and their list scrolls (#1775). The window is 1024 x 768 pixels, as large
-	// as CI's Linux screen lets it be: at a dp ratio of 1 the toolbar is one row, the note display the larger part of
-	// the editor, and in a lower zone of 400 dp the lanes keep their whole height; at 2, 512 x 384 dp, the toolbar
-	// wraps and leaves less than the note display's 40% and the lanes, so the lanes are down to their footer.
-	for (const float ratio : {1.0F, 2.0F})
+	// as CI's Linux screen lets it be: at a dp ratio of 1 the toolbar is two rows, the note display the larger part of
+	// the editor, and in a lower zone of 400 dp the lanes keep their whole height; at 1.5, 683 x 512 dp, the toolbar
+	// wraps to three rows and leaves less than the note display's 40% and the lanes, so the lanes are down to their
+	// footer. At 2, 512 x 384 dp, it wraps to five rows and leaves the editor no room for the footer.
+	for (const float ratio : {1.0F, 1.5F})
 	{
 		INFO("dp ratio " << ratio);
 		const auto px = [ratio](double dp) { return dp * ratio; };
@@ -2489,4 +2503,229 @@ TEST_CASE("the editor window's key editor and the in-place editor keep their con
 	f.app.shell().step(std::chrono::milliseconds(0));
 	CHECK(height(editor + " .controller-lane") >= 63.5);
 	CHECK(height(editor + " .controller-lane-list") >= 63.5);
+}
+
+TEST_CASE("the event colors menu colors the notes by their part's color, its own or else its track's", "[ui]")
+{
+	// The Event Colors menu's Part (reference manual pp. 1133-1134): notes in the color of their part, which is its
+	// own or its track's; selected notes keep the style sheets' look, and Default gives every note the theme's again.
+	Fixture f;
+	const std::vector<uint64_t> first = f.add({{0, 60, g_quarter}, {g_quarter, 62, g_quarter}});
+	f.app.call("track.set", {{"track", f.track}, {"color", "#2040e0"}});
+	const auto other = f.app.call("midiPart.add", {{"track", f.track}, {"position", g_bar}, {"length", g_bar}})
+						   .at("part")
+						   .at("id")
+						   .get<uint64_t>();
+	const uint64_t own =
+		f.app
+			.call("note.add",
+				{{"part", other},
+					{"notes", {{{"position", 0}, {"length", g_quarter}, {"pitch", 64}, {"velocity", 0.5}}}}})
+			.at("notes")
+			.at(0)
+			.at("id")
+			.get<uint64_t>();
+	f.app.call("event.set", {{"events", {other}}, {"color", "#c04020"}});
+	f.app.call("editor.open", {{"editor", "window"}, {"parts", {f.part, other}}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note").size() == 3; }));
+	const auto color = [&](uint64_t note)
+	{
+		const Json found = f.elements(noteSelector(note));
+		return found.empty() ? std::string("none") : found.at(0).at("attributes").value("color", std::string());
+	};
+	CHECK(f.elements(".key-note[color]").empty());
+
+	f.click(of("#key-event-colors"));
+	f.click(of("#key-event-colors-menu menuitem[event-colors=part]"));
+	REQUIRE(f.app.waitUntil([&] { return color(own) == "#c04020"; }));
+	CHECK(f.view().at("eventColors") == "part");
+	CHECK(color(first[0]) == "#2040e0");
+	CHECK(color(first[1]) == "#2040e0");
+	CHECK(f.elements("#key-event-colors-menu menuitem[event-colors=part][checked]").size() == 1);
+	ui::Window* window = f.app.shell().find(f.app.appUi().editorWindowId());
+	REQUIRE(window != nullptr);
+	Rml::Element* shown = nullptr;
+	for (int i = 0; i < window->context().GetNumDocuments() && shown == nullptr; ++i)
+		shown = window->context().GetDocument(i)->QuerySelector(noteSelector(own));
+	REQUIRE(shown != nullptr);
+	REQUIRE(shown->GetLocalProperty("background-color") != nullptr);
+	CHECK(shown->GetLocalProperty("background-color")->Get<Rml::Colourb>() == Rml::Colourb(0xc0, 0x40, 0x20, 255));
+
+	// A selected note shows as selected, without the color; the others keep theirs.
+	f.app.call("editor.set", {{"editor", "window"}, {"selection", {{{"part", f.part}, {"note", first[0]}}}}});
+	REQUIRE(f.app.waitUntil([&] { return color(first[0]).empty(); }));
+	CHECK(color(first[1]) == "#2040e0");
+
+	f.click(of("#key-event-colors"));
+	f.click(of("#key-event-colors-menu menuitem[event-colors=default]"));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note[color]").empty(); }));
+	CHECK(f.view().at("eventColors") == "default");
+}
+
+TEST_CASE("the drum editor and the in-place editor color notes through their event colors menu", "[ui]")
+{
+	// The drum editor and the in-place editor have the Event Colors menu too (reference manual pp. 1133-1134), the
+	// in-place editor's with its suffix. Notes of a part that isn't editable, as with Active Part, keep the style
+	// sheets' look.
+	Fixture f;
+	const std::vector<uint64_t> first = f.add({{0, 60, g_quarter}});
+	f.app.call("track.set", {{"track", f.track}, {"color", "#2040e0"}});
+	const auto other = f.app.call("midiPart.add", {{"track", f.track}, {"position", g_bar}, {"length", g_bar}})
+						   .at("part")
+						   .at("id")
+						   .get<uint64_t>();
+	const uint64_t own =
+		f.app
+			.call("note.add",
+				{{"part", other},
+					{"notes", {{{"position", 0}, {"length", g_quarter}, {"pitch", 64}, {"velocity", 0.5}}}}})
+			.at("notes")
+			.at(0)
+			.at("id")
+			.get<uint64_t>();
+	f.app.call("event.set", {{"events", {other}}, {"color", "#c04020"}});
+	const auto color = [&](const std::string& scope, uint64_t note)
+	{
+		const Json found = f.elements(scope + noteSelector(note));
+		return found.empty() ? std::string("none") : found.at(0).at("attributes").value("color", std::string());
+	};
+
+	// The drum editor.
+	f.app.call("editor.open", {{"editor", "window"}, {"parts", {f.part, other}}});
+	f.app.call("editor.set", {{"editor", "window"}, {"content", "drum"}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-note").size() == 2; }));
+	f.click(of("#key-event-colors"));
+	f.click(of("#key-event-colors-menu menuitem[event-colors=part]"));
+	REQUIRE(f.app.waitUntil([&] { return color("", own) == "#c04020"; }));
+	CHECK(f.view().at("eventColors") == "part");
+	CHECK(color("", first[0]) == "#2040e0");
+
+	// The in-place editor, showing the active part only: the other part's notes keep the style sheets' look.
+	f.app.call("editor.close", {{"editor", "window"}});
+	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().editorWindow() == nullptr; }));
+	f.app.appUi().showProject();
+	f.window = f.app.main().id();
+	const std::string view = "inPlace:" + std::to_string(f.track);
+	const std::string editor = ".in-place-editor[track=\"" + std::to_string(f.track) + "\"] ";
+	f.app.call("editor.inPlace", {{"tracks", {f.track}}, {"open", true}});
+	f.app.call("editor.set", {{"editor", view}, {"editingMode", "activePart"}, {"activePart", other}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(editor + ".key-note").size() == 2; }));
+	const std::string triangle =
+		".track-list listitem[value=\"" + std::to_string(f.track) + "\"] .in-place-toolbar-toggle";
+	REQUIRE(f.app.waitUntil([&] { return f.elements(triangle).at(0).at("visible") == true; }));
+	f.click(of(triangle));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(editor + "#key-event-colors").at(0).at("visible") == true; }));
+	CHECK(f.elements(editor + ".key-note[color]").empty());
+	f.click(of(editor + "#key-event-colors"));
+	f.click(of("#key-event-colors-menu-inPlace-" + std::to_string(f.track) + " menuitem[event-colors=part]"));
+	REQUIRE(f.app.waitUntil([&] { return color(editor, own) == "#c04020"; }));
+	CHECK(f.app.call("editor.get", {{"editor", view}}).at("eventColors") == "part");
+	CHECK(color(editor, first[0]).empty());
+
+	// Activating the first part gives its notes their track's color and takes the other part's away.
+	f.app.call("editor.set", {{"editor", view}, {"activePart", f.part}});
+	REQUIRE(f.app.waitUntil([&] { return color(editor, first[0]) == "#2040e0"; }));
+	CHECK(color(editor, own).empty());
+}
+
+TEST_CASE("Indicate Transpositions shows the notes at the pitches they play", "[ui]")
+{
+	// Indicate Transpositions in the toolbar (#1766, reference manual pp. 419, 1260): a note after a transpose event
+	// of 3 semitones shows 3 rows up; a drawn note gets the pitch that plays at the row under the mouse, and a move
+	// changes the pitch by the rows dragged.
+	Fixture f;
+	const std::vector<uint64_t> ids = f.add({{0, 60, g_quarter}, {2 * g_quarter, 60, g_quarter}});
+	f.app.call("transpose.add", {{"position", 2 * g_quarter}, {"value", 3}});
+	f.settle(); // off, the notes stay on their own rows
+	f.scroll(63);
+	CHECK(f.on(ids[0], 0.5, 60));
+	CHECK(f.on(ids[1], 8.5, 60));
+	const auto on = [&f](uint64_t id, double sixteenths, int pitch) { return f.on(id, sixteenths, pitch); };
+	f.click(of(".key-input[setting=indicateTranspositions]"));
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("indicateTranspositions") == true; }));
+	REQUIRE(f.app.waitUntil([&] { return f.has(".key-input[setting=indicateTranspositions]", "checked"); }));
+	f.scroll(63);
+	CHECK(f.app.waitUntil([&] { return on(ids[0], 0.5, 60) && on(ids[1], 8.5, 63); }));
+
+	f.tool("draw");
+	f.click(f.at(12.5, 66));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 3; }));
+	CHECK(f.partNotes()[2].at("pitch") == 63);
+	const auto drawn = f.partNotes()[2].at("id").get<uint64_t>();
+	CHECK(f.app.waitUntil([&] { return on(drawn, 12.5, 66); }));
+
+	f.tool("objectSelection");
+	f.drag(f.at(8.5, 63), f.at(8.5, 64));
+	REQUIRE(f.app.waitUntil([&] { return f.note(ids[1]).at("pitch") == 61; }));
+	CHECK(f.app.waitUntil([&] { return on(ids[1], 8.5, 64); }));
+
+	// Off, every note is on its own row again.
+	f.click(of(".key-input[setting=indicateTranspositions]"));
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("indicateTranspositions") == false; }));
+	f.settle();
+	CHECK(on(ids[0], 0.5, 60));
+	CHECK(on(ids[1], 8.5, 61));
+	CHECK(on(drawn, 12.5, 63));
+}
+
+TEST_CASE("with Indicate Transpositions a note moved across a transpose event shows and plays where it lands", "[ui]")
+{
+	// A note dragged to a time after a transpose event of 3 semitones plays 3 semitones up there: the preview shows it
+	// on that row and Acoustic Feedback plays that pitch, as after the release, while its pitch stays (#1766).
+	Fixture f({1200, 800}, "instrument");
+	f.probe();
+	const std::vector<uint64_t> ids = f.add({{0, 60, g_sixteenth}});
+	f.app.call("transpose.add", {{"position", 2 * g_quarter}, {"value", 3}});
+	f.app.call("editor.set", {{"editor", "window"}, {"indicateTranspositions", true}, {"acousticFeedback", true}});
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("indicateTranspositions") == true; }));
+	f.scroll(63);
+	REQUIRE(f.app.waitUntil([&] { return f.on(ids[0], 0.5, 60); }));
+
+	const double before = f.box(noteSelector(ids[0])).at("x").get<double>();
+	f.app.ui().press(f.window, f.at(0.5, 60), ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.plays({{0x90, 60, 100}}));
+	f.app.ui().move(f.window, f.at(4.5, 60));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.box(noteSelector(ids[0])).at("x").get<double>() > before + 1.5; }));
+	CHECK(f.on(ids[0], 4.5, 60));
+	f.app.ui().move(f.window, f.at(8.5, 60));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.app.waitUntil([&] { return f.on(ids[0], 8.5, 63); }));
+	CHECK(f.plays({{0x90, 60, 100}, {0x80, 60, 0}, {0x90, 63, 100}}));
+
+	f.app.ui().release(f.window, f.at(8.5, 60), ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.note(ids[0]).at("position") == 2 * g_quarter; }));
+	CHECK(f.note(ids[0]).at("pitch") == 60);
+	CHECK(f.app.waitUntil([&] { return f.on(ids[0], 8.5, 63); }));
+	CHECK(f.plays({{0x90, 60, 100}, {0x80, 60, 0}, {0x90, 63, 100}, {0x80, 63, 0}}));
+}
+
+TEST_CASE("the drum editor shows the notes on their own rows with Indicate Transpositions on", "[ui]")
+{
+	// The view keeps Indicate Transpositions when the content changes to the drum editor, which has no toggle for it
+	// and shows every note on its sound's row (#1766).
+	Fixture f;
+	const std::vector<uint64_t> ids = f.add({{0, 38, g_sixteenth}, {2 * g_quarter, 38, g_sixteenth}});
+	f.app.call("transpose.add", {{"position", 2 * g_quarter}, {"value", 3}});
+	f.click(of(".key-input[setting=indicateTranspositions]"));
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("indicateTranspositions") == true; }));
+	REQUIRE(f.app.waitUntil([&] { return f.on(ids[1], 8.5, 41); }));
+
+	f.app.call("editor.set", {{"editor", "window"}, {"content", "drum"}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-note").size() == 2; }));
+	CHECK(f.view().at("indicateTranspositions") == true);
+	CHECK_FALSE(f.view().at("transpositions").empty());
+	CHECK(f.elements(".key-input[setting=indicateTranspositions]").empty());
+	f.scroll(38);
+	const auto onSound = [&](uint64_t id, int pitch)
+	{
+		const Json note = f.box(noteSelector(id));
+		const Json row = f.box(".drum-sound[pitch=\"" + std::to_string(pitch) + "\"]");
+		const double center = note.at("y").get<double>() + (note.at("height").get<double>() / 2.0);
+		return row.at("y").get<double>() <= center &&
+			center <= row.at("y").get<double>() + row.at("height").get<double>();
+	};
+	CHECK(f.app.waitUntil([&] { return onSound(ids[0], 38) && onSound(ids[1], 38); }));
 }

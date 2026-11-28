@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -23,6 +24,14 @@ namespace gnubase::engine
 		// The RIFF and FORM sizes and the data and SSND sizes until a file is closed: readers take them as "up to the
 		// end of the file", so a file cut short by a crash still has the frames on the disk (#581).
 		constexpr uint64_t g_unknownSize = g_max32;
+		std::atomic<uint64_t> g_sizeLimit{g_max32}; // detail::setFileSizeLimit
+
+		// Whether a file of size bytes fits AIFF or WAV without RF64, with the pad byte that closing adds to an odd
+		// size: the headers are of even size, so the file is odd when its data is (#2096).
+		bool fits32(uint64_t size)
+		{
+			return size + (size % 2) <= g_sizeLimit.load(std::memory_order_relaxed);
+		}
 
 		bool isFloat(SampleFormat format)
 		{
@@ -227,7 +236,7 @@ namespace gnubase::engine
 				m_bytes.clear();
 				for (size_t i = 0; i < samples; ++i)
 					m_bytes.sample(buffer[i], m_options.sampleFormat);
-				if (m_options.rf64 == Rf64::Never && m_output.size() + m_bytes.data().size() > g_max32)
+				if (m_options.rf64 == Rf64::Never && !fits32(m_output.size() + m_bytes.data().size()))
 					throw AudioFileFull("WAV files without RF64 can't be larger than 4 GB");
 				m_output.write(m_bytes.data());
 				m_frames += frames;
@@ -382,7 +391,7 @@ namespace gnubase::engine
 				m_bytes.clear();
 				for (size_t i = 0; i < samples; ++i)
 					m_bytes.sample(buffer[i], m_options.sampleFormat);
-				if (m_output.size() + m_bytes.data().size() > g_max32)
+				if (!fits32(m_output.size() + m_bytes.data().size()))
 					throw AudioFileFull("AIFF files can't be larger than 4 GB");
 				m_output.write(m_bytes.data());
 				m_frames += frames;
@@ -559,5 +568,10 @@ namespace gnubase::engine
 		if (options.format == AudioFormat::Flac)
 			return std::make_unique<FlacWriter>(path, options);
 		return std::make_unique<WavWriter>(path, options);
+	}
+
+	void detail::setFileSizeLimit(uint64_t bytes)
+	{
+		g_sizeLimit.store(bytes == 0 ? g_max32 : bytes, std::memory_order_relaxed);
 	}
 }

@@ -24,6 +24,13 @@
 	margin-right: 4dp;
 }
 
+menu input.mixer-find-search
+{
+	display: block;
+	width: 200dp;
+	margin: 2dp 4dp;
+}
+
 .mixer-toolbar .spacer
 {
 	flex: 1 1 0;
@@ -223,6 +230,24 @@
 {
 	display: flex;
 	margin-left: 2dp;
+}
+
+/* The channel meters' scale (+3 dB digital, reference manual pp. 467-468): its marks, whose middles code places at
+   their levels' heights, as tall as the bars beside it. */
+.mixer-meter-scale
+{
+	position: relative;
+	width: 14dp;
+	margin-left: 2dp;
+}
+
+.mixer-meter-scale span
+{
+	position: absolute;
+	right: 0;
+	height: 10dp;
+	margin-top: -5dp;
+	line-height: 10dp;
 }
 
 .mixer-meter meter

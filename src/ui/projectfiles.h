@@ -36,15 +36,16 @@ namespace gnubase::ui
 	// The File menu's project commands as UI commands with the reference's keys: file.new (the start screen),
 	// file.open, file.save, file.saveAs, file.saveNewVersion, file.saveTemplate, file.backup and file.revert, plus
 	// file.quit. They ask through the OS's file dialogs (Shell::showFileDialog) and GNUbase's own (the documents
-	// start-screen.rml, save-template.rml, backup-project.rml, backup-progress.rml, discard-changes.rml and
-	// project-error.rml in folder), and do everything with engine commands. Opening another project, reverting and
-	// quitting ask first if the project has unsaved changes, saving first leaves the text fields being typed in, so
-	// that what they send on blur is saved too, and a command that fails shows its error, as does an auto
-	// save that fails. A dialog that comes while another is open, such as the unsaved changes question or an error,
-	// waits for it instead of being dropped; an error whose window went while it waited shows in the main window. A
-	// backup shows its progress, which Cancel stops, and whether it couldn't read files or open the backup. Quitting
-	// asks however it is asked for: File > Quit, the main window's close button or the OS (Shell::onQuitRequest). Use
-	// it on the UI thread; the key commands, the binding and the shell must outlive it.
+	// start-screen.rml, save-template.rml, backup-project.rml, backup-progress.rml, discard-changes.rml,
+	// replace-file.rml and project-error.rml in folder), and do everything with engine commands. Opening another
+	// project, reverting and quitting ask first if the project has unsaved changes, saving first leaves the text fields
+	// being typed in, so that what they send on blur is saved too, and a command that fails shows its error, as does an
+	// auto save that fails. A dialog that comes while another is open, such as the unsaved changes question or an
+	// error, waits for it instead of being dropped; an error, and the question before Save As replaces a file, whose
+	// window went while it waited shows in the main window. A backup shows its progress, which Cancel stops, and
+	// whether it couldn't read files or open the backup. Quitting asks however it is asked for: File > Quit, the main
+	// window's close button or the OS (Shell::onQuitRequest). Use it on the UI thread; the key commands, the binding
+	// and the shell must outlive it.
 	class ProjectFiles final : private Rml::EventListener
 	{
 	public:
@@ -75,13 +76,18 @@ namespace gnubase::ui
 		{
 			WindowId window = 0;
 			std::string error;
+			uint64_t failure = 0; // m_autoSaveFailures when the UI heard of it
 		};
 		struct WaitingDialog
 		{
 			WindowId window = 0;
 			const char* file = nullptr;
-			bool error = false; // an error or notice, which shows in the main window if its window went, and stays
-								// queued while quitting, as what it says may bear on the quit question's answer
+			// An error or notice, which stays queued while quitting, as what it says may bear on the quit question's
+			// answer.
+			bool error = false;
+			// It shows in the main window if its window went: an error, a notice or the question before Save As
+			// replaces a file (#798).
+			bool mainIfGone = false;
 			Shown shown;
 			Closed closed;
 		};
@@ -103,13 +109,13 @@ namespace gnubase::ui
 		// a warning if the window is there, if it can't.
 		Rml::ElementDocument* loadDialog(WindowId window, const char* file);
 		// Opens the dialogs that wait, in order, once no dialog is open; those whose window is gone don't open,
-		// unless they are an error or notice, which shows in the main window instead.
+		// unless they show in the main window instead (mainIfGone).
 		void openWaiting();
 		// The main window, or null once it is gone.
 		Window* mainWindow();
 		// Closes the open dialog, if any, with the result.
 		void closeDialog(const std::string& result);
-		// Asks the engine for the project's file (project.location).
+		// Asks the engine for the project's file, and for the file an auto save was made of (project.location).
 		void readLocation();
 		// A command's done that shows its error in a dialog in the window if it failed (project-error.rml), so that a
 		// failed save isn't taken for done, and which media files a save found missing (missingMedia).
@@ -117,12 +123,13 @@ namespace gnubase::ui
 		// Shows the error in project-error.rml in the window once the event that asked is done. A failed auto save's
 		// error (autoSave) takes the place of an earlier one's but doesn't open over any other modal dialog in the
 		// window: it waits for them to close (waitForDialogs). It counts as shown only once it opened and while no
-		// other dialog took its place.
-		void openError(WindowId window, const std::string& error, bool autoSave);
+		// other dialog took its place. failure is the auto save's number (m_autoSaveFailures): its error doesn't open
+		// once a newer failure came, which shows its own (#859).
+		void openError(WindowId window, const std::string& error, bool autoSave, uint64_t failure = 0);
 		// Keeps a failed auto save's error for the window until the modal dialogs in the context other than m_dialog,
 		// which keep it from opening, closed: they tell ProcessEvent when one hides or unloads. It replaces the error
 		// that waited before.
-		void waitForDialogs(Rml::Context& context, WindowId window, const std::string& error);
+		void waitForDialogs(Rml::Context& context, WindowId window, const std::string& error, uint64_t failure);
 		// Opens the error that waited, if any, once the dialog that closed is gone; it waits again for dialogs that
 		// are still open.
 		void showWaitingError();
@@ -176,6 +183,8 @@ namespace gnubase::ui
 		Shell& m_shell;
 		std::filesystem::path m_folder;
 		std::string m_file; // the project's file (project.location), empty for none
+		// For a project opened from an auto save, the project file it was made of, which Save proposes (#635).
+		std::string m_autoSaveOf;
 		Subscription m_saved;
 		Subscription m_reset;
 		Subscription m_jobStarted;
@@ -201,5 +210,7 @@ namespace gnubase::ui
 		std::optional<WaitingError> m_waitingError;
 		std::vector<Rml::ObserverPtr<Rml::Element>> m_keptAwayBy;
 		uint64_t m_autoSaveWorked = 0; // how often autoSaveWorks ran, so that openError knows an error is out of date
+		// How many failed auto saves had an error to show, so that openError knows a newer one came (#859).
+		uint64_t m_autoSaveFailures = 0;
 	};
 }

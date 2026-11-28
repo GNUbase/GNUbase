@@ -42,6 +42,9 @@ namespace gnubase::ui
 		// window system doesn't say, as for ui::Automation's keys, which count as typed on a US keyboard. Key commands
 		// follow the layout, the key; the on-screen keyboard plays by place (#691).
 		Rml::Input::KeyIdentifier position = Rml::Input::KI_UNKNOWN;
+		// Not a key: the window lost the keyboard focus, which ends every key held. A key that RmlUi can't map, such as
+		// a letter of another layout or a media key, is KI_UNKNOWN too (#569).
+		bool focusLost = false;
 
 		bool operator==(const KeyPress& other) const { return key == other.key && modifiers == other.modifiers; }
 		bool operator<(const KeyPress& other) const
@@ -78,7 +81,7 @@ namespace gnubase::ui
 		uint64_t dialog = 0;                      // FileDialogClosed: the id showFileDialog was given
 		std::string error;                        // FileDialogClosed: why the dialog failed; empty if it didn't
 		std::optional<KeyPress> key;              // Input: a key pressed that no element used, for key commands
-		std::optional<KeyPress> keyUp; // Input: a key released; KI_UNKNOWN for every key, as when the focus went
+		std::optional<KeyPress> keyUp;            // Input: a key released, or focusLost
 	};
 
 	enum class FileDialogKind : uint8_t

@@ -159,6 +159,9 @@ namespace gnubase::engine
 				for (TrackVersion& version : track.versions)
 				{
 					version = copyVersion(m_to, version, track.id);
+					// Real copies, as the active version's audio parts (copyEvents) and MIDI parts (copyPart) come in.
+					for (AudioPart& part : version.audioParts)
+						part.shared = 0;
 					for (AudioEvent& event : version.audioEvents)
 						event.clip = clip(event.clip);
 					for (MidiPart& part : version.midiParts)
@@ -349,11 +352,7 @@ namespace gnubase::engine
 					event.id = ids.at(event.id);
 					event.track = track;
 					event.front = 0;
-					const auto from = ids.find(event.crossfade.from);
-					event.crossfade.from = from == ids.end() ? 0 : from->second;
-					// The copies' slices reset into the copy of their event (#1668).
-					const auto sliced = ids.find(event.slicedFrom);
-					event.slicedFrom = sliced == ids.end() ? 0 : sliced->second;
+					remapCopiedEvent(event, ids);
 					const auto part = parts.find(event.part);
 					event.part = part == parts.end() ? 0 : part->second;
 					event.clip = clip(event.clip);
@@ -676,8 +675,7 @@ namespace gnubase::engine
 			require(fs::is_regular_file(file, error), "there is no file " + file.u8string());
 			try
 			{
-				return loadDawProject(file.u8string(),
-					(file.parent_path() / fs::u8path(file.stem().u8string() + " media")).u8string(), extract);
+				return loadDawProject(file.u8string(), extractedMediaFolderFor(file).u8string(), extract);
 			}
 			catch (const std::exception& problem)
 			{

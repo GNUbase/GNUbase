@@ -800,4 +800,14 @@ TEST_CASE("the draw tool, and the step selection tool with Alt, show the pencil 
 	f.app.ui().move(f.window, of(".pattern-tool[pattern-tool=draw]"), {"alt"});
 	f.app.shell().step(std::chrono::milliseconds(0));
 	CHECK(f.app.ui().windows().at("cursor").get<std::string>().empty());
+	// Alt going down and up while the mouse rests over a step changes it at once (#1857).
+	CHECK(pointer().empty());
+	const auto alt = [&f](ui::KeyAction action)
+	{
+		f.app.ui().key(f.window, "Alt", action);
+		f.app.shell().step(std::chrono::milliseconds(0));
+		return f.app.ui().windows().at("cursor").get<std::string>();
+	};
+	CHECK(alt(ui::KeyAction::Down) == "tool-draw");
+	CHECK(alt(ui::KeyAction::Up).empty());
 }

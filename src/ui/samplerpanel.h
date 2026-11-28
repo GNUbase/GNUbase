@@ -27,13 +27,14 @@ namespace Rml
 namespace gnubase::ui
 {
 	// The sampler panel (#1029, reference manual pp. 710-717, 730, docs/features/sampler-track.md), a panel of the
-	// lower zone that shows the selected sampler track: its toolbar (the event received indicator, Snap to Zero
-	// Crossing, Import Audio File, the sample's file name, Normalize Sample, Lock Parameter Settings and MIDI Reset),
-	// the waveform display with the markers of the sample's start and end, the loop, the fades and the loop crossfade
-	// and the bars between start and end and between the loop's ends, its ruler and zoom sliders (p. 717), the
-	// Playback, Pitch, Filter and Amp sections with a control per sampler parameter (from processor.list) and the
-	// keyboard section with the pitchbend range, the root key and the key range above a keyboard that shows them, with
-	// a handle for each (p. 730). The root gets the class empty while the selected track isn't a sampler track.
+	// lower zone that shows the selected sampler track: its toolbar (Read Automation, the event received indicator,
+	// Snap to Zero Crossing, Import Audio File, the sample's file name, Normalize Sample, Lock Parameter Settings and
+	// MIDI Reset), the waveform display with the markers of the sample's start and end, the loop, the fades and the
+	// loop crossfade and the bars between start and end and between the loop's ends, with its ruler and zoom sliders
+	// (p. 717), the Playback, Pitch, Filter and Amp sections with a control per sampler parameter (from processor.list)
+	// and the keyboard section with the pitchbend range, the root key and the key range above a keyboard that shows
+	// them, with a handle for each (p. 730). The root gets the class empty while the selected track isn't a sampler
+	// track.
 	//
 	// Controls, markers, bars and handles set the sampler's parameters (parameter.set), a drag or a widget's gesture
 	// one undo step (EngineBinding::sendStep); a click on a key sets the root key. A file dropped on the panel, or
@@ -117,9 +118,11 @@ namespace gnubase::ui
 		uint64_t m_selected = 0; // the track update showed last, a sampler track or not
 		uint64_t m_loads = 0;
 		uint64_t m_read = 0;
-		engine::Json m_channel; // the sampler track's, null without one
-		uint64_t m_media = 0;   // the media file its sample plays
-		int64_t m_length = 0;   // in its frames
+		engine::Json m_channel;        // the sampler track's, null without one
+		std::vector<uint64_t> m_lanes; // its automation lanes
+		bool m_reading = false;        // all of them read: Read Automation is on (p. 712)
+		uint64_t m_media = 0;          // the media file its sample plays
+		int64_t m_length = 0;          // in its frames
 		int m_mediaChannels = 1;
 		bool m_asking = false;     // media.peaks is in flight
 		bool m_again = false;      // and asks again when it answers

@@ -13,10 +13,13 @@
 #include "engine/document/trackvisibility.h"
 #include "engine/document/warp.h"
 #include "engine/engine.h"
+#include "engine/midi/controllerlanes.h"
 #include "engine/midi/midivalues.h"
 #include "engine/midi/patterns.h"
+#include "engine/midi/trackchannel.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -1279,25 +1282,58 @@ namespace gnubase::engine
 				// glued part keeps the first one's, and the notes of the others get the difference of what the two
 				// parts play them with: their own transposes with global transposition, which Keep Transpose in
 				// Octave Range folds as one sum (#896), so the difference is what the parts play at each note's
-				// position. A note the difference would move beyond 0 to 127 can't keep its pitch, so the glue is
-				// refused.
-				const auto playedShift = [&](const MidiPart& other, const Note& note)
+				// position. Their poly pressure moves with the note it presses, as playback moves it (#870), or by
+				// the difference at its own position. A note or poly pressure the difference would move beyond 0 to
+				// 127 can't keep its pitch, so the glue is refused.
+				const auto playedShift = [&](const MidiPart& other, time::Ticks position)
 				{
 					const time::Samples at =
-						project.tempo.toSamples(ticks(project, other.position) + note.position, project.sampleRate);
+						project.tempo.toSamples(ticks(project, other.position) + position, project.sampleRate);
 					return globalTranspose(project, other, at) - globalTranspose(project, part, at);
+				};
+				const bool anyChannel = midi::trackMidiChannel(project, part.track).has_value();
+				const auto pressureShift =
+					[&](const MidiPart& other, const midi::PressedNotes& notes, const Controller& pressure)
+				{
+					const Note* pressed = notes.find(pressure);
+					return playedShift(other, pressed != nullptr ? pressed->position : pressure.position);
 				};
 				for (size_t i = 1; i < items.size(); ++i)
 				{
 					const MidiPart& other = *items[i].part;
-					for (const auto& [id, note] : notesOf(other))
+					const std::map<ObjectId, Note> notes = notesOf(other);
+					const midi::PressedNotes pressed(notes, anyChannel);
+					const auto refuse = [&](int pitch, int transpose, const char* what)
 					{
-						const int transpose = playedShift(other, note);
-						require(note.pitch + transpose >= 0 && note.pitch + transpose <= 127,
-							"a note of MIDI part " + std::to_string(other.id) +
+						require(pitch + transpose >= 0 && pitch + transpose <= 127,
+							std::string(what) + " of MIDI part " + std::to_string(other.id) +
 								" would be transposed beyond 0 to 127 by the difference of what the parts play with");
-					}
+					};
+					for (const auto& [id, note] : notes)
+						refuse(note.pitch, playedShift(other, note.position), "a note");
+					for (const auto& [id, controller] : other.controllers)
+						if (controller.type == ControllerType::PolyPressure)
+							refuse(
+								controller.number, pressureShift(other, pressed, controller), "a poly pressure event");
 				}
+				// The other parts' velocities as the first one's plays them: the track compresses a stored velocity
+				// before it adds the part's (unless its modifiers are bypassed), so the difference goes in divided by
+				// the compression, which keeps the sound for the compression set now, as near as its steps allow. In
+				// MIDI 1.0 velocities, as the modifiers work; the stored velocity stays from 1 to 127, so a note whose
+				// stored velocity would have to go beyond that is stored at the end and plays softer or louder.
+				const midi::Modifiers& modifiers =
+					project.channels.at(project.trackById.at(part.track).channel).modifiers;
+				const std::array<int, 2> compression =
+					modifiers.bypass ? std::array<int, 2>{1, 1} : modifiers.velocityCompression;
+				const auto gluedVelocity = [&compression](uint16_t velocity, int difference)
+				{
+					// As midi::modifyNote rounds it.
+					const int64_t played = std::llround(static_cast<double>(midi::velocityToMidi1(velocity)) *
+											   compression[0] / compression[1]) +
+						difference;
+					const int64_t stored = std::llround(static_cast<double>(played) * compression[1] / compression[0]);
+					return midi::velocityFromMidi1(static_cast<uint8_t>(std::clamp<int64_t>(stored, 1, 127)));
+				};
 				detach(project, part);
 				if (!continues && part.pattern != 0)
 				{
@@ -1318,17 +1354,16 @@ namespace gnubase::engine
 					end = std::max(end, other.position.value + other.length);
 					const time::Ticks offset = ticks(project, other.position) - start;
 					const int velocity = other.velocity - part.velocity;
-					for (const auto& [id, each] : notesOf(other))
+					const std::map<ObjectId, Note> notes = notesOf(other);
+					const midi::PressedNotes pressed(notes, anyChannel);
+					for (const auto& [id, each] : notes)
 					{
-						const int transpose = playedShift(other, each);
 						Note note = each;
 						note.id = project.newId();
 						note.position += offset;
-						note.pitch = static_cast<uint8_t>(note.pitch + transpose);
-						// As the velocity shift plays it: in MIDI 1.0 velocities, from 1 to 127.
-						if (velocity != 0)
-							note.velocity = midi::velocityFromMidi1(static_cast<uint8_t>(
-								std::clamp(midi::velocityToMidi1(note.velocity) + velocity, 1, 127)));
+						note.pitch = static_cast<uint8_t>(note.pitch + playedShift(other, each.position));
+						if (velocity != 0) // else it keeps its 16 bits
+							note.velocity = gluedVelocity(note.velocity, velocity);
 						part.notes[note.id] = note;
 					}
 					for (const auto& [id, each] : other.controllers)
@@ -1336,6 +1371,8 @@ namespace gnubase::engine
 						Controller controller = each;
 						controller.id = project.newId();
 						controller.position += offset;
+						if (each.type == ControllerType::PolyPressure)
+							controller.number = static_cast<uint8_t>(each.number + pressureShift(other, pressed, each));
 						part.controllers[controller.id] = std::move(controller);
 					}
 				}
@@ -2465,6 +2502,66 @@ namespace gnubase::engine
 			return gap;
 		}
 
+		// Takes a range out of the markers on the marker tracks among its tracks as deleteRange takes it out of events
+		// (#1190, reference manual p. 425): the markers in it go, a cycle marker that reaches across one of its edges
+		// gets shorter, and one that it lies inside is split in two. The piece after the range is the marker itself and
+		// keeps its number; the piece before it gets the first free number, the same name and color.
+		void cutMarkers(Project& project, const Range& range, CommandContext& context)
+		{
+			// The markers in the range go first, so that their numbers are free for the pieces before it.
+			std::vector<ObjectId> across;
+			for (auto entry = project.markers.begin(); entry != project.markers.end();)
+			{
+				const Marker& marker = entry->second;
+				const bool cycle = marker.type == MarkerType::Cycle;
+				const time::Samples from = samples(project, marker.position);
+				const time::Samples to = cycle ? samples(project, marker.end) : from;
+				if (contains(range.tracks, marker.track) && from >= range.start && from < range.end && to <= range.end)
+				{
+					const ObjectId id = entry->first;
+					entry = project.markers.erase(entry);
+					context.emit("marker.removed", {{"marker", id}});
+					continue;
+				}
+				// Only a cycle marker can reach across an edge: a position marker that isn't in the range is outside
+				// it.
+				if (contains(range.tracks, marker.track) && to > range.start && from < range.end)
+					across.push_back(entry->first);
+				++entry;
+			}
+			for (const ObjectId id : across)
+			{
+				Marker& marker = project.markers.at(id);
+				const time::Samples from = samples(project, marker.position);
+				const time::Samples to = samples(project, marker.end);
+				const time::TimeBase base = project.trackById.at(marker.track).timeBase;
+				if (from < range.start && to > range.end)
+				{
+					Marker before = marker;
+					before.id = project.newId();
+					before.end = {base, inBase(project, range.start, base)};
+					keepMinimumLength(project, before);
+					before.number = 1;
+					while (std::any_of(project.markers.begin(), project.markers.end(),
+						[&before](const auto& entry)
+						{
+							const Marker& other = entry.second;
+							return other.track == before.track && other.type == before.type &&
+								other.number == before.number;
+						}))
+						++before.number;
+					project.markers[before.id] = before;
+					context.emit("marker.added", {{"marker", toJson(before)}});
+				}
+				if (from < range.start && to <= range.end)
+					marker.end = {base, inBase(project, range.start, base)};
+				else
+					marker.position = {base, inBase(project, range.end, base)};
+				keepMinimumLength(project, marker);
+				context.emit("marker.changed", {{"marker", toJson(marker)}});
+			}
+		}
+
 		// Deletes what lies in a range; close (Delete Time) moves what comes after it back by its length (closing).
 		void deleteRange(Project& project, const Range& range, bool close, CommandContext& context)
 		{
@@ -2979,6 +3076,37 @@ namespace gnubase::engine
 			return {{"events", idsOf(pasteClipboard(project, clipboard, tracks, at, to.tick, context))}};
 		}
 
+		// Makes the parts of a section pasted again shared copies of those its first paste made, one by one: the same
+		// clipboard pastes the same items in the same order. A MIDI part takes the first one's notes and controllers,
+		// with their ids; an audio part's events are already alike.
+		void shareWith(
+			Project& project, const std::vector<Item>& first, const std::vector<Item>& again, CommandContext& context)
+		{
+			for (size_t i = 0; i < std::min(first.size(), again.size()); ++i)
+			{
+				if (first[i].part != nullptr && again[i].part != nullptr)
+				{
+					if (first[i].part->shared == 0)
+						first[i].part->shared = project.newId();
+					again[i].part->shared = first[i].part->shared;
+					again[i].part->notes = first[i].part->notes;
+					again[i].part->controllers = first[i].part->controllers;
+				}
+				else if (first[i].audioPart != nullptr && again[i].audioPart != nullptr)
+				{
+					if (first[i].audioPart->shared == 0)
+						first[i].audioPart->shared = project.newId();
+					again[i].audioPart->shared = first[i].audioPart->shared;
+				}
+				else
+				{
+					continue;
+				}
+				announce(project, context, first[i], "changed");
+				announce(project, context, again[i], "changed");
+			}
+		}
+
 		// Flatten Chain (#167, reference manual pp. 407-411): from the start of the chain's first event on, the project
 		// becomes what the chain plays, every step's event repeated, one after the other. What lies before stays.
 		// Returns where the flattened chain starts and ends, in samples. The notes that cross a section's edges are cut
@@ -3031,6 +3159,10 @@ namespace gnubase::engine
 			time::Samples at = start;
 			std::vector<ArrangerEvent> placed;
 			std::map<ObjectId, int> count; // of each event's sections so far
+			// What each event's first section pasted, whose shared copies its other sections' parts become without
+			// realCopies (Make Real Event Copies, p. 408).
+			const bool real = parameters.value("realCopies", false);
+			std::map<ObjectId, std::vector<Item>> firstPasted;
 			for (const Section& section : sections)
 			{
 				RangeClipboard copied = copyRange(original, {section.start, section.end, tracks, !dontSplit}, true);
@@ -3044,7 +3176,9 @@ namespace gnubase::engine
 							note = note->second.position + note->second.length > end ? part.notes.erase(note)
 																					 : std::next(note);
 					}
-				pasteClipboard(project, copied, tracks, at, std::nullopt, context);
+				const std::vector<Item> pasted = pasteClipboard(project, copied, tracks, at, std::nullopt, context);
+				if (const auto [first, isFirst] = firstPasted.try_emplace(section.event->id, pasted); !real && !isFirst)
+					shareWith(project, first->second, pasted, context);
 				const time::TimeBase base = section.event->position.base;
 				const int number = ++count[section.event->id];
 				placed.push_back(
@@ -3354,14 +3488,27 @@ namespace gnubase::engine
 			return event;
 		}
 
+		// The events of the shared audio parts by part, in id order: one pass over the events for all parts.
+		using EventsByPart = std::map<ObjectId, std::vector<const AudioEvent*>>;
+		EventsByPart byPart(const std::map<ObjectId, AudioEvent>& events, const std::map<ObjectId, AudioPart>& parts)
+		{
+			EventsByPart found;
+			if (std::none_of(parts.begin(), parts.end(), [](const auto& part) { return part.second.shared != 0; }))
+				return found; // most projects: no pass over the events after every command
+			for (const auto& [id, event] : events)
+				if (const auto part = parts.find(event.part); part != parts.end() && part->second.shared != 0)
+					found[event.part].push_back(&event);
+			return found;
+		}
+
 		// What the shared copies of an audio part share: its events by id.
-		// ponytail: a pass over every audio event per shared part; index them by part if that ever shows.
-		std::vector<AudioEvent> contentsOf(const std::map<ObjectId, AudioEvent>& events, const AudioPart& part)
+		std::vector<AudioEvent> contentsOf(
+			const std::map<ObjectId, AudioEvent>& events, const EventsByPart& index, const AudioPart& part)
 		{
 			std::vector<AudioEvent> contents;
-			for (const auto& [id, event] : events)
-				if (event.part == part.id)
-					contents.push_back(sharedOf(events, event, part));
+			if (const auto found = index.find(part.id); found != index.end())
+				for (const AudioEvent* event : found->second)
+					contents.push_back(sharedOf(events, *event, part));
 			return contents;
 		}
 
@@ -3485,6 +3632,8 @@ namespace gnubase::engine
 		// The first part of each group whose contents changed is what the group now holds.
 		std::map<ObjectId, const AudioPart*> audioSources;
 		std::map<ObjectId, int> audioMembers;
+		const EventsByPart wasIn = byPart(before.audioEvents, before.audioParts);
+		const EventsByPart isIn = byPart(project.audioEvents, project.audioParts);
 		for (const auto& [id, part] : project.audioParts)
 		{
 			if (part.shared == 0)
@@ -3493,7 +3642,7 @@ namespace gnubase::engine
 			const auto old = before.audioParts.find(id);
 			if (old != before.audioParts.end() && old->second.shared == part.shared &&
 				audioSources.count(part.shared) == 0 &&
-				contentsOf(before.audioEvents, old->second) != contentsOf(project.audioEvents, part))
+				contentsOf(before.audioEvents, wasIn, old->second) != contentsOf(project.audioEvents, isIn, part))
 				audioSources[part.shared] = &part;
 		}
 		for (auto& [id, part] : project.audioParts)
@@ -3662,10 +3811,11 @@ namespace gnubase::engine
 				"end, with all their notes and controllers; it keeps its transpose and velocity, and the notes of the "
 				"others get the difference of the transpose and velocity their part plays them with — the transpose at "
 				"each note's position, as Keep Transpose in Octave Range folds a part's own transpose into the global "
-				"transposition it plays with — so that they play as before as far as velocities from 1 to 127 allow "
-				"(refused if that would transpose a note beyond 0 to 127). Pattern events that continue the first "
-				"one's pattern, as the pieces of a split do, stay that "
-				"pattern event; otherwise the pattern events' steps become notes of the glued part, as they played. "
+				"transposition it plays with, and the velocity divided by the track's velocity compression — so that "
+				"they play as before as far as velocities from 1 to 127 allow; their poly pressure moves with the note "
+				"it presses (refused if that would transpose a note or poly pressure beyond 0 to 127). Pattern events "
+				"that continue the first one's pattern, as the pieces of a split do, stay that pattern event; "
+				"otherwise the pattern events' steps become notes of the glued part, as they played. "
 				"Refused for audio events that continue each other but follow global transpose differently, by their "
 				"root key or Global Transpose, or transpose differently by their own transpose, and for MIDI parts "
 				"that follow global transpose differently: the glued event or part keeps the first one's, so the "
@@ -3828,12 +3978,11 @@ namespace gnubase::engine
 					"back by its length, in ticks on musical tracks, and the transpose events in the range go with it, "
 					"those after it moving back too, and the transposition in force at its end goes on from its "
 					"start, unless the transpose track is locked. Locked events stay. Without "
-					"time it also takes the range out of the cycle markers that it lies in, on the marker tracks among "
-					"its tracks (reference manual p. 425): a cycle marker that starts or ends where the range does "
-					"gets shorter, and one that reaches past both of its edges is split in two, the part after the "
-					"range a new cycle marker with the first free number and the same name and color. Position markers "
-					"stay, and so do cycle markers that the range covers whole or reaches out of; with time every "
-					"marker stays.",
+					"time it also takes the range out of the markers on the marker tracks among its tracks, as out of "
+					"events (reference manual p. 425): the position and cycle markers in it go, a cycle marker that "
+					"reaches across one of its edges gets shorter, and one that reaches across both is split in two. "
+					"The piece after the range keeps the marker's id and number, the piece before it is a new cycle "
+					"marker with the first free number and the same name and color. With time every marker stays.",
 				schema(withTime, {}), {{"type", "object"}}, false},
 			"Delete",
 			[](Project& project, CommandContext& context)
@@ -3842,7 +3991,7 @@ namespace gnubase::engine
 				const bool closes = context.parameters().value("time", false);
 				deleteRange(project, range, closes, context);
 				if (!closes)
-					cutCycleMarkers(project, range.start, range.end, range.tracks, context);
+					cutMarkers(project, range, context);
 				return Json::object();
 			});
 
@@ -3882,8 +4031,8 @@ namespace gnubase::engine
 			{"range.cut", 1,
 				"Copies " + range +
 					" to the range clipboard as range.copy does, then deletes it as range.delete does; time (Cut Time) "
-					"closes the gap. Without time it cuts the range out of the cycle markers that it lies in as "
-					"range.delete does; markers don't go to the clipboard. Locked events stay where they are and "
+					"closes the gap. Without time it takes the range out of the markers as range.delete does; markers "
+					"don't go to the clipboard. Locked events stay where they are and "
 					"aren't copied." +
 					named +
 					" It removes them as event.remove does, and refuses locked ones. Returns how many events and "
@@ -3911,7 +4060,7 @@ namespace gnubase::engine
 				clipboard.cursor = cursorOf(context);
 				deleteRange(project, cut, closes, context);
 				if (!closes)
-					cutCycleMarkers(project, cut.start, cut.end, cut.tracks, context);
+					cutMarkers(project, cut, context);
 				Json result = clipboardInfo(clipboard);
 				m_clipboard = std::make_shared<const RangeClipboard>(std::move(clipboard));
 				context.emit("rangeClipboard.changed", result);
@@ -3997,7 +4146,9 @@ namespace gnubase::engine
 				"Flatten Chain (#167): makes the project play the arranger chain (default: the active one) linearly. "
 				"From the start of the chain's first event on, every track's events, parts and automation are "
 				"replaced by the chain's sections, each step's event as often as it repeats, one after the other; "
-				"what lies before stays, and so do locked events. Copies are real copies. MIDI notes that cross a "
+				"what lies before stays, and so do locked events. The parts of an event's repeats are shared copies "
+				"of those of its first section, or with realCopies (Make Real Event Copies) real copies. MIDI notes "
+				"that cross a "
 				"section's edges are cut there; with dontSplit (Don't Split Events) a section has only the notes "
 				"that start and end in it. Without keepTrack (Keep Arranger Track) the arranger track goes; with it, "
 				"it has an event per section where it now is and one chain that plays them in order, and with "
@@ -4005,7 +4156,7 @@ namespace gnubase::engine
 				"its event came so far (A 1, B 1, A 2). One undo step. Returns where the flattened chain starts and "
 				"ends, in samples.",
 				schema({{"chain", integer()}, {"keepTrack", boolean()}, {"dontSplit", boolean()},
-						   {"renameEvents", boolean()}},
+						   {"renameEvents", boolean()}, {"realCopies", boolean()}},
 					{}),
 				schema({{"start", integer()}, {"end", integer()}}, {"start", "end"}), false},
 			"Flatten arranger chain",

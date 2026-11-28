@@ -21,6 +21,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -1355,6 +1356,36 @@ TEST_CASE("track.import merges a musical track onto a linear one with its versio
 	CHECK(other.at("midiParts")[0].at("length") == 24000);
 	REQUIRE(count(project, "automation", mine.track) == 1);
 	CHECK(project.at("automation")[0].at("points")[0].at("position") == 96000);
+}
+
+TEST_CASE("track.import extracts embedded media into the folder that a load of the file extracts into", "[integration]")
+{
+	// Named after the file as its versions are (#798): Mix v2.1 media for a file Mix v2.1, not Mix v2 media, which
+	// imports from Mix v2.2 would share.
+	const test::TempDir dir;
+	const fs::path wav = dir.path() / "take.wav";
+	test::writeWav(wav, {std::vector<float>(4800, 0.25f), 1, 48000});
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	const Added take = add(client, {{"type", "audio"}, {"name", "Take"}});
+	const ObjectId media = run(client, "media.add", {{"path", wav.u8string()}}).at("media").at("id").get<ObjectId>();
+	const ObjectId clip = run(client, "clip.add", {{"media", media}}).at("clip").at("id").get<ObjectId>();
+	run(client, "audioEvent.add",
+		{{"track", take.track}, {"clip", clip}, {"position", 0}, {"offset", 0}, {"length", 4800}});
+	const fs::path exported = dir.path() / "Mix v2.1.dawproject";
+	run(client, "track.export", {{"tracks", {take.track}}, {"path", exported.u8string()}, {"copyMedia", true}});
+	const fs::path file = dir.path() / "Mix v2.1";
+	fs::rename(exported, file);
+
+	run(client, "project.new");
+	const Json added = run(client, "track.import", {{"path", file.u8string()}}).at("media");
+	REQUIRE(added.size() == 1);
+	const Json project = run(client, "project.get");
+	const fs::path extracted =
+		fs::u8path(find(project.at("media"), added[0].get<ObjectId>()).at("path").get<std::string>());
+	std::error_code error;
+	CHECK(fs::equivalent(extracted.parent_path().parent_path(), dir.path() / "Mix v2.1 media", error));
+	CHECK(!fs::exists(dir.path() / "Mix v2 media"));
 }
 
 TEST_CASE("track.import returns the media files it added, not the ones it shares with the project", "[integration]")

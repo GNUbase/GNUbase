@@ -2,6 +2,7 @@
 #include "ui/keyeditor.h"
 
 #include "engine/document/document.h"
+#include "engine/midi/articulationmaps.h"
 #include "engine/midi/chords.h"
 #include "engine/midi/quantizesettings.h"
 #include "engine/time/tempomap.h"
@@ -347,14 +348,17 @@ namespace gnubase::ui
 			R"(<button id="key-length-quantize" menu="key-length-menu)" + m_menuSuffix +
 			R"(" title="Length Quantize"/>)"
 			R"(<valuefield id="key-insert-velocity" min="1" max="127" default="100" step="1" decimals="0")"
-			R"( title="Insert Velocity"/>)" +
+			R"( title="Insert Velocity"/><button id="key-event-colors" menu="key-event-colors-menu)" +
+			m_menuSuffix + R"(" title="Event Colors"/>)" +
 			// Show Note Expression Data and Double-Click Opens Note Expression Editor (pp. 1303, 1308).
 			(drum ? std::string()
 				  : std::string(
 						R"(<span class="separator"/>)"
 						R"(<button class="key-input" setting="showExpression" title="Show Note Expression Data">)"
 						R"(Expression</button><button class="key-input" setting="expressionDoubleClick")"
-						R"( title="Double-Click Opens Note Expression Editor">Edit Expression</button>)")) +
+						R"( title="Double-Click Opens Note Expression Editor">Edit Expression</button>)"
+						R"(<button class="key-input" setting="indicateTranspositions" title="Indicate Transpositions">)"
+						R"(Transpositions</button>)")) +
 			(drum ? R"(<span class="separator"/><button id="drum-map" menu="drum-map-menu)" + m_menuSuffix +
 						R"(" title="Drum Map"/>)"
 						R"(<button class="key-input" setting="pitchVisibility" title="Pitch Visibility On/Off">)"
@@ -425,8 +429,14 @@ namespace gnubase::ui
 						R"("><menuitem type="toggle" gm-names="false">No Names</menuitem>)"
 						R"(<menuitem type="toggle" gm-names="true">GM Default</menuitem></menu>)"
 				  : R"(<menu id="key-expression-menu)" + m_menuSuffix + R"(">)" + expressions + "</menu>") +
+			// The Event Colors menu (pp. 1133-1134).
+			R"(<menu id="key-event-colors-menu)" + m_menuSuffix +
+			R"("><menuitem type="toggle" event-colors="default">Default</menuitem>)"
+			R"(<menuitem type="toggle" event-colors="part">Part</menuitem>)"
+			R"(<menuitem type="toggle" event-colors="soundSlot">Sound Slot</menuitem></menu>)"
 			// The info line's attributes (renderInfo), the last menu.
-			R"(<menu id="key-articulations-menu)" + m_menuSuffix + R"("/>)");
+			R"(<menu id="key-articulations-menu)" +
+			m_menuSuffix + R"("/>)");
 		while (holder->HasChildNodes())
 		{
 			Rml::Element* menu = document->AppendChild(holder->RemoveChild(holder->GetFirstChild()));
@@ -437,6 +447,9 @@ namespace gnubase::ui
 			root.AddEventListener(event, this);
 		document->AddEventListener(Rml::EventId::Mouseup, this);
 		document->AddEventListener(Rml::EventId::Mouseout, this);
+		// Modifier keys going down and up anywhere in the window change the pointer while the mouse rests (#1857).
+		document->AddEventListener(Rml::EventId::Keydown, this);
+		document->AddEventListener(Rml::EventId::Keyup, this);
 		// In the capture phase: a press anywhere in the document ends a lost gesture before anything hears it.
 		document->AddEventListener(Rml::EventId::Mousedown, this, true);
 		m_document = document->GetObserverPtr();
@@ -495,6 +508,8 @@ namespace gnubase::ui
 		{
 			document->RemoveEventListener(Rml::EventId::Mouseup, this);
 			document->RemoveEventListener(Rml::EventId::Mouseout, this);
+			document->RemoveEventListener(Rml::EventId::Keydown, this);
+			document->RemoveEventListener(Rml::EventId::Keyup, this);
 			document->RemoveEventListener(Rml::EventId::Mousedown, this, true);
 		}
 		if (Rml::Element* root = m_root.get())
@@ -560,13 +575,24 @@ namespace gnubase::ui
 		m_view = view;
 		m_parts.clear();
 		m_notes.clear();
+		m_hiddenExpressions.clear();
 		if (!m_project.contains("tracks") || !m_view.contains("parts"))
 			return;
 		const TimeContext time = projectTime(m_project);
 		std::map<uint64_t, const Json*> tracks;
 		for (const Json& track : m_project.at("tracks"))
 			tracks[track.at("id").get<uint64_t>()] = &track;
+		std::map<uint64_t, Json> hidden; // by channel, the expressions its setup hides
+		for (const Json& channel : m_project.value("channels", Json::array()))
+			if (channel.contains("noteExpression"))
+				hidden[channel.at("id").get<uint64_t>()] = channel.at("noteExpression").value("hidden", Json::array());
 		const Json& editable = m_view.at("editable");
+		m_noteColors.clear();
+		const std::string colors = m_view.value("eventColors", std::string("default"));
+		std::map<uint64_t, const Json*> maps;
+		if (const auto found = m_project.find("articulationMaps"); found != m_project.end())
+			for (const Json& map : *found)
+				maps[map.at("id").get<uint64_t>()] = &map;
 		for (const Json& id : m_view.at("parts"))
 			for (const Json& part : m_project.at("midiParts"))
 			{
@@ -579,6 +605,10 @@ namespace gnubase::ui
 					ticksOf(track, position + part.at("length").get<int64_t>(), time),
 					std::find(editable.begin(), editable.end(), id) != editable.end()};
 				m_parts.push_back(item);
+				noteColors(colors, part, track, maps);
+				if (const auto found = hidden.find(track.value("channel", uint64_t{0})); found != hidden.end())
+					for (const Json& type : found->second)
+						m_hiddenExpressions.emplace(item.id, type.get<std::string>());
 				for (const Json& note : part.at("notes"))
 					m_notes.push_back({item.id, note.at("id").get<uint64_t>(),
 						item.start + note.at("position").get<int64_t>(), note.at("length").get<int64_t>(),
@@ -772,6 +802,32 @@ namespace gnubase::ui
 		}
 	}
 
+	// The colors of a part's notes for the Event Colors menu (pp. 1133-1134, 1269): part, the part's own color or else
+	// its track's; soundSlot, the color of the slot of its track's articulation map that each note plays.
+	void KeyEditor::noteColors(
+		const std::string& colors, const Json& part, const Json& track, const std::map<uint64_t, const Json*>& maps)
+	{
+		const auto id = part.at("id").get<uint64_t>();
+		if (colors == "part")
+		{
+			Json own = part.value("color", Json());
+			if (!own.is_string())
+				own = track.value("color", Json());
+			if (!own.is_string() || own.get<std::string>().empty())
+				return;
+			for (const Json& note : part.at("notes"))
+				m_noteColors[{id, note.at("id").get<uint64_t>()}] = own.get<std::string>();
+			return;
+		}
+		const auto map = maps.find(track.value("articulationMap", uint64_t{0}));
+		if (colors != "soundSlot" || map == maps.end())
+			return;
+		const Json& slots = map->second->at("slots");
+		for (const auto& [note, slot] : engine::midi::soundSlots(*map->second, part))
+			if (slot < slots.size() && !slots.at(slot).value("color", std::string()).empty())
+				m_noteColors[{id, note}] = slots.at(slot).at("color").get<std::string>();
+	}
+
 	// The parts by track, a row per track in the editor's order (the reference's track display, p. 1154): each part
 	// at its time, .active and .editable as MidiEditor's view says.
 	std::string KeyEditor::partsRml() const
@@ -828,8 +884,8 @@ namespace gnubase::ui
 				(note.editable ? "" : " inactive") + R"(" part=")" + std::to_string(note.part) + R"(" note=")" +
 				std::to_string(note.id) + R"(">)";
 			for (const char* type : engine::g_expressionNames)
-				rml +=
-					expression ? stepsRml(note.expressions, type, 0, note.length, note.length, pixel) : std::string();
+				if (expression && !expressionHidden(note.part, type))
+					rml += stepsRml(note.expressions, type, 0, note.length, note.length, pixel);
 			rml += "</div>";
 		}
 		// Compared with what was set last: the element's own RML has the classes set since.
@@ -842,7 +898,26 @@ namespace gnubase::ui
 		if (notes != nullptr)
 			for (int i = 0; i < notes->GetNumChildren(); ++i)
 				if (const Note* found = noteOf(notes->GetChild(i)))
-					setClass(notes->GetChild(i), "selected", selected(*found));
+				{
+					Rml::Element* shown = notes->GetChild(i);
+					setClass(shown, "selected", selected(*found));
+					// Selected and inactive notes keep the style sheets' look.
+					const auto color = m_noteColors.find({found->part, found->id});
+					const std::string wanted =
+						color == m_noteColors.end() || selected(*found) || !found->editable ? "" : color->second;
+					if (attribute(*shown, "color") == wanted)
+						continue;
+					if (wanted.empty())
+					{
+						shown->RemoveAttribute("color");
+						shown->RemoveProperty(Rml::PropertyId::BackgroundColor);
+					}
+					else
+					{
+						shown->SetAttribute("color", wanted);
+						shown->SetProperty("background-color", wanted); // the part's or slot's color, user data
+					}
+				}
 		placeItems();
 
 		if (m_drum)
@@ -852,7 +927,7 @@ namespace gnubase::ui
 		root->QuerySelectorAll(keys, ".key-editor-key");
 		std::vector<bool> lit(g_pitches, false);
 		for (const Note* note : selectedNotes())
-			lit[static_cast<size_t>(note->pitch)] = true;
+			lit[static_cast<size_t>(shownPitch(*note))] = true;
 		for (Rml::Element* key : keys)
 			setClass(key, "selected", lit[static_cast<size_t>(std::stoi(attribute(*key, "pitch")))]);
 
@@ -960,6 +1035,26 @@ namespace gnubase::ui
 			// width.
 			setClass(root, "named-keys", any);
 		}
+		const std::string colors = m_view.value("eventColors", std::string("default"));
+		for (const Rml::ObserverPtr<Rml::Element>& menu : m_menus)
+			if (Rml::Element* element = menu.get())
+			{
+				Rml::ElementList items;
+				element->QuerySelectorAll(items, "menuitem[event-colors]");
+				for (Rml::Element* item : items)
+				{
+					const bool chosen = attribute(*item, "event-colors") == colors;
+					if (chosen)
+						setInner(root->QuerySelector("#key-event-colors"), item->GetInnerRML());
+					if (chosen != item->HasAttribute("checked"))
+					{
+						if (chosen)
+							item->SetAttribute("checked", "");
+						else
+							item->RemoveAttribute("checked");
+					}
+				}
+			}
 		// The drum editor's grid type (p. 1227).
 		const std::string gridType = m_view.value("gridType", std::string("quantize"));
 		const char* gridLabel = "Use Quantize";
@@ -1005,7 +1100,7 @@ namespace gnubase::ui
 		int low = g_pitches;
 		int high = -1;
 		for (const Note& note : m_notes)
-			if (const int row = m_rowOf.at(static_cast<size_t>(note.pitch)); row >= 0)
+			if (const int row = m_rowOf.at(static_cast<size_t>(shownPitch(note))); row >= 0)
 			{
 				low = std::min(low, row);
 				high = std::max(high, row);
@@ -1044,7 +1139,7 @@ namespace gnubase::ui
 						++next; // without an element (render)
 					if (next < m_notes.size())
 					{
-						place(child, m_notes[next].start, m_notes[next].length, m_notes[next].pitch);
+						place(child, m_notes[next].start, m_notes[next].length, shownPitch(m_notes[next]));
 						++next;
 					}
 				}
@@ -1140,7 +1235,7 @@ namespace gnubase::ui
 		for (const Note* each : selection)
 			if (std::make_pair(each->part, each->id) == m_expressionNote)
 				centered = each;
-		const double row = m_rowOf.at(static_cast<size_t>(centered->pitch));
+		const double row = m_rowOf.at(static_cast<size_t>(shownPitch(*centered)));
 		double height = grid != nullptr ? grid->GetBox().GetSize(Rml::BoxArea::Border).y : 0.0;
 		// The rows' height as the pitch zoom sets it, which the layout has not caught up with yet (setPitchZoom).
 		if (Rml::Element* first = grid != nullptr ? grid->QuerySelector(".key-editor-row") : nullptr)
@@ -1216,6 +1311,11 @@ namespace gnubase::ui
 		return {from, to};
 	}
 
+	bool KeyEditor::expressionHidden(uint64_t part, const std::string& type) const
+	{
+		return m_hiddenExpressions.count({part, type}) != 0;
+	}
+
 	void KeyEditor::renderExpression()
 	{
 		Rml::Element* root = m_root.get();
@@ -1226,12 +1326,35 @@ namespace gnubase::ui
 		m_expressionOpen = m_expressionOpen && !notes.empty(); // it edits the selected notes
 		setClass(editor, "off", !m_expressionOpen);
 		const std::string type = m_view.value("expressionType", std::string("tuning"));
+		// Parameter Selection lists the expressions the selected notes have points of, those their tracks' setups
+		// don't hide (p. 1309, #2120) and the one the editor edits.
+		std::string items;
 		for (size_t i = 0; i < engine::g_expressionNames.size(); ++i)
-			if (type == engine::g_expressionNames[i])
+		{
+			const std::string name = engine::g_expressionNames[i];
+			if (type == name)
 				setInner(editor->QuerySelector(".key-expression-type"), g_expressionLabels[i]);
+			const bool listed = name == type ||
+				std::any_of(notes.begin(), notes.end(),
+					[&](const Note* note)
+					{
+						return !expressionHidden(note->part, name) ||
+							std::any_of(note->expressions.begin(), note->expressions.end(),
+								[&](const Json& point) { return point.at("type") == name; });
+					});
+			if (listed)
+				items += R"(<menuitem type="toggle" expression-type=")" + name + R"(">)" + g_expressionLabels[i] +
+					"</menuitem>";
+		}
 		for (const Rml::ObserverPtr<Rml::Element>& menu : m_menus)
-			if (const Rml::Element* element = menu.get();
+			if (Rml::Element* element = menu.get();
 				element != nullptr && element->GetId().rfind("key-expression", 0) == 0)
+			{
+				if (items != m_expressionItems)
+				{
+					element->SetInnerRML(items);
+					m_expressionItems = items;
+				}
 				for (int i = 0; i < element->GetNumChildren(); ++i)
 					if (Rml::Element* item = element->GetChild(i);
 						(attribute(*item, "expression-type") == type) != item->HasAttribute("checked"))
@@ -1241,6 +1364,7 @@ namespace gnubase::ui
 						else
 							item->SetAttribute("checked", "");
 					}
+			}
 		if (!m_expressionOpen)
 			return;
 		// Each selected note's points, as the gesture going on changes them, on the editor's span.
@@ -1538,8 +1662,34 @@ namespace gnubase::ui
 		Json notes = Json::array();
 		for (const int64_t start : starts)
 			notes.push_back({{"position", start - part.start}, {"length", std::max<int64_t>(length, 1)},
-				{"pitch", pitch}, {"velocity", inserted}});
+				// Shown at the pitch it plays with Indicate Transpositions, under the mouse.
+				{"pitch", std::clamp(pitch - transposition(part.id, start), 0, g_pitches - 1)},
+				{"velocity", inserted}});
 		m_binding.send("note.add", {{"part", part.id}, {"notes", notes}});
+	}
+
+	int KeyEditor::transposition(uint64_t part, int64_t ticks) const
+	{
+		const auto found = m_view.find("transpositions");
+		if (m_drum || found == m_view.end())
+			return 0;
+		for (const Json& each : *found)
+		{
+			if (each.at("part") != part)
+				continue;
+			const Json& steps = each.at("steps");
+			int semitones = steps.empty() ? 0 : steps.front().at("semitones").get<int>();
+			for (const Json& step : steps)
+				if (step.at("position").get<int64_t>() <= ticks)
+					semitones = step.at("semitones").get<int>();
+			return semitones;
+		}
+		return 0;
+	}
+
+	int KeyEditor::shownPitch(const Note& note) const
+	{
+		return std::clamp(note.pitch + transposition(note.part, note.start), 0, g_pitches - 1);
 	}
 
 	int KeyEditor::shifted(int pitch, int rows) const
@@ -1724,6 +1874,10 @@ namespace gnubase::ui
 		{
 			setView({{"expressionType", attribute(target, "expression-type")}});
 		}
+		else if (target.HasAttribute("event-colors"))
+		{
+			setView({{"eventColors", attribute(target, "event-colors")}});
+		}
 		else if (target.HasAttribute("grid-type"))
 		{
 			setView({{"gridType", attribute(target, "grid-type")}});
@@ -1788,8 +1942,16 @@ namespace gnubase::ui
 			dragDuringGesture();
 			break;
 		case Rml::EventId::Mousemove:
-			showPointer(event);
+			m_mouseX = event.GetParameter("mouse_x", 0.0F);
+			showPointer(*target, m_mouseX, heldModifiers(event));
 			drag(event);
+			break;
+		case Rml::EventId::Keydown:
+		case Rml::EventId::Keyup:
+			// The key's target is the focus; the pointer is for the element under the mouse.
+			if (Rml::Context* context = m_root.get()->GetContext())
+				if (Rml::Element* hovered = context->GetHoverElement())
+					showPointer(*hovered, m_mouseX, heldModifiers(event));
 			break;
 		case Rml::EventId::Drag:
 			m_dragged = true;
@@ -1969,9 +2131,9 @@ namespace gnubase::ui
 				return;
 			}
 			// Near an end the press resizes, elsewhere it moves (pp. 1213-1214); Acoustic Feedback plays the note.
-			m_gesture = edgeGesture(target, event);
+			m_gesture = edgeGesture(target, event.GetParameter("mouse_x", 0.0F));
 			if (m_view.value("acousticFeedback", false))
-				sound(pressed->pitch);
+				sound(shownPitch(*pressed)); // as it plays, also with Indicate Transpositions
 			if (!selected(*pressed))
 				select({{pressed->part, pressed->id}});
 			return;
@@ -1981,7 +2143,8 @@ namespace gnubase::ui
 			// deletes the note clicked, and with Show Note Length resizes it at its ends instead (p. 1242).
 			if (pressed != nullptr && m_drum)
 			{
-				const Gesture edge = diamonds() ? Gesture::Move : edgeGesture(target, event);
+				const Gesture edge =
+					diamonds() ? Gesture::Move : edgeGesture(target, event.GetParameter("mouse_x", 0.0F));
 				m_gesture = edge == Gesture::Move ? Gesture::Erase : edge;
 				if (m_gesture != Gesture::Erase && !selected(*pressed))
 					select({{pressed->part, pressed->id}});
@@ -2073,7 +2236,7 @@ namespace gnubase::ui
 		}
 	}
 
-	KeyEditor::Gesture KeyEditor::edgeGesture(Rml::Element* target, const Rml::Event& event) const
+	KeyEditor::Gesture KeyEditor::edgeGesture(Rml::Element* target, float mouseX) const
 	{
 		const Rml::Element* root = m_root.get();
 		Rml::Element* box = withAttribute(target, "note", root);
@@ -2083,7 +2246,7 @@ namespace gnubase::ui
 			root->GetContext() != nullptr ? root->GetContext()->GetDensityIndependentPixelRatio() : 1.0F;
 		const Rml::Vector2f origin = box->GetAbsoluteOffset(Rml::BoxArea::Border);
 		const float width = box->GetBox().GetSize(Rml::BoxArea::Border).x;
-		const float x = event.GetParameter("mouse_x", 0.0F) - origin.x;
+		const float x = mouseX - origin.x;
 		const float edge = g_edge * ratio;
 		if (width > 3 * edge && x >= width - edge)
 			return Gesture::ResizeEnd;
@@ -2092,7 +2255,7 @@ namespace gnubase::ui
 		return Gesture::Move;
 	}
 
-	void KeyEditor::showPointer(Rml::Event& event)
+	void KeyEditor::showPointer(Rml::Element& target, float mouseX, HeldModifiers keys)
 	{
 		Rml::Element* root = m_root.get();
 		Rml::Element* grid = root != nullptr ? root->QuerySelector(".key-editor-grid") : nullptr;
@@ -2100,13 +2263,11 @@ namespace gnubase::ui
 			return;
 		// As press decides: the object selection tool resizes unless Shift or Ctrl (Cmd) adds the note to the
 		// selection, the drumstick resizes with Show Note Length.
-		Rml::Element* target = event.GetTargetElement();
-		const Note* note = grid->Contains(target) ? noteOf(target) : nullptr;
-		const bool adds = event.GetParameter("shift_key", 0) != 0 || event.GetParameter("ctrl_key", 0) != 0 ||
-			event.GetParameter("meta_key", 0) != 0;
+		const Note* note = grid->Contains(&target) ? noteOf(&target) : nullptr;
+		const bool adds = keys.shift || keys.ctrl;
 		const bool resizes = note != nullptr && note->editable && !m_expressionOpen &&
 			((m_tool == KeyTool::ObjectSelection && !adds) || (m_tool == KeyTool::Draw && m_drum && !diamonds())) &&
-			edgeGesture(target, event) != Gesture::Move;
+			edgeGesture(&target, mouseX) != Gesture::Move;
 		setPointer(*grid, resizes ? "resize" : "");
 	}
 
@@ -2249,10 +2410,15 @@ namespace gnubase::ui
 			? m_rowOf.at(static_cast<size_t>(pitch)) - m_rowOf.at(static_cast<size_t>(m_pressedAt.second))
 			: 0;
 		const int64_t dt = delta(m_gesture, ticks, rows);
+		// With Indicate Transpositions a note dragged to another time plays with the transposition there, as after the
+		// release: the preview and the feedback show the pitch it lands on.
+		const auto landed = [this](const Note& note, int64_t start, int pitch)
+		{ return std::clamp(pitch + transposition(note.part, start), 0, g_pitches - 1); };
 		// Acoustic Feedback: the pressed note at the pitch it is dragged to.
-		if (const int now = shifted(m_pressed->pitch, rows); m_view.value("acousticFeedback", false) &&
-			m_gesture == Gesture::Move && now >= 0 && m_sounding && m_sounding->second != now)
-			sound(now);
+		if (const int to = shifted(m_pressed->pitch, rows);
+			m_view.value("acousticFeedback", false) && m_gesture == Gesture::Move && to >= 0 && m_sounding)
+			if (const int now = landed(*m_pressed, m_pressed->start + dt, to); m_sounding->second != now)
+				sound(now);
 		for (int i = 0; i < notes->GetNumChildren(); ++i)
 		{
 			Rml::Element* element = notes->GetChild(i);
@@ -2260,13 +2426,21 @@ namespace gnubase::ui
 			if (shown == nullptr || !selected(*shown))
 				continue;
 			if (m_gesture == Gesture::Move)
+			{
+				const int to = shifted(shown->pitch, rows);
 				place(*element, shown->start + dt, shown->length,
-					shifted(shown->pitch, rows) >= 0 ? shifted(shown->pitch, rows) : shown->pitch);
+					landed(*shown, shown->start + dt, to >= 0 ? to : shown->pitch));
+			}
 			else if (m_gesture == Gesture::ResizeEnd)
-				place(*element, shown->start, std::max<int64_t>(shown->length + dt, 1), shown->pitch);
+			{
+				place(*element, shown->start, std::max<int64_t>(shown->length + dt, 1), shownPitch(*shown));
+			}
 			else
-				place(*element, shown->start + std::min(dt, shown->length - 1),
-					shown->length - std::min(dt, shown->length - 1), shown->pitch);
+			{
+				const int64_t moved = std::min(dt, shown->length - 1);
+				place(*element, shown->start + moved, shown->length - moved,
+					landed(*shown, shown->start + moved, shown->pitch));
+			}
 		}
 	}
 

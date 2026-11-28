@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <fstream>
 #include <iterator>
 #include <map>
@@ -312,9 +313,25 @@ namespace gnubase::app
 		// A new transport panel's size until it takes the width of its shown sections (ui::TransportPanelFit), and the
 		// one it keeps without a display or without a shown section.
 		constexpr ui::Size g_transportPanelSize{1100, 48};
-		// The time display window at each of its sizes (ui.timeDisplay); the theme sizes its digits to fit.
+		// The time display window at each of its sizes (ui.timeDisplay), in dp: a line twice the height of the font
+		// size of the theme's timeDisplaySizes for the digits, with room around it (#566).
 		constexpr std::array<ui::Size, 5> g_timeDisplaySizes{
 			{{320, 80}, {480, 120}, {640, 160}, {960, 240}, {1280, 320}}};
+
+		// A time display window's size at one of its sizes and a dp ratio, in the window system's coordinates. They
+		// aren't pixels on every system, so the pixels of a window's size give how much a coordinate is.
+		ui::Size timeDisplaySize(const ui::Shell& shell, const ui::Window& window, int size, float ratio)
+		{
+			const ui::Size dp = g_timeDisplaySizes.at(static_cast<size_t>(std::clamp(size, 0, 4)));
+			const ui::Rect bounds = shell.bounds(window.id());
+			const ui::Size pixels = window.pixelSize();
+			const float pixelsPerCoordinate = bounds.width > 0 && pixels.width > 0
+				? static_cast<float>(pixels.width) / static_cast<float>(bounds.width)
+				: 1.0F;
+			const auto coordinates = [&](int length)
+			{ return static_cast<int>(std::lround(static_cast<float>(length) * ratio / pixelsPerCoordinate)); };
+			return {coordinates(dp.width), coordinates(dp.height)};
+		}
 
 		std::string readText(const std::filesystem::path& file)
 		{
@@ -582,8 +599,15 @@ namespace gnubase::app
 				if (ui::OnScreenKeyboard* keyboard = this->keyboard(); keyboard != nullptr)
 					keyboard->release(keys);
 				m_keys.released(keys);
-				if (keys.key == Rml::Input::KI_UNKNOWN)
-					m_winding.stop(); // the keyboard focus lost: also a button held
+				if (keys.focusLost)
+				{
+					// Also a button held, which the mouse button going up elsewhere doesn't end (#566).
+					m_winding.stopAll();
+					for (ui::TransportControls* controls :
+						{m_transportBar.get(), m_transportPanel.controls.get(), m_timeDisplay.controls.get()})
+						if (controls != nullptr)
+							controls->releaseHeld();
+				}
 			});
 		// What a script's click or key changed shows in the menu before the script reads the DOM, as after a step.
 		m_shell.onInputHandled([this] { updateMenus(); });
@@ -1485,11 +1509,13 @@ namespace gnubase::app
 					"wind.fastRewind", "Moves the project cursor back faster, winding while held.", -4.0, "Shift+Num-"},
 				Wind{"wind.fastForward", "Moves the project cursor on faster, winding while held.", 4.0, "Shift+Num+"}})
 		{
-			m_keys.add({wind.id, wind.description, [this, step = wind.step](ui::Window&, Rml::Element*)
-				{ m_winding.start(step); }, [this] { m_winding.stop(); }});
+			m_keys.add({wind.id, wind.description,
+				[this, id = std::string(wind.id), step = wind.step](ui::Window&, Rml::Element*)
+				{ m_winding.start(id, step); }, [this, id = std::string(wind.id)] { m_winding.stop(id); }});
 			m_keys.bind({wind.keys, wind.id});
 		}
 		m_shell.eachStep([this] { return m_winding.step(); });
+		m_shell.onUiScale([this](float before, float after) { scaleTimeDisplay(before, after); });
 		// The MIDI editors render before their layout and keep their width when their window or zone resizes: their
 		// expression lines follow the width the update of their own window gave them (#1671), not the box another
 		// window's update finds before theirs is laid out again (#1768). The in-place editors' setTimeRange does so as
@@ -1755,6 +1781,13 @@ namespace gnubase::app
 			},
 			[this](const std::string& command) { m_keys.release(command); },
 			[this](const std::string& command, const engine::Json& parameters) { m_keys.check(command, parameters); });
+		// A button held goes on until it is released; a click, a menu item or a script runs a command once.
+		controls->holdWith(
+			[this, id](const std::string& command, const engine::Json& parameters)
+			{
+				if (ui::Window* found = m_shell.find(id))
+					m_keys.start(command, parameters, *found, nullptr);
+			});
 		controls->followSelection(
 			[this] { return m_eventDisplay ? m_eventDisplay->selectionStart() : std::optional<int64_t>(); });
 		return controls;
@@ -1815,8 +1848,11 @@ namespace gnubase::app
 			shown.controls->onSize(
 				[this, id = window.id()](int size)
 				{
+					const ui::Window* found = m_shell.find(id);
+					if (found == nullptr)
+						return;
 					ui::Rect bounds = m_shell.bounds(id);
-					const ui::Size sized = g_timeDisplaySizes.at(static_cast<size_t>(size));
+					const ui::Size sized = timeDisplaySize(m_shell, *found, size, found->dpRatio());
 					if (bounds.size() == sized)
 						return;
 					bounds.width = sized.width;
@@ -1861,9 +1897,67 @@ namespace gnubase::app
 		m_docking.saveWindows();
 	}
 
+	// The time display window grows and shrinks with the UI scale, as its digits do (#566): a window at the size of one
+	// of its presets stays at that one, one the user sized keeps its proportions. Closed, it keeps the change for when
+	// it opens with the bounds it was closed with.
+	void AppUi::scaleTimeDisplay(float before, float after)
+	{
+		if (!(before > 0.0F))
+			return;
+		if (const ui::Window* window = timeDisplay(); window != nullptr && m_timeDisplay.controls)
+			scaleTimeDisplayBounds(*window, m_timeDisplay.controls->size(), after / before);
+		else
+			m_timeDisplayScaling *= after / before;
+	}
+
+	void AppUi::scaleTimeDisplayBounds(const ui::Window& window, int size, float factor)
+	{
+		ui::Rect bounds = m_shell.bounds(window.id());
+		ui::Size sized = timeDisplaySize(m_shell, window, size, window.dpRatio());
+		if (!(bounds.size() == timeDisplaySize(m_shell, window, size, window.dpRatio() / factor)))
+			sized = {static_cast<int>(std::lround(static_cast<float>(bounds.width) * factor)),
+				static_cast<int>(std::lround(static_cast<float>(bounds.height) * factor))};
+		if (sized == bounds.size())
+			return;
+		bounds.width = sized.width;
+		bounds.height = sized.height;
+		m_shell.setBounds(window.id(), bounds);
+	}
+
 	void AppUi::toggleTimeDisplay()
 	{
-		toggle(m_timeDisplay, "timeDisplay", "time-display.rml", "Time Display", g_timeDisplaySizes.at(1));
+		// A new window opens at the saved size, at the main window's dp ratio and then at its own, rather than at
+		// the default size and jumping when ui.timeDisplay is read; one the user sized has its bounds, at the UI scale
+		// they have now (#566).
+		const bool opens = timeDisplay() == nullptr;
+		const bool saved = m_docking.bounds("timeDisplay").has_value();
+		int size = 1;
+		if (opens)
+		{
+			const engine::Result options = engine::Client(m_engine).call("settings.get", {{"key", "ui.timeDisplay"}});
+			const engine::Json value = options.ok() ? options.value.at("value") : engine::Json::object();
+			if (const auto found = value.find("size");
+				value.is_object() && found != value.end() && found->is_number_integer())
+				size = std::clamp(found->get<int>(), 0, 4);
+		}
+		toggle(m_timeDisplay, "timeDisplay", "time-display.rml", "Time Display",
+			timeDisplaySize(m_shell, m_main, size, m_main.dpRatio()));
+		if (const ui::Window* window = timeDisplay(); opens && window != nullptr)
+		{
+			if (saved)
+			{
+				scaleTimeDisplayBounds(*window, size, m_timeDisplayScaling);
+			}
+			else if (ui::Rect bounds = m_shell.bounds(window->id());
+				!(bounds.size() == timeDisplaySize(m_shell, *window, size, window->dpRatio())))
+			{
+				// The main window's monitor may not be the one it opened on.
+				bounds.width = timeDisplaySize(m_shell, *window, size, window->dpRatio()).width;
+				bounds.height = timeDisplaySize(m_shell, *window, size, window->dpRatio()).height;
+				m_shell.setBounds(window->id(), bounds);
+			}
+			m_timeDisplayScaling = 1.0F;
+		}
 		m_docking.saveWindows();
 	}
 
@@ -2080,7 +2174,17 @@ namespace gnubase::app
 				if (m_markerLines == nullptr || m_markers == nullptr || !m_markers->syncsSelection())
 					return;
 				m_markerLines->setSelection(selection);
-				if (!selection.empty() && m_eventDisplay && !m_eventDisplay->selectedPoints().empty())
+				if (selection.empty() || m_eventDisplay == nullptr)
+					return;
+				// The project window selects events, markers, arranger or time signature events, as when a marker is
+				// clicked in it (#606).
+				if (!m_eventDisplay->selection().empty())
+					m_eventDisplay->select({});
+				if (m_arrangerLane)
+					m_arrangerLane->deselect();
+				if (m_signatureLane)
+					m_signatureLane->row().setSelection({});
+				if (!m_eventDisplay->selectedPoints().empty())
 					m_eventDisplay->selectPoints({}); // as the markers' onSelect does (#2011)
 			});
 		m_markers->syncFrom(

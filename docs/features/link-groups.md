@@ -66,11 +66,19 @@ fader itself is in [mixer.md](mixer.md), mute, solo and listen in [solo-mute-lis
 - The mixer's strips (`ui::Mixer`) have the display line (`textdisplay.mixer-link`, p. 458) under the name while the
   project has a link group (`.mixer-channels.link-groups`): the number and name of the channel's link group, empty for
   none. A click opens its menu (`#mixer-link-menu`, p. 459), filled for the channel as it opens: Unlink Selected
-  Channels (`linkGroup.remove` of the line's group, as the mixer has no channel selection yet), Included in Link Group
-  with None and the groups, which moves the channel into the group chosen with `linkGroup.set` `channels` or takes it
-  out of its group (pp. 460-461; a group goes with its last channel), and Linked Channels, the names of the group's
-  channels. A double click types the group's name, which `linkGroup.set` `name` takes; the number the field starts with
-  is left out. A VCA strip (`type` `vca`) has a fader with its meter, M, S and L, and instead of the panner a drop-down
+  Channels (`linkGroup.remove` of the line's group, as the mixer has no channel selection yet), Edit Link Group
+  Settings (below), Included in Link Group with None and the groups, which moves the channel into the group chosen with
+  `linkGroup.set` `channels` or takes it out of its group (pp. 460-461; a group goes with its last channel), and Linked
+  Channels, the names of the group's channels. A double click types the group's name, which `linkGroup.set` `name`
+  takes; the number the field starts with is left out. A double click with a modifier key (Ctrl, Cmd, Alt or Shift)
+  opens the Link Group Settings dialog instead.
+- The **Link Group Settings dialog** (`resources/ui/link-group-settings.rml`, pp. 457-458) for the line's group shows
+  its name, Use VCA Fader with Select VCA Fader (the VCA faders not in the group) and what it links: Volume, Pan, EQ,
+  Dynamics, Sends, Mute/Solo/Listen and Record Enable/Monitor. Use VCA Fader turns Volume off and disables it, as a
+  group with a VCA fader doesn't link the volume, and turning it off again turns Volume back on (p. 517). OK sends one
+  `linkGroup.set` with what the dialog shows, Cancel and Escape nothing. Inserts, Automation Read/Write, Routing and
+  Selection aren't there, as link groups don't link them yet.
+- A VCA strip (`type` `vca`) has a fader with its meter, M, S and L, and instead of the panner a drop-down
   list `.mixer-vca-group` (VCA Channel Controls Link Group, p. 515) with None and the link groups, which sends
   `linkGroup.set`. The channel type filter has VCA Channels.
 - The add track dialog has a VCA page with Add to Project 'VCA' Folder, the name and the count (p. 154). The track
@@ -80,14 +88,13 @@ fader itself is in [mixer.md](mixer.md), mute, solo and listen in [solo-mute-lis
 
 ## Not yet
 
-The Link Group Settings dialog and the mixer toolbar's Link, Edit Link Group Settings, Q-Link, Sus and Abs buttons,
-which need channels selected in the mixer; linking inserts, automation read and write, routing and selection (p. 458);
-the Abs button's absolute instead of relative changes (p. 460): without it the equalizers', the dynamics' and the send
+The Link Group Settings dialog for new groups and the mixer toolbar's Link, Edit Link Group Settings, Q-Link, Sus
+and Abs buttons, which need channels selected in the mixer; linking inserts, automation read and write, routing and
+selection (p. 458); the Abs button's absolute instead of relative changes (p. 460): without it the equalizers', the dynamics' and the send
 levels' changes should go on by as much as they moved, as the fader and the pan do, but they go on as the values given;
 Add VCA Track in the mixer's context menu, and Add VCA Track to Selected Tracks for channels selected there
 (pp. 516-517); Combine Automation of VCA and Linked
-Channels, and the channels' automation tracks showing the combined curve (pp. 516, 519); VCA mute automation; the
-display line menu's Edit Link Group Settings and a double click with a modifier key, which open that dialog (p. 459).
+Channels, and the channels' automation tracks showing the combined curve (pp. 516, 519); VCA mute automation.
 
 ## Checks
 
@@ -105,7 +112,9 @@ display line menu's Edit Link Group Settings and a double click with a modifier 
 - `tests/mixerwindow_tests.cpp`: a VCA strip's fader, meter and buttons, its group drop-down list and the display line;
   the display line's menu moving a channel into another group, out of its group and into one again, its own group
   checked and picking it again sending nothing, Linked Channels and Unlink Selected Channels, renaming a group by a
-  double click, and no display line without a group.
+  double click, and no display line without a group; the Link Group Settings dialog from the menu and from a double
+  click with Ctrl, showing the group's settings, Use VCA Fader turning Volume off, OK sending the settings and Cancel
+  nothing.
 - `tests/dawproject_tests.cpp`: VCA fader loops in a file are left out; groups whose VCA fader is an audio channel, a
   channel that isn't there or one that controls an earlier group lose it and link the volume again; another
   application's VCA channel loses its pan, sends and destination, and one in a hand-edited GNUbase entry its audio

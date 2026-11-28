@@ -210,7 +210,8 @@ rows are in the document's order. Each row has a `value` attribute (without comm
 - **Selection.** A click selects a row. With the `multiple` attribute, Ctrl-click (Cmd-click on macOS) adds or removes a
   row and Shift-click selects the rows from the last one clicked; with `shiftdeselects` too, Shift-click on a selected
   row deselects it, as in the track list ([track-list.md](track-list.md)). Up and Down move the selection, Shift extends
-  it, Page Up and Page Down move it by one row less than the view shows, Home and End go to the first and last row.
+  it, Page Up and Page Down move it by one row less than the view shows (a table's header rows don't count), Home
+  and End go to the first and last row.
   Selected rows have the state class `.selected`. The view's `value` attribute is the selected rows' values separated by
   commas, and `change` sends it, so `data-value` binds the selection both ways, also when `data-for` makes the rows.
   Rows that code adds, removes or replaces with new elements, all of them or only some, keep the selection that the

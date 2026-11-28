@@ -142,13 +142,18 @@ namespace gnubase::engine::settings
 		{
 			const Json column = {
 				{"type", "string"}, {"enum", {"number", "type", "position", "end", "length", "description"}}};
+			// The columns but the position, which can't be hidden.
+			const Json hideable = {{"type", "string"}, {"enum", {"number", "type", "end", "length", "description"}}};
+			const Json width = {{"type", "number"}, {"minimum", 16}, {"maximum", 2000}};
+			Json widths = {{"type", "object"}, {"properties", Json::object()}, {"additionalProperties", false}};
+			for (const char* name : {"number", "type", "position", "end", "length", "description"})
+				widths["properties"][name] = width;
 			return {{"type", "object"},
 				{"properties",
 					{{"order", {{"type", "array"}, {"items", column}}},
-						{"widths",
-							{{"type", "object"},
-								{"additionalProperties", {{"type", "number"}, {"minimum", 16}, {"maximum", 2000}}}}},
-						{"sort", column}, {"descending", {{"type", "boolean"}}}}}};
+						{"hidden", {{"type", "array"}, {"items", hideable}}}, {"widths", widths}, {"sort", column},
+						{"descending", {{"type", "boolean"}}}}},
+				{"additionalProperties", false}};
 		}
 	}
 
@@ -435,7 +440,8 @@ namespace gnubase::engine::settings
 					"The device that plays while the chosen audio device is lost, until it returns: none, default (the "
 					"lost device's backend's default device, or the dummy device if that doesn't open), or dummy (the "
 					"dummy device: no sound, but the transport moves and the project plays on). The engine switches "
-					"back once the lost device returns.",
+					"back once the lost device returns. With default, a device that the windowed app can't open when "
+					"it starts gives way to its backend's default device too, instead of the dummy device.",
 					Json{{"type", "string"}, {"enum", {"none", "default", "dummy"}}}, "none"},
 				{"audio.preRecordSeconds",
 					"Audio pre-record: how many seconds of input from before recording starts go into the files of "
@@ -498,8 +504,10 @@ namespace gnubase::engine::settings
 								{"required", Json::array({"name", "color"})}, {"additionalProperties", false}}}},
 					Json::array()},
 				{"editing.defaultCrossfade",
-					"The default crossfade (reference manual p. 392): its mode and the shapes of its fade in and fade "
-					"out, which event.crossfade gives new crossfades; the crossfade editor's As Default sets it.",
+					"The default crossfade (reference manual p. 391): its mode and the shapes of its fade in and fade "
+					"out, which new crossfades get (event.crossfade, and crossfade.set without a mode, as audio "
+					"quantize and "
+					"closing gaps use it); the crossfade editor's As Default sets it.",
 					Json{{"type", "object"},
 						{"properties",
 							{{"mode", {{"type", "string"}, {"enum", crossfadeModeNames()}}},
@@ -690,7 +698,9 @@ namespace gnubase::engine::settings
 					"The installed MIDI devices (midiDevice.install), by name: each has banks and an optional "
 					"bankAssignment. Each bank has a name and patches, each patch a name, a program (0 to 127), an "
 					"optional bank (0 to 16383, sent as bank select MSB and LSB) and an optional folder it is listed "
-					"in. bankAssignment gives MIDI channels \"1\" to \"16\" a bank by its index (midiDevice.set). A "
+					"in, a path with / between nested folders; a bank's optional folders are folders it keeps even "
+					"while they are empty. bankAssignment gives MIDI channels \"1\" to \"16\" a bank by its index "
+					"(midiDevice.set). A "
 					"MIDI track that names a device (channel.set device) chooses its program and bank by patch.",
 					midi::devicesSchema(), Json::object()},
 				{"midi.importAutomation",
@@ -908,8 +918,9 @@ namespace gnubase::engine::settings
 					Json{{"type", "string"}, {"enum", Json::array({"active", "all", "off"})}}, "active", true},
 				{"ui.markerColumns",
 					"The markers window's columns: order, the columns after the locate column in order (number, "
-					"type, position, end, length, description); widths, each one's width in dp; sort, the column the "
-					"list is sorted by, and descending. What it leaves out has its default.",
+					"type, position, end, length, description); hidden, those left out (all but the position); "
+					"widths, each one's width in dp; sort, the column the list is sorted by, and descending. What "
+					"it leaves out has its default.",
 					markerColumnsSchema(), Json::object()},
 				{"ui.markerIds", "Whether marker events on the marker tracks show their marker ids.",
 					Json{{"type", "boolean"}}, true},

@@ -79,7 +79,7 @@
 		local pages = {
 			audio = {"input", "format", "output", "name", "count"},
 			instrument = {"instrument", "output", "name", "count"},
-			sampler = {"output", "name", "count"}, -- reference manual pp. 143-144
+			sampler = {"midiInput", "output", "name", "count"}, -- reference manual pp. 143-144
 			drum = {"output", "name", "count"}, -- reference manual pp. 145-146
 			midi = {"output", "name", "count"},
 			group = {"format", "output", "projectFolder", "name", "count"},
@@ -172,6 +172,11 @@
 					end
 				end
 				return field("Audio Inputs", dropdown("track-input", options))
+			end,
+			-- The track's MIDI input, as channel.set's midiInput.
+			midiInput = function()
+				return field("Input Routing", dropdown("track-midi-input", {option("all", "All MIDI Inputs", true),
+					option("chordPads", "Chord Pads"), option("none", "Not Connected")}))
 			end,
 			instrument = function()
 				local options = {option("", "No Instrument", true)}
@@ -300,6 +305,7 @@
 				result.output = idOf(document, "track-output")
 				result.format = valueOf(document, "track-format")
 			end
+			result.midiInput = valueOf(document, "track-midi-input")
 			local instrument = valueOf(document, "track-instrument")
 			if instrument ~= nil and instrument ~= "" then
 				result.instrument = instrument

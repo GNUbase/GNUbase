@@ -8,6 +8,7 @@
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
 #include "scripting/runtime.h"
+#include "testutils/commandholds.h"
 #include "testutils/fakeui.h"
 #include "ui/automation.h"
 #include "ui/canvas.h"
@@ -43,6 +44,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -1664,7 +1666,9 @@ TEST_CASE("Rewind and Forward wind while their key or button is held", "[ui]")
 	app.ui().move(std::nullopt, at("#forward"));
 	mouseButton(app, true);
 	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") > 4 * 48000; }));
-	app.shell().keyReleased(app.main(), ui::KeyPress{Rml::Input::KI_UNKNOWN, 0});
+	ui::KeyPress lost;
+	lost.focusLost = true;
+	app.shell().keyReleased(app.main(), lost);
 	stopped(app);
 	mouseButton(app, false);
 
@@ -1673,6 +1677,63 @@ TEST_CASE("Rewind and Forward wind while their key or button is held", "[ui]")
 	app.ui().key(std::nullopt, "Num+");
 	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 48000; }));
 	CHECK(stopped(app) == 48000);
+
+	// Run without a key or button that ends it, as a menu item or a script runs it, it steps once (#566, #569).
+	app.call("transport.locate", {{"position", 0}});
+	app.keys().run("wind.forward", Json::object(), app.main(), nullptr);
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 48000; }));
+	CHECK(stopped(app) == 48000);
+	app.keys().run("wind.fastRewind", Json::object(), app.main(), nullptr);
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 0; }));
+	CHECK(stopped(app) == 0);
+}
+
+TEST_CASE("each held Rewind or Forward key and button winds as its own, and a key RmlUi can't map ends none", "[ui]")
+{
+	test::UiApp app({1024, 700});
+	showBar(app);
+
+	// A key that RmlUi can't map, such as a letter of another layout or a media key, goes up while Num+ is held (#569).
+	app.ui().key(std::nullopt, "Num+", ui::KeyAction::Down);
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") > 2 * 48000; }));
+	app.shell().keyReleased(app.main(), ui::KeyPress{Rml::Input::KI_UNKNOWN, 0});
+	const int64_t unmapped = position(app);
+	REQUIRE(waitFor(app, [unmapped](const Json& state) { return state.at("position") > unmapped + 96000; }));
+
+	// Rewind held with the mouse winds back; its button going up leaves Num+ winding on (#566).
+	app.ui().move(std::nullopt, at("#rewind"));
+	mouseButton(app, true);
+	const int64_t forward = position(app);
+	REQUIRE(waitFor(app, [forward](const Json& state) { return state.at("position") < forward - 48000; }));
+	mouseButton(app, false);
+	const int64_t lowest = position(app);
+	REQUIRE(waitFor(app, [lowest](const Json& state) { return state.at("position") > lowest + 96000; }));
+
+	// The Forward button, which runs the command that Num+ holds, held and released too: Num+ winds on (#566).
+	app.ui().move(std::nullopt, at("#forward"));
+	mouseButton(app, true);
+	mouseButton(app, false);
+	const int64_t both = position(app);
+	REQUIRE(waitFor(app, [both](const Json& state) { return state.at("position") > both + 96000; }));
+	app.ui().key(std::nullopt, "Num+", ui::KeyAction::Up);
+	stopped(app);
+
+	// The window loses the focus while a button is held: the mouse button going up later doesn't end the winding that
+	// a key started meanwhile (#566).
+	app.call("transport.locate", {{"position", 0}});
+	app.ui().move(std::nullopt, at("#forward"));
+	mouseButton(app, true);
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") > 2 * 48000; }));
+	ui::KeyPress lost;
+	lost.focusLost = true;
+	app.shell().keyReleased(app.main(), lost);
+	stopped(app);
+	app.ui().key(std::nullopt, "Num+", ui::KeyAction::Down);
+	mouseButton(app, false);
+	const int64_t started = position(app);
+	REQUIRE(waitFor(app, [started](const Json& state) { return state.at("position") > started + 96000; }));
+	app.ui().key(std::nullopt, "Num+", ui::KeyAction::Up);
+	stopped(app);
 }
 
 TEST_CASE("Nudge Cursor Left and Right move the project cursor by a grid step", "[ui]")
@@ -1758,6 +1819,159 @@ TEST_CASE("the mouse wheel changes a display's value", "[ui]")
 	REQUIRE(waitFor(app, [](const Json& state) { return state.at("right") == 144000; }));
 	app.ui().wheel(std::nullopt, at("#locator-range"), 0, 1);
 	REQUIRE(waitFor(app, [](const Json& state) { return state.at("right") == 96000; }));
+}
+
+TEST_CASE("small wheel turns on a display add up to whole steps (#566, #569)", "[ui]")
+{
+	test::UiApp app({1024, 700});
+	showBar(app);
+
+	// A touchpad's smooth scrolling sends small deltas: four quarters of a notch make one beat, not four.
+	for (int turn = 0; turn < 3; ++turn)
+		app.ui().wheel(std::nullopt, at("#primary-time"), 0, -0.25F);
+	settle(app, std::chrono::milliseconds(100));
+	CHECK(position(app) == 0);
+	app.ui().wheel(std::nullopt, at("#primary-time"), 0, -0.25F);
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 24000; }));
+
+	// Turns the other way start afresh rather than undo a fraction; the next one makes the step.
+	app.ui().wheel(std::nullopt, at("#primary-time"), 0, -0.5F);
+	app.ui().wheel(std::nullopt, at("#primary-time"), 0, 0.5F);
+	settle(app, std::chrono::milliseconds(100));
+	CHECK(position(app) == 24000);
+	app.ui().wheel(std::nullopt, at("#primary-time"), 0, 0.5F);
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 0; }));
+
+	// A turn of one and a half steps keeps its half for the next.
+	app.ui().wheel(std::nullopt, at("#primary-time"), 0, -1.5F);
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 24000; }));
+	app.ui().wheel(std::nullopt, at("#primary-time"), 0, -0.5F);
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 48000; }));
+
+	// The fractions don't carry over to another display.
+	app.ui().wheel(std::nullopt, at("#primary-time"), 0, -0.5F);
+	app.ui().wheel(std::nullopt, at("#left-locator"), 0, -0.5F);
+	settle(app, std::chrono::milliseconds(100));
+	CHECK(position(app) == 48000);
+	CHECK(transport(app).at("left") == 0);
+
+	// A pause forgets the fractions: two halves a second apart make no step.
+	settle(app, std::chrono::milliseconds(1100));
+	app.ui().wheel(std::nullopt, at("#primary-time"), 0, -0.5F);
+	settle(app, std::chrono::milliseconds(1100));
+	app.ui().wheel(std::nullopt, at("#primary-time"), 0, -0.5F);
+	settle(app, std::chrono::milliseconds(100));
+	CHECK(position(app) == 48000);
+}
+
+namespace
+{
+	// Three turns of a control that the engine's answers reach in between, as on a busy machine: the second right
+	// after the first, and the third once the engine's echo of the first has reached the UI, but before the engine did
+	// what the second sent. A control that took the first one's echo as where it is would go on from there, and lose
+	// the second step. The engine's command thread holds, so that it goes so on any machine; runs counts the holds it
+	// has had (#569).
+	void turnsBetweenEchoes(test::UiApp& app, test::CommandHolds& holds, engine::Client& holder, size_t& runs,
+		const int& echoes, const std::function<void()>& turn)
+	{
+		const int before = echoes;
+		holder.send("test.hold");
+		REQUIRE(holds.waitEntered(runs + 1));
+		turn();
+		holder.send("test.hold");
+		turn();
+		holds.release(runs + 1);
+		REQUIRE(app.waitUntil([&echoes, before] { return echoes > before; }));
+		turn();
+		holds.release(runs + 2);
+		runs += 2;
+	}
+}
+
+TEST_CASE(
+	"the wheel, Nudge Cursor and the window size go on from what they sent, not from an older echo (#569)", "[ui]")
+{
+	test::CommandHolds holds; // declared before the app: its engine's command thread waits in hold()
+	test::UiApp app({1024, 700});
+	const test::ReleaseHolds releaseHolds{holds};
+	app.engine().registerCommand(
+		{"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters, Json::object(), false},
+		[&holds](engine::CommandContext&) { return holds.hold(); });
+	engine::Client holder(app.engine(), "holder");
+	showBar(app);
+	app.keys().run("window.timeDisplay", Json::object(), app.main(), nullptr);
+	REQUIRE(app.appUi().timeDisplay() != nullptr);
+	const ui::WindowId window = app.appUi().timeDisplay()->id();
+	REQUIRE(app.waitUntil([&app, window] { return hasClass(app, "#time-display", "size-1", window); }));
+	int transports = 0;
+	int displays = 0;
+	const ui::Subscription counting =
+		app.appUi().binding().on("transport.changed", [&transports](const engine::Event&) { ++transports; });
+	const ui::Subscription countingSettings = app.appUi().binding().on("settings.changed",
+		[&displays](const engine::Event& event)
+		{
+			if (event.data.at("values").contains("ui.timeDisplay"))
+				++displays;
+		});
+	size_t runs = 0;
+
+	// The wheel on a time display: three beats.
+	turnsBetweenEchoes(
+		app, holds, holder, runs, transports, [&app] { app.ui().wheel(std::nullopt, at("#primary-time"), 0, -1); });
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 72000; }));
+	REQUIRE(app.waitUntil([&app] { return shows(app, "#primary-time") == "1.4.1.0"; }));
+
+	// Nudge Cursor: three bars.
+	app.call("transport.locate", {{"position", 0}});
+	REQUIRE(app.waitUntil([&app] { return shows(app, "#primary-time") == "1.1.1.0"; }));
+	turnsBetweenEchoes(app, holds, holder, runs, transports, [&app] { app.ui().key(std::nullopt, "Mod+Num+"); });
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 288000; }));
+
+	// Increase Window Size: from size 1 to 4.
+	turnsBetweenEchoes(app, holds, holder, runs, displays,
+		[&app] { app.keys().run("timeDisplay.increaseSize", Json::object(), app.main(), nullptr); });
+	CHECK(app.call("settings.get", {{"key", "ui.timeDisplay"}}).at("value").at("size") == 4);
+	REQUIRE(app.waitUntil([&app, window] { return hasClass(app, "#time-display", "size-4", window); }));
+}
+
+TEST_CASE(
+	"the mouse wheel steps a timecode display by a frame at the project's frame rate, also a pull-down one (#576)",
+	"[ui]")
+{
+	test::UiApp app({1024, 700});
+	showBar(app);
+
+	// From one second on, where each frame rate shows another frame, so that the test knows the display has read the
+	// project's. 29.97: a frame is 1.001/30 s, 1601.6 samples at 48 kHz, rounded to a whole sample.
+	app.call("transport.locate", {{"position", 48000}});
+	REQUIRE(app.waitUntil([&app] { return shows(app, "#secondary-time") == "00:00:01:00"; }));
+	app.call("project.set", {{"frameRate", "29.97"}});
+	REQUIRE(app.waitUntil([&app] { return shows(app, "#secondary-time") == "00:00:00:29"; }));
+	app.ui().wheel(std::nullopt, at("#secondary-time"), 0, -1);
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 48000 + 1602; }));
+	REQUIRE(app.waitUntil([&app] { return shows(app, "#secondary-time") == "00:00:01:00"; }));
+	app.ui().wheel(std::nullopt, at("#secondary-time"), 0, 1);
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 48000; }));
+	REQUIRE(app.waitUntil([&app] { return shows(app, "#secondary-time") == "00:00:00:29"; }));
+
+	// The other pull-down rates too, and a rate without it.
+	for (const auto& [rate, frames, pullDown] : {std::tuple{"23.976", 24, true}, std::tuple{"24.975", 25, true},
+			 std::tuple{"29.97dfps", 30, true}, std::tuple{"59.94", 60, true}, std::tuple{"30", 30, false}})
+	{
+		INFO(rate);
+		const std::string before = shows(app, "#secondary-time");
+		app.call("project.set", {{"frameRate", rate}});
+		REQUIRE(app.waitUntil([&app, &before] { return shows(app, "#secondary-time") != before; }));
+		const std::string home = shows(app, "#secondary-time");
+		const int64_t frame = std::llround(48000.0 + (48000.0 * (pullDown ? 1.001 : 1.0) / frames));
+		app.ui().wheel(std::nullopt, at("#secondary-time"), 0, -1);
+		const bool reached = waitFor(app, [frame](const Json& state) { return state.at("position") == frame; });
+		INFO("expected " << frame << ", at " << position(app) << ", display " << shows(app, "#secondary-time"));
+		REQUIRE(reached);
+		app.call("transport.locate", {{"position", 48000}});
+		REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 48000; }));
+		REQUIRE(app.waitUntil([&app, &home] { return shows(app, "#secondary-time") == home; }));
+	}
 }
 
 TEST_CASE("positions typed or wheeled past the largest project position stop there (#457)", "[ui]")
@@ -1856,6 +2070,28 @@ TEST_CASE("a drag or wheel gesture on the tempo field is one undo step", "[ui]")
 	REQUIRE(app.waitUntil([&app, dragged] { return tempo(app) == dragged; }));
 	app.call("history.undo");
 	REQUIRE(app.waitUntil([&app] { return element(app, "#tempo").at("attributes").at("value") == "120"; }));
+}
+
+TEST_CASE(
+	"a wheel gesture on the tempo field is set when the transport panel closes within its pause (#566, #569)", "[ui]")
+{
+	test::UiApp app({1024, 700});
+	app.setDpRatio(0.75F); // at 1, a 1024-pixel panel hides the tempo section, as the transport bar does (see showBar)
+	app.appUi().showProject();
+	app.ui().key(std::nullopt, "F2");
+	REQUIRE(app.appUi().transportPanel() != nullptr);
+	const ui::WindowId panel = app.appUi().transportPanel()->id();
+	REQUIRE(
+		app.waitUntil([&app, panel] { return element(app, "#tempo", panel).at("attributes").at("value") == "120"; }));
+	const size_t before = undoSteps(app);
+
+	// The panel goes with the gesture running: it sets the tempo the field showed, as one undo step.
+	app.ui().wheel(panel, at("#tempo"), 0, -1);
+	app.ui().key(std::nullopt, "F2");
+	REQUIRE(app.appUi().transportPanel() == nullptr);
+	REQUIRE(app.waitUntil([&app] { return tempo(app) > 120.5; }));
+	CHECK(tempo(app) == 121.0);
+	CHECK(undoSteps(app) == before + 1);
 }
 
 TEST_CASE("a drag or wheel gesture on the tempo field in tempo track mode changes the event at the cursor", "[ui]")
@@ -1996,6 +2232,133 @@ TEST_CASE("the time display window shows beat counts only and changes its size",
 	CHECK(app.shell().bounds(again).size().width < normal.width);
 }
 
+namespace
+{
+	// Whether the digits of the time display window fit its height: a line of the display's text is not taller than
+	// the window.
+	bool digitsFit(test::UiApp& app, ui::Window& window)
+	{
+		Rml::Context& context = window.context();
+		Rml::Element* display =
+			context.GetNumDocuments() > 0 ? context.GetDocument(0)->GetElementById("time-display") : nullptr;
+		REQUIRE(display != nullptr);
+		const float line = display->GetLineHeight();
+		const ui::Size pixels = window.pixelSize();
+		INFO("a line " << line << " pixels high in a window " << pixels.height << " pixels high");
+		return line > 0.0F && line <= static_cast<float>(pixels.height) && app.shell().find(window.id()) != nullptr;
+	}
+
+	ui::Window& openTimeDisplay(test::UiApp& app)
+	{
+		app.keys().run("window.timeDisplay", Json::object(), app.main(), nullptr);
+		ui::Window* display = app.appUi().timeDisplay();
+		REQUIRE(display != nullptr);
+		return *display;
+	}
+
+	void setTimeDisplaySize(test::UiApp& app, int size)
+	{
+		app.call("settings.set", {{"key", "ui.timeDisplay"}, {"value", {{"beatCountOnly", false}, {"size", size}}}});
+	}
+}
+
+TEST_CASE(
+	"the time display window's sizes scale with the UI scale, and its digits fit at every size (#566, #569)", "[ui]")
+{
+	test::UiApp app({1024, 700});
+	app.appUi().showProject();
+	ui::Window& display = openTimeDisplay(app);
+	const ui::WindowId window = display.id();
+	REQUIRE(app.waitUntil([&app, window] { return hasClass(app, "#time-display", "size-1", window); }));
+	const ui::Size normal = app.shell().bounds(window).size();
+	CHECK(normal == ui::Size{480, 120});
+	CHECK(digitsFit(app, display));
+
+	// A larger UI scale grows the window with its digits, the one at a preset size to the preset's size at the new
+	// scale; the digits' line, 144 pixels at size 1 and a scale of 1.5, fits the window's 180.
+	app.shell().setUiScale(1.5F);
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(app.shell().bounds(window).size() == ui::Size{720, 180});
+	CHECK(digitsFit(app, display));
+	app.shell().setUiScale(2.0F);
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(app.shell().bounds(window).size() == ui::Size{960, 240});
+	CHECK(digitsFit(app, display));
+	setTimeDisplaySize(app, 0);
+	REQUIRE(app.waitUntil([&app, window] { return hasClass(app, "#time-display", "size-0", window); }));
+	CHECK(app.shell().bounds(window).size() == ui::Size{640, 160});
+	CHECK(digitsFit(app, display));
+
+	// A window the user sized keeps its proportions.
+	ui::Rect bounds = app.shell().bounds(window);
+	bounds.width = 500;
+	bounds.height = 130;
+	app.shell().setBounds(window, bounds);
+	app.shell().setUiScale(1.0F);
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(app.shell().bounds(window).size() == ui::Size{250, 65});
+	app.shell().setUiScale(2.0F);
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(app.shell().bounds(window).size() == ui::Size{500, 130});
+}
+
+TEST_CASE("the time display window opens at the saved size, and a window the user sized keeps its bounds (#566, #569)",
+	"[ui]")
+{
+	test::UiApp app({1024, 700});
+	app.appUi().showProject();
+	app.shell().setUiScale(1.5F);
+	setTimeDisplaySize(app, 2);
+	app.shell().step(std::chrono::milliseconds(0));
+
+	// At the saved size and the UI scale from the start, not at the default and then jumping when the setting is read.
+	ui::Window& display = openTimeDisplay(app);
+	const ui::WindowId window = display.id();
+	CHECK(app.shell().bounds(window).size() == ui::Size{960, 240});
+	REQUIRE(app.waitUntil([&app, window] { return hasClass(app, "#time-display", "size-2", window); }));
+	CHECK(app.shell().bounds(window).size() == ui::Size{960, 240});
+	CHECK(digitsFit(app, display));
+
+	// The user sizes it: other options of the setting leave it as it is.
+	ui::Rect bounds = app.shell().bounds(window);
+	bounds.width = 400;
+	bounds.height = 100;
+	app.shell().setBounds(window, bounds);
+	app.keys().run("timeDisplay.beatCountOnly", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app, window] { return shows(app, "#time-display", window) == "1"; }));
+	settle(app);
+	CHECK(app.shell().bounds(window).size() == ui::Size{400, 100});
+
+	// A size from the setting does, and a window opened again takes the bounds the user left (#569).
+	setTimeDisplaySize(app, 1);
+	REQUIRE(app.waitUntil([&app, window] { return hasClass(app, "#time-display", "size-1", window); }));
+	CHECK(app.shell().bounds(window).size() == ui::Size{720, 180});
+	app.shell().setBounds(window, bounds);
+	app.keys().run("window.timeDisplay", Json::object(), app.main(), nullptr);
+	CHECK(app.appUi().timeDisplay() == nullptr);
+	const ui::Window& reopened = openTimeDisplay(app);
+	REQUIRE(app.waitUntil([&app, &reopened] { return hasClass(app, "#time-display", "size-1", reopened.id()); }));
+	CHECK(app.shell().bounds(reopened.id()).size() == ui::Size{400, 100});
+
+	// The UI scale changes while the window is closed: it opens with the bounds it had at the new scale, at a preset's
+	// size if it had one.
+	app.keys().run("window.timeDisplay", Json::object(), app.main(), nullptr);
+	CHECK(app.appUi().timeDisplay() == nullptr);
+	app.shell().setUiScale(0.75F);
+	const ui::Window& scaled = openTimeDisplay(app);
+	CHECK(app.shell().bounds(scaled.id()).size() == ui::Size{200, 50});
+	setTimeDisplaySize(app, 1);
+	ui::Rect atPreset = app.shell().bounds(scaled.id());
+	atPreset.width = 360; // the preset of size 1 at that scale
+	atPreset.height = 90;
+	app.shell().setBounds(scaled.id(), atPreset);
+	app.keys().run("window.timeDisplay", Json::object(), app.main(), nullptr);
+	app.shell().setUiScale(1.5F);
+	ui::Window& preset = openTimeDisplay(app);
+	CHECK(app.shell().bounds(preset.id()).size() == ui::Size{720, 180});
+	CHECK(digitsFit(app, preset));
+}
+
 TEST_CASE("a setup pane's buttons keep Space, also in the transport bar (#653)", "[ui]")
 {
 	test::UiApp app({1024, 700});
@@ -2050,10 +2413,34 @@ TEST_CASE("setup panes show and hide the transport bar's and the transport panel
 	CHECK(!visible(app, "[section=click]", panel));
 	CHECK(visible(app, "#transport-bar [section=click]"));
 
-	// Show All shows every section of the bar again.
+	// Show All shows every section of the bar again, and saves the layout once, not once for each section (#566).
 	app.ui().click(std::nullopt, at("#transport-bar [section=click]"), ui::MouseButton::Right, 1, {});
+	REQUIRE(app.waitUntil([&app]
+		{ return app.call("settings.get", {{"key", "ui.layout"}}).at("value") == app.appUi().docking().layout(); }));
+	// The saves that change the hidden sections: others, such as the panel fitting its window, aren't Show All's.
+	int saves = 0;
+	Json hidden = app.call("settings.get", {{"key", "ui.layout"}})
+					  .at("value")
+					  .at("windows")
+					  .at("project")
+					  .at("sections")
+					  .at("transport")
+					  .at("hidden");
+	const ui::Subscription counting = app.appUi().binding().on("settings.changed",
+		[&saves, &hidden](const engine::Event& event)
+		{
+			if (const auto layout = event.data.at("values").find("ui.layout"); layout != event.data.at("values").end())
+				if (const Json now = layout->at("windows").at("project").at("sections").at("transport").at("hidden");
+					now != hidden)
+				{
+					++saves;
+					hidden = now;
+				}
+		});
 	click(app, "#transport-setup [setup-all]");
 	app.shell().step(std::chrono::milliseconds(0));
+	settle(app);
+	CHECK(saves == 1);
 	CHECK(visible(app, "#transport-bar [section=locators]"));
 	CHECK(visible(app, "#transport-bar [section=punchPoints]"));
 	CHECK(!visible(app, "[section=click]", panel));
@@ -2428,6 +2815,48 @@ TEST_CASE(
 	CHECK(!checked(app, "#use-pre-roll"));
 	click(app, "#use-pre-roll");
 	REQUIRE(waitFor(app, [](const Json& state) { return state.at("preRoll") == true; }));
+}
+
+TEST_CASE("a wheel turn that the engine refuses leaves the display at the engine's amount, and the next turn goes on "
+		  "from there (#569)",
+	"[ui]")
+{
+	test::UiApp app({1024, 700});
+	showBar(app);
+	app.appUi().docking().setSectionHidden("project", "transport", "prePostRoll", false);
+	app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(visible(app, "#transport-bar [section=prePostRoll]"));
+	app.call("transport.set", {{"left", 48000}, {"right", 96000}, {"preRollAmount", 48000}});
+	REQUIRE(app.waitUntil([&app] { return shows(app, "#pre-roll-amount") == "0.2.0.0"; }));
+
+	// A billion beats, which injected input may turn, are far more pre-roll than transport.set takes (an hour at the
+	// highest sample rate): the engine refuses it, with no transport.changed. The UI asks for the transport instead.
+	const auto refused = [&app]
+	{
+		const Json log = app.call("engine.commandLog").at("commands");
+		return std::count_if(log.begin(), log.end(),
+			[](const Json& entry) { return entry.at("command") == "transport.set" && entry.contains("error"); });
+	};
+	app.ui().wheel(std::nullopt, at("#pre-roll-amount"), 0, -1e13F);
+	REQUIRE(app.waitUntil([&refused] { return refused() == 1; }));
+	REQUIRE(app.waitUntil(
+		[&app]
+		{
+			const ui::EngineBinding& binding = app.appUi().binding();
+			return binding.waiting("transport.set") == 0 && binding.waiting("transport.get") == 0;
+		}));
+	CHECK(transport(app).at("preRollAmount") == 48000);
+	CHECK(shows(app, "#pre-roll-amount") == "0.2.0.0");
+	// Shown afresh in seconds, the amount the controls hold is the engine's: two beats, a second, not a billion.
+	app.call("project.set", {{"timeFormat", "seconds"}});
+	REQUIRE(app.waitUntil([&app] { return shows(app, "#left-locator") == "0:00:01.000"; }));
+	CHECK(shows(app, "#pre-roll-amount") == "0:00:01.000");
+
+	// The next turn goes on from the engine's amount: a second longer.
+	app.ui().wheel(std::nullopt, at("#pre-roll-amount"), 0, -1);
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("preRollAmount") == 96000; }));
+	REQUIRE(app.waitUntil([&app] { return shows(app, "#pre-roll-amount") == "0:00:02.000"; }));
+	CHECK(refused() == 1);
 }
 
 TEST_CASE(

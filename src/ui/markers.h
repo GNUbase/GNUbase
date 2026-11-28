@@ -11,6 +11,7 @@
 #include <RmlUi/Core/ObserverPtr.h>
 #include <RmlUi/Core/Types.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -214,7 +215,9 @@ namespace gnubase::ui
 	// locates there), then the columns in the user's order (the user setting ui.markerColumns): the id number, the
 	// type, and the position, end, length and description in text fields, times in the transport's primary time
 	// format. The header row #marker-head sorts by a column on a click, the position second, moves a column when
-	// dragged and resizes one when the line after it is dragged. A description or length typed into one of several
+	// dragged and resizes one when the line after it is dragged. All columns but the locate and position columns can be
+	// hidden in the menu #marker-columns-menu (#column-number, #column-type, #column-end, #column-length and
+	// #column-description turn their column on and off). A description or length typed into one of several
 	// selected rows changes them all. #marker-track picks the active marker track; #add-position-marker,
 	// #add-cycle-marker and #remove-marker add and remove markers; #marker-functions-menu moves the selected markers
 	// to the cursor (#move-to-cursor) and reassigns the ids (#reassign-position-ids, #reassign-cycle-ids). Enter in
@@ -234,7 +237,7 @@ namespace gnubase::ui
 		// The markers listed: the active marker track's, in the order the list shows them.
 		const std::vector<MarkerItem>& markers() const { return m_listed; }
 		// The ids of the selected markers. setSelection selects those of the markers listed; onSelect is told of the
-		// user's changes.
+		// user's changes, and of markers that leave it because the window doesn't list them any more.
 		std::vector<uint64_t> selection() const;
 		void setSelection(const std::vector<uint64_t>& markers);
 		void onSelect(std::function<void(const std::vector<uint64_t>&)> handler) { m_onSelect = std::move(handler); }
@@ -250,8 +253,13 @@ namespace gnubase::ui
 		{
 			static Columns read(const engine::Json& value);
 			engine::Json json() const;
+			bool hides(const std::string& column) const
+			{
+				return std::find(hidden.begin(), hidden.end(), column) != hidden.end();
+			}
 
 			std::vector<std::string> order = {"number", "type", "position", "end", "length", "description"};
+			std::vector<std::string> hidden;              // in the usual order; never the position
 			engine::Json widths = engine::Json::object(); // by column, in dp
 			std::string sort = "position";
 			bool descending = false;
@@ -272,6 +280,7 @@ namespace gnubase::ui
 		void applySetting(const std::string& key, const engine::Json& value);
 		void requestProject();
 		void showHead();
+		void showColumnMenu();
 		void show();
 		bool showCursor(); // whether the locate arrow moved to another marker
 		void scrollToArrow();

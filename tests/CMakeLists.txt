@@ -203,6 +203,7 @@ add_executable(gnubase-tests
 	testing_tests.cpp
 	testrun_tempfolder.cpp
 	testutils_tests.cpp
+	text_tests.cpp
 	theme_tests.cpp
 	time_tests.cpp
 	timeformat_tests.cpp

@@ -124,7 +124,7 @@ namespace gnubase::ui
 		void endFeedback();
 		void release(Rml::Event& event);
 		void menuItem(Rml::Element& menu, Rml::Element& item);
-		void openPresetDialog();
+		void openPresetDialog(const char* file);
 		void dialogEvent(Rml::Event& event);
 
 		void render();
@@ -213,6 +213,7 @@ namespace gnubase::ui
 		// #1688): what Delete removes of a selected note. A selected note without them has all selected.
 		std::map<std::pair<uint64_t, uint64_t>, std::set<std::string>> m_attributeSelection;
 		Rml::ObserverPtr<Rml::Element> m_dialog;
+		engine::Json m_organized;                                     // the presets as Organize Presets listed them
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it's gone
 		// The context's root element that a gesture hears the mouseup in, wherever in the window the mouse goes up.
 		Rml::ObserverPtr<Rml::Element> m_listened;
