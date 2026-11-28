@@ -2762,10 +2762,16 @@ TEST_CASE("with Range Tool Splits Partly Selected Events, mute, unmute and Range
 			const Json events = f.audioEvents();
 			return events.size() == 2 && (events[0].at("position") == 264000 || events[1].at("position") == 264000);
 		}));
-	// Range End to Cursor puts the range's end there.
+	// Range End to Cursor puts the range's end there, and moves the audio event's piece from 264000 to 228000.
 	f.run("edit.moveEndToCursor");
 	CHECK(range().start == 204000);
 	CHECK(range().end == 240000);
+	REQUIRE(f.waitUntil(
+		[&f]
+		{
+			const Json events = f.audioEvents();
+			return events.size() == 2 && (events[0].at("position") == 228000 || events[1].at("position") == 228000);
+		}));
 }
 
 TEST_CASE("without a range, cut and copy take the selected events, and Paste Relative to Cursor keeps their distance",

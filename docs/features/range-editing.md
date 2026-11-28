@@ -197,8 +197,9 @@ what lies in it out at its edges and mute or unmute that (`range.set`, p. 277), 
 (`edit.moveStartToCursor`, `edit.moveEndToCursor`) move what lies in it so that its start or end is at the project
 cursor (`range.move`), where the range goes (p. 259). Off, these work on the selected events, as without a range. The
 manual describes only the preference on. Dragging the range's contents and Duplicate cut at the edges either way, and
-the nudges move the range, not its contents (p. 290). Invert Phase (p. 276) and Mod+clicking the toolbar's Move Left and
-Move Right to nudge a range's contents (p. 257) aren't in GNUbase yet: they should follow the preference too.
+the nudges move the range, not its contents (p. 290). Invert Phase (p. 276), Mod+clicking the toolbar's Move Left and
+Move Right to nudge a range's contents (p. 257) and Range to Selected Track (pp. 259-260) aren't in GNUbase yet: they
+should follow the preference too (#2178).
 
 Not yet: the range in the editors (it comes with its ticket).
 

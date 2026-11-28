@@ -565,7 +565,7 @@ namespace gnubase::engine::settings
 					true},
 				{"editing.rangeToolSplitsPartlySelectedEvents",
 					"Range Tool Splits Partly Selected Events (reference manual pp. 293, 1595): Mute, Unmute and "
-					"Event Start and Event End to Cursor on a selection range work on what lies in it, cutting the "
+					"Range Start and Range End to Cursor on a selection range work on what lies in it, cutting the "
 					"events and parts it reaches into at its edges (range.set, range.move). Off, they work on the "
 					"selected events.",
 					Json{{"type", "boolean"}}, false, true},
