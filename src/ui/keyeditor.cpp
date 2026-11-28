@@ -1698,6 +1698,14 @@ namespace gnubase::ui
 		return row >= 0 && row < static_cast<int>(m_order.size()) ? m_order.at(static_cast<size_t>(row)) : -1;
 	}
 
+	bool KeyEditor::step(int steps)
+	{
+		if (!m_view.value("stepInput", false))
+			return false;
+		m_binding.send("editor.step", {{"editor", m_name}, {"steps", steps}});
+		return true;
+	}
+
 	void KeyEditor::removeSelected()
 	{
 		std::map<uint64_t, Json> notes;

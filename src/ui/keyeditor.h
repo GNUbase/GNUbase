@@ -112,6 +112,10 @@ namespace gnubase::ui
 		void transpose(int semitones);
 		// Deletes the selected notes (keyEditor.delete).
 		void removeSelected();
+		// Right and Left Arrow in step input (keyEditor.stepRight and stepLeft, p. 1220): moves the step input cursor
+		// by steps of the quantize grid, or makes the chord whose keys are held that much longer or shorter
+		// (editor.step). False while step input is off.
+		bool step(int steps);
 
 	private:
 		struct Note

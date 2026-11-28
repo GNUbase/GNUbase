@@ -1644,6 +1644,28 @@ TEST_CASE("Up and Down transpose the selected notes, Delete and Backspace delete
 	CHECK(f.note(ids[1]).at("pitch") == 64);
 }
 
+TEST_CASE("Right and Left Arrow move the step input cursor while step input is on", "[ui]")
+{
+	// Reference manual p. 1220: key commands of the key editor's focus zone (#679).
+	Fixture f;
+	const std::vector<uint64_t> ids = f.add({{0, 60, g_quarter}});
+	f.click(of(noteSelector(ids[0])));
+	REQUIRE(f.app.waitUntil([&] { return f.selection().size() == 1; }));
+	f.app.call("editor.set", {{"editor", "window"}, {"stepInput", true}});
+	REQUIRE(f.app.waitUntil([&] { return !f.has(".key-editor-step-cursor", "off"); }));
+	const auto position = [&f] { return f.app.call("editor.get", {{"editor", "window"}}).at("stepPosition"); };
+	REQUIRE(position() == 0);
+	constexpr int64_t step = g_quarter / 4; // the quantize grid's 1/16
+	f.app.ui().key(f.window, "Right");
+	REQUIRE(f.app.waitUntil([&] { return position() == step; }));
+	f.app.ui().key(f.window, "Right");
+	REQUIRE(f.app.waitUntil([&] { return position() == 2 * step; }));
+	f.app.ui().key(f.window, "Left");
+	REQUIRE(f.app.waitUntil([&] { return position() == step; }));
+	CHECK(f.app.keys().keysFor("keyEditor.stepRight") == std::vector<std::string>{"Right"});
+	CHECK(f.app.keys().keysFor("keyEditor.stepLeft") == std::vector<std::string>{"Left"});
+}
+
 TEST_CASE("with the on-screen keyboard open, Delete and Backspace still delete the selected notes", "[ui]")
 {
 	// The on-screen keyboard takes the keys of the key commands, except the reference's exceptions, Delete among them

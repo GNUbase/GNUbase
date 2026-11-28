@@ -538,6 +538,53 @@ TEST_CASE("notes played on the MIDI inputs go into step input as chords once all
 	CHECK(f.partNotes().back().at("pitch") == 50);
 }
 
+TEST_CASE("Right and Left Arrow move the step input cursor, and while keys are held lengthen or shorten their chord",
+	"[unit]")
+{
+	// Reference manual p. 1220: editor.step, by steps of the quantize grid (1/16 here); the chord's notes start at the
+	// length quantize's length.
+	Fixture f;
+	const auto step = [&f](int steps) { return f.call("editor.step", {{"editor", "window"}, {"steps", steps}}); };
+	const auto note = [&f](int pitch, bool on)
+	{
+		const Json played = {{"pitch", pitch}, {"velocity", on ? 100 : 0}, {"on", on}};
+		f.call("editor.played", {{"notes", Json::array({played})}});
+	};
+	CHECK_THAT(f.fails("editor.step", {{"editor", "window"}, {"steps", 1}}), ContainsSubstring("step input is off"));
+	f.call("editor.set", {{"editor", "window"}, {"stepInput", true}, {"lengthQuantize", "1/16"}});
+	const int64_t start = f.view().at("stepPosition").get<int64_t>(); // the part's
+	// Without keys held the cursor moves: Right inserts a rest, Left goes back, not before the project's start.
+	CHECK(step(1) == Json{{"held", false}, {"stepPosition", start + g_sixteenth}});
+	CHECK(step(-1).at("stepPosition") == start);
+	f.call("editor.set", {{"editor", "window"}, {"stepPosition", 0}});
+	CHECK(step(-1).at("stepPosition") == 0);
+	CHECK(f.view().at("stepPosition") == 0);
+	f.call("editor.set", {{"editor", "window"}, {"stepPosition", start}});
+	// Right twice while a key is held: its note is two steps longer, and the cursor moves on by three.
+	note(60, true);
+	CHECK(step(1) == Json{{"held", true}, {"steps", 1}});
+	CHECK(step(1).at("steps") == 2);
+	note(60, false);
+	REQUIRE(f.partNotes().size() == 1);
+	CHECK(f.partNotes()[0].at("length") == 3 * g_sixteenth);
+	CHECK(f.view().at("stepPosition") == start + (3 * g_sixteenth));
+	// Left shortens a quarter by a step, and the cursor moves on by one; far left leaves a step.
+	f.call("editor.set", {{"editor", "window"}, {"lengthQuantize", "1/4"}});
+	note(62, true);
+	step(-1);
+	note(62, false);
+	note(64, true);
+	step(-10);
+	note(64, false);
+	const Json notes = f.partNotes();
+	REQUIRE(notes.size() == 3);
+	CHECK(notes[1].at("position") == 3 * g_sixteenth);
+	CHECK(notes[1].at("length") == 3 * g_sixteenth);
+	CHECK(notes[2].at("position") == 4 * g_sixteenth);
+	CHECK(notes[2].at("length") == g_sixteenth);
+	CHECK(f.view().at("stepPosition") == start + (5 * g_sixteenth));
+}
+
 TEST_CASE("a MIDI keyboard plays into the key editor whose step or MIDI input went on last", "[integration]")
 {
 	// Reference manual pp. 1219-1220.
@@ -636,5 +683,6 @@ TEST_CASE("a MIDI keyboard plays into the key editor whose step or MIDI input we
 	for (const Json& note : f.partNotes())
 		pitches.push_back(note.at("pitch").get<int>());
 	std::sort(pitches.begin(), pitches.end());
-	CHECK(pitches == std::vector<int>{48, 48, 52, 60, 64, 67, 72, 74, 76}); // the first 48 is the note MIDI input changed
+	CHECK(
+		pitches == std::vector<int>{48, 48, 52, 60, 64, 67, 72, 74, 76}); // the first 48 is the note MIDI input changed
 }

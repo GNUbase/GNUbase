@@ -25,6 +25,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -506,5 +507,23 @@ namespace gnubase::app
 			m_keys.bind({command.keys, command.id, Json::object(), "keyEditor"});
 		}
 		m_keys.bind({"Backspace", "keyEditor.delete", Json::object(), "keyEditor"});
+		// Right and Left Arrow in step input (p. 1220): the step input cursor, or the length of the chord whose keys
+		// are held; with step input off they select the next or previous event, as elsewhere.
+		for (const auto& [id, description, steps, keys] : {std::tuple{"keyEditor.stepRight",
+															   "Moves the key editor's step input cursor a step right, "
+															   "a rest, or makes the chord held a step longer.",
+															   1, "Right"},
+				 std::tuple{"keyEditor.stepLeft",
+					 "Moves the key editor's step input cursor a step left, or makes the chord held a step shorter.",
+					 -1, "Left"}})
+		{
+			m_keys.add({id, description, [this, keyEditorOf, steps = steps](ui::Window& window, Rml::Element* zone)
+				{
+					ui::KeyEditor* editor = keyEditorOf(zone);
+					if (editor == nullptr || !editor->step(steps))
+						m_keys.run(steps > 0 ? "edit.selectNext" : "edit.selectPrevious", Json::object(), window, zone);
+				}});
+			m_keys.bind({keys, id, Json::object(), "keyEditor"});
+		}
 	}
 }

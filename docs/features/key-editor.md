@@ -27,6 +27,7 @@ saved, and a new project closes the editors.
 | Command | What it does | Reference |
 |---|---|---|
 | `editor.input` | Notes played, such as a chord from a MIDI keyboard: with step input they go into the active part at the step input cursor as notes of the length quantize's length, and the cursor moves on by a step of the quantize grid; with MIDI input the first selected note takes the played pitch and velocities, and the next note is selected | pp. 1219-1220 |
+| `editor.step` | Right and Left Arrow in step input: the step input cursor moves by steps of the quantize grid, not before the project's start (Right inserts a rest); while keys played on the MIDI inputs are held for the editor, their chord gets that many quantize steps longer or shorter instead (down to a step), and the cursor moves on by the steps it got longer too | p. 1220 |
 | `editor.played` | MIDI input into the editors' step and MIDI input, which the engine runs with the notes the tracks get from all MIDI inputs and the chord pads while an editor's input is on: the keys pressed until all are up again go into `editor.input` as one chord | pp. 1219-1220 |
 | `note.chord` | The chord notes of a part make (query) | p. 1216 |
 | `note.voicing` | Fits notes to a chord type, or inverts them or drops notes | pp. 1215-1217 |
@@ -146,7 +147,8 @@ A press in the note display gives the editor the keyboard focus. Its element is 
 and Down transpose the selected notes by a semitone, with Shift by an octave, and Delete and Backspace delete them
 (p. 1214): the key commands `keyEditor.transposeUp`, `keyEditor.transposeDown`, `keyEditor.transposeOctaveUp`,
 `keyEditor.transposeOctaveDown` and `keyEditor.delete` ([key-commands.md](key-commands.md), #679), which the Key
-Commands dialog binds to other keys. In the lower zone they come before the project window's keys, so Delete deletes
+Commands dialog binds to other keys. With step input on, Right and Left (`keyEditor.stepRight`, `keyEditor.stepLeft`)
+send `editor.step` (p. 1220); with it off they select the next or previous event as elsewhere. In the lower zone they come before the project window's keys, so Delete deletes
 the notes, not the project window's selected events.
 
 | Tool | Gesture | Reference |
@@ -229,11 +231,12 @@ key editor's context menu.
   while input is off, a pitch down twice up once both keys are, and lost notes forgetting the keys down; a dummy MIDI
   keyboard playing through `midi.activity` into the editor whose input went on last, then into the other one, nothing
   played while both were off or from a port outside all MIDI inputs, the on-screen keyboard's notes, a flood of
-  expression crowding out no note, and a chord pad's remote key putting in the pad's chord; chord recognition, fitting
-  and voicings; `note.chord` and `note.voicing` with undo and their errors; Acoustic Feedback off at first and the
-  event colors, set as view state without an undo step; Indicate Transpositions off at first, as view state, its steps
-  from transpose events within the part (not before or after it) with the root key's step and the part's own
-  transpose, muted transpose events and an Independent part.
+  expression crowding out no note, and a chord pad's remote key putting in the pad's chord; `editor.step` moving the
+  cursor, not before the project's start, and lengthening and shortening a held chord, down to a step; chord
+  recognition, fitting and voicings; `note.chord` and `note.voicing` with undo and their errors; Acoustic Feedback off
+  at first and the event colors, set as view state without an undo step; Indicate Transpositions off at first, as view
+  state, its steps from transpose events within the part (not before or after it) with the root key's step and the
+  part's own transpose, muted transpose events and an Independent part.
 - `tests/keyeditor_ui_tests.cpp` drives the app with `ui::Automation`: the keyboard and notes at their time and pitch,
   keys lit for selected notes; the piano keyboard at 1024x600, at dp ratios of 1.5 and 1: white keys of equal height
   across the keyboard, black keys narrower on their rows, the mouse on the right part of a white key beside a black key
@@ -255,7 +258,7 @@ key editor's context menu.
   step; each gesture's undo step named the same over notes of one part and of two, also the drumstick's delete drag
   (`tests/drumeditor_ui_tests.cpp`); the transpose palette, Up and Down (with Shift), Delete and Backspace, and
   Transpose Up bound to another key, and typing a pitch and a start before the part's on the info line; step input with
-  its cursor, a click moving it, and MIDI input selecting the next note; the Chord Editing section naming and changing a
+  its cursor, a click moving it, Right and Left moving it, and MIDI input selecting the next note; the Chord Editing section naming and changing a
   chord; the toolbox with the setting on and off, with and without a modifier key, choosing tools; drags on the
   keyboard's left part zooming the rows in and out between the limits, from the height a style sheet gives them, also
   after a style change at a zoom and back at 1, the keyboard as high as the rows of any height, nothing zoomed or
