@@ -413,7 +413,7 @@ TEST_CASE("a waveform is drawn with the volume and volume curve of its event", "
 	peaks.high.assign(8, 32767);
 	wave.setPeaks({0.0, 400.0}, {peaks});
 	// At half the gain up to 200 seconds, a quarter after it: a clip frame a second from the event's start at 0.
-	wave.setVolume({0.0, 400.0, 1.0, 0, 0.5, {{200, 1.0, 0.0}, {200, 0.5, 0.0}}, false});
+	wave.setVolume({0.0, 400.0, 1.0, 0, 0.5, {{200, 1.0, 0.0}, {200, 0.5, 0.0}}, false, {}});
 	const std::vector<Rml::Vertex> vertices = fixture.draw();
 	// Two quads, each widened over two pixels; the element's 40 dp start at 40.
 	REQUIRE(vertices.size() == 8);

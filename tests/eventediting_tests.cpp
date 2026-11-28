@@ -3756,6 +3756,57 @@ TEST_CASE("the draw tool adds and drags volume curve points, the erase tool remo
 	REQUIRE(f.waitUntil([&f] { return f.audioEvents().empty(); }));
 }
 
+TEST_CASE("the draw tool selects curve points, with Shift several, and Delete removes them", "[unit]")
+{
+	// Reference manual p. 400: a click on a point selects it, Shift and a click adds one, Delete removes them.
+	Fixture f;
+	f.display.setTool(ui::Tool::Draw);
+	f.call("audioEvent.setVolumeCurve",
+		{{"event", f.event},
+			{"points",
+				{{{"position", 4800}, {"volume", -6.0}, {"curve", 0.0}},
+					{{"position", 9600}, {"volume", -6.0}, {"curve", 0.0}},
+					{{"position", 14400}, {"volume", -6.0}, {"curve", 0.0}}}}});
+	f.display.select({f.event});
+	// Which points the volume line draws as selected.
+	const auto selected = [&f](std::vector<size_t> points)
+	{
+		return f.waitUntil(
+			[&f, &points]
+			{
+				const std::vector<ui::VolumeLine>& lines = fadeLines(f).lanes()[0].volumes;
+				return lines.size() == 1 && lines[0].points.size() == 3 && lines[0].selected == points;
+			});
+	};
+	REQUIRE(selected({}));
+	// The points at 0.1, 0.2 and 0.3 seconds into the event from 2 seconds, a quarter up the 40 dp lane.
+	f.click(210, 30);
+	CHECK(selected({0}));
+	f.click(230, 30);
+	CHECK(selected({2}));
+	f.click(210, 30, {"shift"});
+	CHECK(selected({0, 2}));
+	f.click(230, 30, {"shift"}); // again: no longer
+	CHECK(selected({0}));
+	f.click(230, 30, {"shift"});
+	CHECK(f.audioEvents()[0].at("volumeCurve").size() == 3); // selecting changes nothing
+
+	// Delete removes the selected points rather than the event, as one undo step.
+	f.run("edit.delete");
+	REQUIRE(
+		f.waitUntil([&f] { return f.audioEvents().size() == 1 && f.audioEvents()[0].at("volumeCurve").size() == 1; }));
+	CHECK(f.audioEvents()[0].at("volumeCurve")[0].at("position") == 9600);
+	CHECK(f.waitUntil(
+		[&f]
+		{
+			const std::vector<ui::VolumeLine>& lines = fadeLines(f).lanes()[0].volumes;
+			return lines.size() == 1 && lines[0].points.size() == 1 && lines[0].selected.empty();
+		}));
+	// With none selected, Delete removes the event.
+	f.run("edit.delete");
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents().empty(); }));
+}
+
 TEST_CASE("Ctrl and the draw tool draw a volume curve in place of the points the drawing passes", "[unit]")
 {
 	// Reference manual p. 400: a point where the press was and one at each move, as one undo step.

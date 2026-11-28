@@ -958,8 +958,9 @@ namespace gnubase::ui
 						line(mesh, {xs[i - 1], y(gain(xs[i - 1]))}, {xs[i], y(gain(xs[i]))}, colour, width);
 					if (handle.alpha == 0 || !volume.handles)
 						continue;
-					for (const engine::GainPoint& point : volume.points)
+					for (size_t i = 0; i < volume.points.size(); ++i)
 					{
+						const engine::GainPoint& point = volume.points[i];
 						const double seconds =
 							volume.start + (static_cast<double>(point.position - volume.offset) / volume.rate);
 						if (seconds < volume.start || seconds > volume.end)
@@ -968,7 +969,10 @@ namespace gnubase::ui
 						const double at = y(std::clamp(volume.gain * point.gain / g_volumeLineTop, 0.0, 1.0));
 						quad(mesh, static_cast<float>(x - (handleSize / 2.0)),
 							static_cast<float>(at - (handleSize / 2.0)), static_cast<float>(x + (handleSize / 2.0)),
-							static_cast<float>(at + (handleSize / 2.0)), handle);
+							static_cast<float>(at + (handleSize / 2.0)),
+							std::find(volume.selected.begin(), volume.selected.end(), i) != volume.selected.end()
+								? colour
+								: handle);
 					}
 				}
 			// Fade handles at the top of the lane, event volume controls at its bottom.

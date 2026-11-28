@@ -9,6 +9,7 @@
 #include <RmlUi/Core/Mesh.h>
 #include <RmlUi/Core/Texture.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -285,7 +286,8 @@ namespace gnubase::ui
 		int64_t offset = 0;
 		double gain = 1.0;
 		std::vector<engine::GainPoint> points;
-		bool handles = false; // squares at the points
+		bool handles = false;         // squares at the points
+		std::vector<size_t> selected; // the points whose squares are drawn in stroke-color, as selected
 	};
 	inline constexpr double g_volumeLineTop = 1.9952623149688795; // +6 dB, the most an event's volume can be
 
@@ -372,7 +374,7 @@ namespace gnubase::ui
 
 	// <fade-lines>: the fades and volume lines of the event lanes' events in stroke-color, and handles filled with
 	// color: fade handles, squares at the top of a lane at the positions given, event volume controls, squares at its
-	// bottom, and a volume line's points.
+	// bottom, and a volume line's points, the selected ones in stroke-color.
 	class FadeLines final : public Canvas
 	{
 	public:

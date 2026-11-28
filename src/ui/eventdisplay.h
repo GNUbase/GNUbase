@@ -815,6 +815,8 @@ namespace gnubase::ui
 		bool eraseCurvePoint(const Shown& shown, double x, double y);     // the erase tool, on a point
 		void showVolume(FadeLines::Lane& lane, const Shown& shown) const; // its line and volume control
 		std::optional<VolumeLine> volumeLine(const Shown& shown) const;   // as the volume lines draw it, or none
+		// The selected points' indices in an event's curve.
+		std::vector<size_t> selectedCurvePoints(uint64_t event, const std::vector<engine::VolumePoint>& curve) const;
 		void showWaveVolumes(); // the volumes the waveforms are drawn with (p. 399)
 
 		// The time warp tool, Process Tempo, Process Bars, Set Definition from Tempo and copying warp markers
@@ -1060,6 +1062,10 @@ namespace gnubase::ui
 		double m_dragDy = 0.0;             // dp, dragging the event volume or a curve point
 		double m_volumeDy = 0.0;           // dp from the press to the mouse, dragging the event volume
 		std::optional<size_t> m_dragPoint; // the curve point dragged, none for a new one
+		// The selected volume curve points (reference manual p. 400) of the event m_curveEvent, as they were: they
+		// count while it is selected and has them.
+		uint64_t m_curveEvent = 0;
+		std::vector<engine::VolumePoint> m_curvePoints;
 		std::vector<std::pair<double, double>> m_drawnCurve; // with Ctrl: where the drag went, in dp (#670)
 		// Moving events, after the drag delay; a RangeMove drag, once across or on other tracks.
 		bool m_dragStarted = false;
