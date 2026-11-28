@@ -1455,10 +1455,12 @@ namespace gnubase::ui
 		{
 			const std::string backend = port.value("backend", std::string());
 			const std::string id = port.value("id", std::string());
-			if (port.value("input", false) && !port.value("inAllInputs", true))
-				m_notInAllInputs.insert(backend + " " + id);
-			if (port.value("input", false) && port.value("visible", true))
-				m_inputPorts.emplace_back(backend + "/in/" + id, port.value("showAs", id));
+			if (!port.value("input", false))
+				continue;
+			if (!port.value("inAllInputs", true))
+				m_notInAllInputs.insert(backend + " " += id);
+			if (port.value("visible", true))
+				m_inputPorts.emplace_back(backend + "/in/" += id, port.value("showAs", id));
 		}
 		m_stale = true;
 	}

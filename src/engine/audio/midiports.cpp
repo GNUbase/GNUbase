@@ -178,8 +178,9 @@ namespace gnubase::engine
 		PortInputs& ports) noexcept
 	{
 		const uint64_t hash = m_slotHashes[static_cast<size_t>(slot)].load(std::memory_order_relaxed);
-		const auto port = std::find(ports.hashes.begin(), ports.hashes.end(), hash);
-		if (hash == 0 || port == ports.hashes.end())
+		const auto port =
+			static_cast<size_t>(std::find(ports.hashes.begin(), ports.hashes.end(), hash) - ports.hashes.begin());
+		if (hash == 0 || port == ports.hashes.size())
 		{
 			if (inAll)
 				addInput(slot, message, allInputs);
@@ -199,7 +200,7 @@ namespace gnubase::engine
 		{
 			if (inAll)
 				put(allInputs, event);
-			put(ports.events.at(static_cast<size_t>(port - ports.hashes.begin())), event);
+			put(ports.events.at(port), event);
 		}
 	}
 

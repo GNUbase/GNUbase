@@ -790,13 +790,15 @@ namespace gnubase::engine
 			if (found != snapshot.channels.end() && found->midiPort != 0)
 			{
 				// ponytail: up to PortInputs::g_max ports; tracks of more play nothing.
-				auto port = std::find(program->ports.begin(), program->ports.end(), found->midiPort);
-				if (port == program->ports.end())
-					port = std::find(program->ports.begin(), program->ports.end(), 0);
-				if (port != program->ports.end())
+				std::array<uint64_t, PortInputs::g_max>& single = program->ports;
+				auto port =
+					static_cast<size_t>(std::find(single.begin(), single.end(), found->midiPort) - single.begin());
+				if (port == single.size())
+					port = static_cast<size_t>(std::find(single.begin(), single.end(), 0) - single.begin());
+				if (port < single.size())
 				{
-					*port = found->midiPort;
-					thru = static_cast<uint8_t>(2 + (port - program->ports.begin()));
+					single.at(port) = found->midiPort;
+					thru = static_cast<uint8_t>(2 + port);
 				}
 			}
 			program->thru.push_back(thru);

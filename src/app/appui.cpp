@@ -1457,30 +1457,7 @@ namespace gnubase::app
 				m_canRedo = position < result.value.at("steps").size();
 			});
 
-		// Lock Record (docs/features/recording.md): a stop or punch out that the engine refused because recording is
-		// locked asks whether to do it anyway (lock-record.rml), in the window whose key, button or menu item sent it
-		// (#645); the engine's reason says which it was.
-		for (const char* command : {"transport.stop", "transport.toggle", "transport.record"})
-		{
-			m_keys.keepSentFrom(command);
-			m_lockRecord.push_back(m_binding.onResult(command,
-				[this](const engine::Result& result)
-				{
-					const ui::WindowId from = m_keys.sentFrom(result.request);
-					if (result.ok())
-						return;
-					const bool punchOut = result.error.find("punch out") != std::string::npos;
-					m_binding.send("transport.get", engine::Json::object(),
-						[this, punchOut, from](const engine::Result& status)
-						{
-							ui::Window* window = m_shell.find(from);
-							if (status.ok() && status.value.at("lockRecord").get<bool>() &&
-								status.value.at("recording").get<bool>())
-								openOnce(window != nullptr ? *window : m_main, "lock-record.rml", m_lockRecordDialog,
-									{{"action", punchOut ? "punchOut" : "stop"}});
-						});
-				}));
-		}
+		watchLockRecord();
 		// The status line's remaining record time changes as the disk fills up, also by other programs.
 		m_shell.every(std::chrono::seconds(1),
 			[this]
@@ -3025,6 +3002,34 @@ namespace gnubase::app
 				dialog.parent = window->id(); // the mixer's, e.g. on another monitor
 		chooseProjectFile(dialog, [this, track](const std::filesystem::path& file)
 			{ m_binding.send("track.set", {{"track", track}, {"picture", file.u8string()}}); });
+	}
+
+	void AppUi::watchLockRecord()
+	{
+		// Lock Record (docs/features/recording.md): a stop or punch out that the engine refused because recording is
+		// locked asks whether to do it anyway (lock-record.rml), in the window whose key, button or menu item sent it
+		// (#645); the engine's reason says which it was.
+		for (const char* command : {"transport.stop", "transport.toggle", "transport.record"})
+		{
+			m_keys.keepSentFrom(command);
+			m_lockRecord.push_back(m_binding.onResult(command,
+				[this](const engine::Result& result)
+				{
+					const ui::WindowId from = m_keys.sentFrom(result.request);
+					if (result.ok())
+						return;
+					const bool punchOut = result.error.find("punch out") != std::string::npos;
+					m_binding.send("transport.get", engine::Json::object(),
+						[this, punchOut, from](const engine::Result& status)
+						{
+							ui::Window* window = m_shell.find(from);
+							if (status.ok() && status.value.at("lockRecord").get<bool>() &&
+								status.value.at("recording").get<bool>())
+								openOnce(window != nullptr ? *window : m_main, "lock-record.rml", m_lockRecordDialog,
+									{{"action", punchOut ? "punchOut" : "stop"}});
+						});
+				}));
+		}
 	}
 
 	void AppUi::addTrackFileCommands()
