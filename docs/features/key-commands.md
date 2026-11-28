@@ -150,6 +150,7 @@ in-place editor's.
 | Up, Down | `keyEditor.transposeUp`, `keyEditor.transposeDown` | Transpose by a semitone (p. 1214) |
 | Shift+Up, Shift+Down | `keyEditor.transposeOctaveUp`, `keyEditor.transposeOctaveDown` | Transpose by an octave |
 | Delete, Backspace | `keyEditor.delete` | Delete |
+| Right, Left | `keyEditor.stepRight`, `keyEditor.stepLeft` | Step input: the step input cursor a step on or back, or the held chord a step longer or shorter; with step input off the next or previous event (`edit.selectNext`, `edit.selectPrevious`) (p. 1220) |
 
 The UI command `file.quit` (Quit, in the main menu's File menu) has Mod+Q, everywhere, and `window.onScreenKeyboard`
 (Show/Hide On-Screen Keyboard, [onscreen-keyboard.md](onscreen-keyboard.md)) Alt+K. Commands that come with their

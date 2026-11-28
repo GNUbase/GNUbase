@@ -1529,6 +1529,7 @@ namespace gnubase::engine
 		for (audio::MidiBuffer& buffer : m_padOutput)
 			buffer.clear();
 		m_midi.take(block, format.sampleRate, m_midiInput, m_padOutput, program.chordPadKeys);
+		m_midi.notesPlayed(m_midiInput, m_padOutput); // for the key editors' step and MIDI input (#2154)
 		const size_t bytes = block.frames * sizeof(float);
 		for (const BusLink& link : program.inputs)
 		{

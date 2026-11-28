@@ -680,10 +680,11 @@ namespace gnubase::engine
 		// the chord they play, which goes in once they are all up.
 		struct LiveInput
 		{
-			bool listening = false; // midi.activityListen is on for the key editors
-			std::string editor;     // the editor whose step or MIDI input went on last
-			std::set<int> down;
+			bool listening = false;  // midi.activityListen is on for the key editors
+			std::string editor;      // the editor whose step or MIDI input went on last
+			std::multiset<int> down; // a pitch as often as it is down, such as from two chord pad players
 			Json chord = Json::array();
+			int steps = 0; // Right and Left Arrow while the keys are down (editor.step)
 		};
 
 		// The editor that notes played go into: the one whose step or MIDI input went on last, else the first that
@@ -706,6 +707,7 @@ namespace gnubase::engine
 			live.listening = on;
 			live.down.clear();
 			live.chord = Json::array();
+			live.steps = 0;
 			context.call("midi.activityListen", {{"on", on}, {"listener", "keyEditor"}, {"post", "editor.played"}});
 		}
 	}
@@ -1257,13 +1259,15 @@ namespace gnubase::engine
 				return Json{{"tracks", openInPlace(*views, model)}};
 			});
 
-		Json inputSchema = editorOnly({{"notes",
-			{{"type", "array"}, {"minItems", 1},
-				{"items",
-					{{"type", "object"}, {"additionalProperties", false}, {"required", {"pitch"}},
-						{"properties",
-							{{"pitch", idSchema}, {"velocity", {{"type", "number"}}},
-								{"releaseVelocity", {{"type", "number"}}}}}}}}}});
+		Json inputSchema =
+			editorOnly({{"notes",
+							{{"type", "array"}, {"minItems", 1},
+								{"items",
+									{{"type", "object"}, {"additionalProperties", false}, {"required", {"pitch"}},
+										{"properties",
+											{{"pitch", idSchema}, {"velocity", {{"type", "number"}}},
+												{"releaseVelocity", {{"type", "number"}}}}}}}}},
+				{"steps", {{"type", "integer"}}}});
 		inputSchema["required"] = {"editor", "notes"};
 		model.addEdit(engine,
 			{"editor.input", 1,
@@ -1275,10 +1279,12 @@ namespace gnubase::engine
 				"last note before the cursor that stays (else its first after it, else channel 0), and the cursor "
 				"moves on by a step of the quantize grid; moveInsert first moves the part's notes from the cursor on "
 				"by a step, or by the longest inserted note where that is longer, and without keepNotes the notes "
-				"that start within the step go. With midiInput (and stepInput off), the first selected note takes the "
-				"lowest "
-				"note's pitch, velocity and release velocity, as far as recordPitch, recordVelocity and "
-				"recordReleaseVelocity say, and the other notes of a chord are added with its position and length; "
+				"that start within the step go. steps, as editor.step counts Right and Left Arrow while the keys "
+				"are held (p. 1220), makes the notes that many quantize steps longer, or shorter down to a step, "
+				"and with more, the cursor's step that many steps longer too. With midiInput (and stepInput off), the "
+				"first selected note takes the lowest note's pitch, velocity and release velocity, as far as "
+				"recordPitch, recordVelocity and recordReleaseVelocity say, and the other notes of a chord are added "
+				"with its position and length; "
 				"with keepNotes, all of them are added and the selected note stays. Then the next note of its part "
 				"is selected. Velocities that aren't recorded are insertVelocity's and the default release velocity. "
 				"One undo step. Returns the part and its notes added or changed.",
@@ -1309,7 +1315,9 @@ namespace gnubase::engine
 					const time::Ticks at = view.stepPosition - start;
 					require(at >= 0 && view.stepPosition < partEnd(project, part),
 						"the step input cursor isn't within the active part");
-					const time::Ticks step = project.quantize.grid.ticks();
+					const time::Ticks grid = project.quantize.grid.ticks();
+					const int steps = parameters.value("steps", 0);
+					const time::Ticks step = grid * (1 + std::max(steps, 0)); // where the cursor moves on
 					const time::Ticks end = partEnd(project, part) - start;
 					// The I-notes (p. 1239), and lengths that end at the part's end at the latest.
 					std::vector<std::pair<Played, time::Ticks>> inserted;
@@ -1317,8 +1325,9 @@ namespace gnubase::engine
 					for (Played each : played)
 					{
 						each.pitch = midi::inputPitch(project, part.track, each.pitch);
+						const time::Ticks quantized = noteLength(project, view, part.track, each.pitch);
 						const time::Ticks length =
-							std::min(noteLength(project, view, part.track, each.pitch), end - at);
+							std::min(std::max(quantized + (steps * grid), std::min(quantized, grid)), end - at);
 						inserted.emplace_back(each, length);
 						longest = std::max(longest, length);
 					}
@@ -1419,24 +1428,32 @@ namespace gnubase::engine
 				return Json{{"part", partId}, {"notes", notes}};
 			});
 
-		const Json bytesSchema = {{"type", "array"}, {"items", {{"type", "integer"}}}};
 		engine.registerCommand(
 			{"editor.played", 1,
 				"MIDI input played into the key editors' step and MIDI input (reference manual pp. 1219-1220), as "
-				"midi.activity takes it: the engine runs it with what the MIDI inputs receive while an editor's step "
-				"or MIDI input is on (midi.activityListen with post). received: messages, each with its bytes and "
-				"whether its port belongs to all MIDI inputs (inAllInputs, by default true); only those of ports "
-				"that do count, and only their notes. The keys pressed until all of them are up again are one chord: "
-				"then editor.input runs with its notes, each with its note-on velocity and its note-off velocity "
-				"(0.5 for a note-on of velocity 0), in the editor whose step or MIDI input went on last, or else the "
-				"first one with it on. Returns the chords it sent, each the notes as editor.input takes them.",
-				{{"type", "object"}, {"additionalProperties", false}, {"required", {"received"}},
+				"midi.activity posts it: the engine runs it with the notes the tracks get from all MIDI inputs and "
+				"the chord pads while an editor's step or MIDI input is on (midi.activityListen with post), so a "
+				"chord pad's remote key puts in the pad's chord, not its own pitch (#2154). notes: each with its "
+				"pitch, velocity (0 to 127) and whether it is a note-on (on). The keys pressed until all of them are "
+				"up again are one chord: then editor.input runs with its notes, each with its note-on velocity and "
+				"its note-off velocity, in the editor whose step or MIDI input went on last, or else the first one "
+				"with it on. Lost notes forget the keys down, with their chord, since their note-offs may be lost, "
+				"and the next key starts afresh: cleared, true when the input was dropped before these notes, as when "
+				"a device started, forgets the keys down before them; dropped, how many notes didn't fit after these, "
+				"as when the queue was full, forgets those still down after them. "
+				"Returns the chords it sent, each the notes as editor.input takes them.",
+				{{"type", "object"}, {"additionalProperties", false}, {"required", {"notes"}},
 					{"properties",
-						{{"received",
-							{{"type", "array"},
-								{"items",
-									{{"type", "object"}, {"required", {"bytes"}},
-										{"properties", {{"bytes", bytesSchema}, {"inAllInputs", boolean}}}}}}}}}},
+						{{"notes",
+							 {{"type", "array"},
+								 {"items",
+									 {{"type", "object"}, {"additionalProperties", false},
+										 {"required", {"pitch", "velocity", "on"}},
+										 {"properties",
+											 {{"pitch", {{"type", "integer"}, {"minimum", 0}, {"maximum", 127}}},
+												 {"velocity", {{"type", "integer"}, {"minimum", 0}, {"maximum", 127}}},
+												 {"on", boolean}}}}}}},
+							{"dropped", {{"type", "integer"}, {"minimum", 0}}}, {"cleared", boolean}}}},
 				{{"type", "object"}, {"required", {"chords"}}, {"properties", {{"chords", {{"type", "array"}}}}}},
 				false},
 			[views, live, &model, &engine](CommandContext& context)
@@ -1445,15 +1462,21 @@ namespace gnubase::engine
 				const std::string editor = inputEditor(*live, *views, model);
 				listen(*live, !editor.empty(), context);
 				Json chords = Json::array();
-				for (const Json& each : context.parameters().at("received"))
+				const auto forget = [&live]
 				{
-					const Json& bytes = each.at("bytes");
-					if (editor.empty() || !each.value("inAllInputs", true) || bytes.size() < 3)
-						continue;
-					const int status = bytes.at(0).get<int>() & 0xF0;
-					const int pitch = bytes.at(1).get<int>() & 0x7F;
-					const int velocity = bytes.at(2).get<int>() & 0x7F;
-					if (status == 0x90 && velocity > 0)
+					live->down.clear();
+					live->chord = Json::array();
+					live->steps = 0;
+				};
+				if (context.parameters().value("cleared", false))
+					forget();
+				for (const Json& each : context.parameters().at("notes"))
+				{
+					if (editor.empty())
+						break;
+					const int pitch = each.at("pitch").get<int>();
+					const int velocity = each.at("velocity").get<int>();
+					if (each.at("on").get<bool>())
 					{
 						const bool fresh = std::none_of(live->chord.begin(), live->chord.end(),
 							[pitch](const Json& note) { return note.at("pitch") == pitch; });
@@ -1461,20 +1484,56 @@ namespace gnubase::engine
 						if (fresh)
 							live->chord.push_back({{"pitch", pitch}, {"velocity", velocity / 127.0}});
 					}
-					else if ((status == 0x80 || status == 0x90) && live->down.erase(pitch) != 0)
+					else if (const auto down = live->down.find(pitch); down != live->down.end())
 					{
+						live->down.erase(down);
 						for (Json& note : live->chord)
 							if (note.at("pitch") == pitch)
-								note["releaseVelocity"] = status == 0x80 ? velocity / 127.0 : 0.5;
+								note["releaseVelocity"] = velocity / 127.0;
 						if (live->down.empty())
 						{
-							engine.post("editor.input", {{"editor", editor}, {"notes", live->chord}});
+							engine.post(
+								"editor.input", {{"editor", editor}, {"notes", live->chord}, {"steps", live->steps}});
 							chords.push_back(live->chord);
 							live->chord = Json::array();
+							live->steps = 0;
 						}
 					}
 				}
+				if (context.parameters().value("dropped", 0) > 0)
+					forget();
 				return Json{{"chords", chords}};
+			});
+
+		engine.registerCommand(
+			{"editor.step", 1,
+				"Right Arrow and Left Arrow in a key editor's step input (reference manual p. 1220): steps, such as 1 "
+				"or -1, moves the step input cursor by that many steps of the quantize grid, not before the project's "
+				"start, so that Right Arrow inserts a rest; while keys played on the MIDI inputs are held for this "
+				"editor (editor.played), it makes their chord that many quantize steps longer or shorter instead, "
+				"which editor.input then inserts. Returns whether keys were held and the steps their chord has, or "
+				"the cursor's new position.",
+				editorOnly({{"steps", {{"type", "integer"}}}}),
+				{{"type", "object"}, {"required", {"held"}},
+					{"properties",
+						{{"held", boolean}, {"steps", {{"type", "integer"}}},
+							{"stepPosition", {{"type", "integer"}}}}}},
+				false},
+			[views, live, &model](CommandContext& context)
+			{
+				const std::string editor = context.parameters().at("editor").get<std::string>();
+				const int steps = context.parameters().value("steps", 1);
+				const EditorView view = current(*views, model, editor);
+				require(view.open && view.stepInput, "step input is off");
+				if (!live->down.empty() && inputEditor(*live, *views, model) == editor)
+				{
+					live->steps += steps;
+					return Json{{"held", true}, {"steps", live->steps}};
+				}
+				const time::Ticks grid = model.project().quantize.grid.ticks();
+				const time::Ticks position = std::max<time::Ticks>(view.stepPosition + (steps * grid), 0);
+				context.call("editor.set", {{"editor", editor}, {"stepPosition", position}});
+				return Json{{"held", false}, {"stepPosition", position}};
 			});
 	}
 }

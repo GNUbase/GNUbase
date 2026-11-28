@@ -71,6 +71,12 @@ namespace gnubase::engine
 		void take(const audio::DeviceBlock& block, double sampleRate, graph::EventBuffer& allInputs, PadBuffers& pads,
 			const ChordPadKeys& padKeys) noexcept;
 
+		// Audio thread, once per block after take: while a listener of midi.activityListen has a post, the notes the
+		// tracks get from all MIDI inputs, the on-screen keyboard's too, and the chord pads' chords as every player
+		// voices them, before Snap Playback and the pattern player mode, go to midi.activity's posts. They have a queue
+		// of their own, so that no other input, such as an MPE controller's expression, crowds them out (#2154).
+		void notesPlayed(const graph::EventBuffer& allInputs, const PadBuffers& pads) noexcept;
+
 		// Any thread but an audio thread: a message from the on-screen keyboard (midi.keyboard), which belongs to all
 		// MIDI inputs and arrives now, as a port's would. False if the input queue is full.
 		bool play(const audio::MidiMessage& message) { return m_queue.push(g_keyboardSlot, message, hostTime()); }
@@ -115,11 +121,14 @@ namespace gnubase::engine
 		uint64_t activity() const { return m_activityCount.load(std::memory_order_relaxed); }
 
 		// Drops the input that waits for the audio thread, and what midi.activity hasn't taken yet. Only while no
-		// audio thread takes, on the command thread.
+		// audio thread takes, on the command thread. The next post hears that notes went before its own (cleared), as
+		// their note-offs may have.
 		void clear()
 		{
 			m_queue.clear();
 			dropActivity();
+			if (m_notesListen.load(std::memory_order_relaxed))
+				m_notesCleared = true;
 		}
 
 		// Inputs that can be open at once.
@@ -186,7 +195,28 @@ namespace gnubase::engine
 		std::atomic<bool> m_activityListen{false}; // midi.activityListen
 		// Command thread: who has it on (its listener), each with the command midi.activity posts its input to, if any.
 		std::map<std::string, std::string> m_activityListeners;
-		// Command thread: empties m_activity.
+		// The notes for midi.activity's posts (notesPlayed); a note-off has its velocity too, 0 to 127.
+		struct PlayedNote
+		{
+			uint8_t pitch = 0;
+			uint8_t velocity = 0;
+			bool on = false;
+		};
+		rt::SpscQueue<PlayedNote> m_notes{4096};
+		std::atomic<size_t> m_notesDropped{0};  // didn't fit, after those queued
+		bool m_notesCleared = false;            // command thread: clear() dropped notes before those queued
+		std::atomic<bool> m_notesListen{false}; // a listener has a post
+		// Command thread: empties m_notes.
+		void dropNotes()
+		{
+			PlayedNote note;
+			while (m_notes.tryPop(note))
+			{
+			}
+			m_notesDropped.store(0, std::memory_order_relaxed);
+			m_notesCleared = false;
+		}
+		// Command thread: empties m_activity and m_notes.
 		void dropActivity()
 		{
 			Received entry;
@@ -194,6 +224,7 @@ namespace gnubase::engine
 			{
 			}
 			m_activityDropped.store(0, std::memory_order_relaxed);
+			dropNotes();
 		}
 		// Audio thread: the pitches each remote key's note-on played, until its note-off.
 		std::array<midi::PadVoices, ChordPadKeys::g_maxPlayers> m_padVoices; // per player

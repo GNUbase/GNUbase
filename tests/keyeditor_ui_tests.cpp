@@ -1644,6 +1644,28 @@ TEST_CASE("Up and Down transpose the selected notes, Delete and Backspace delete
 	CHECK(f.note(ids[1]).at("pitch") == 64);
 }
 
+TEST_CASE("Right and Left Arrow move the step input cursor while step input is on", "[ui]")
+{
+	// Reference manual p. 1220: key commands of the key editor's focus zone (#679).
+	Fixture f;
+	const std::vector<uint64_t> ids = f.add({{0, 60, g_quarter}});
+	f.click(of(noteSelector(ids[0])));
+	REQUIRE(f.app.waitUntil([&] { return f.selection().size() == 1; }));
+	f.app.call("editor.set", {{"editor", "window"}, {"stepInput", true}});
+	REQUIRE(f.app.waitUntil([&] { return !f.has(".key-editor-step-cursor", "off"); }));
+	const auto position = [&f] { return f.app.call("editor.get", {{"editor", "window"}}).at("stepPosition"); };
+	REQUIRE(position() == 0);
+	constexpr int64_t step = g_quarter / 4; // the quantize grid's 1/16
+	f.app.ui().key(f.window, "Right");
+	REQUIRE(f.app.waitUntil([&] { return position() == step; }));
+	f.app.ui().key(f.window, "Right");
+	REQUIRE(f.app.waitUntil([&] { return position() == 2 * step; }));
+	f.app.ui().key(f.window, "Left");
+	REQUIRE(f.app.waitUntil([&] { return position() == step; }));
+	CHECK(f.app.keys().keysFor("keyEditor.stepRight") == std::vector<std::string>{"Right"});
+	CHECK(f.app.keys().keysFor("keyEditor.stepLeft") == std::vector<std::string>{"Left"});
+}
+
 TEST_CASE("with the on-screen keyboard open, Delete and Backspace still delete the selected notes", "[ui]")
 {
 	// The on-screen keyboard takes the keys of the key commands, except the reference's exceptions, Delete among them
@@ -2409,7 +2431,7 @@ TEST_CASE("the expression editor stays centered on its note as the pitches zoom"
 }
 
 TEST_CASE("the lower zone's key editor at its default size gives the note display more room than the controller lanes, "
-		  "at dp ratios 1 and 1.5",
+		  "at dp ratios 1, 1.5 and 2",
 	"[ui]")
 {
 	// The lower zone at its default 240 dp, with the Velocity lane and the footer below the note display: the lanes
@@ -2417,8 +2439,9 @@ TEST_CASE("the lower zone's key editor at its default size gives the note displa
 	// as CI's Linux screen lets it be: at a dp ratio of 1 the toolbar is two rows, the note display the larger part of
 	// the editor, and in a lower zone of 400 dp the lanes keep their whole height; at 1.5, 683 x 512 dp, the toolbar
 	// wraps to three rows and leaves less than the note display's 40% and the lanes, so the lanes are down to their
-	// footer. At 2, 512 x 384 dp, it wraps to five rows and leaves the editor no room for the footer.
-	for (const float ratio : {1.0F, 1.5F})
+	// footer. At 2, 512 x 384 dp, it would wrap to five rows, but stays at three, hiding the items that don't fit
+	// (#2169), so the editor keeps the lanes' footer and part of the note display.
+	for (const float ratio : {1.0F, 1.5F, 2.0F})
 	{
 		INFO("dp ratio " << ratio);
 		const auto px = [ratio](double dp) { return dp * ratio; };
@@ -2449,9 +2472,17 @@ TEST_CASE("the lower zone's key editor at its default size gives the note displa
 		const double room =
 			editor - height(".key-editor-toolbar") - height(".key-editor-info") - height(".editor-parts");
 		INFO("editor " << editor << ", note display " << body << ", controller lanes " << lanes << ", room " << room);
+		// Three rows of buttons at most; at 2 Indicate Transpositions, the last item, is below them, the tools in them.
+		CHECK(height(".key-editor-toolbar") <= px(72) + 0.5);
+		const auto inRows = [&box, &bottom](const std::string& item)
+		{ return bottom(item) <= bottom(".key-editor-toolbar") + 0.5 && box(item).at("height").get<double>() > 0; };
+		CHECK(inRows(".key-tool[key-tool=objectSelection]"));
+		CHECK(inRows(".key-input[setting=indicateTranspositions]") == (ratio < 2.0F));
 		// The note display has its 40%, or the lanes are down to their footer and it has the rest.
 		CHECK(std::abs(body + lanes - room) <= 1.0);
 		CHECK(((body >= (0.4 * editor) - 1.0) || (lanes <= px(22) + 0.5)));
+		// And keeps part of its own at every ratio, a row of notes or more.
+		CHECK(body >= px(12) - 0.5);
 		// The footer stays whole inside the editor.
 		CHECK(height(".controller-lanes-footer") >= px(22) - 0.5);
 		CHECK(bottom(".controller-lanes-footer") <= bottom(".key-editor") + 0.5);

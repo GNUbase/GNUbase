@@ -13,12 +13,16 @@
 	min-height: 0;
 }
 
+/* The items wrap onto three rows of the 24 dp buttons at most: a narrower editor hides those that don't fit, the last
+   first, so that it keeps its note display and its lanes' footer, also at a dp ratio of 2 (#2169). */
 .key-editor-toolbar
 {
 	flex-shrink: 0;
 	flex-wrap: wrap;
 	height: auto;
 	min-height: 32dp;
+	max-height: 72dp;
+	overflow: hidden;
 }
 
 .key-editor-toolbar .separator

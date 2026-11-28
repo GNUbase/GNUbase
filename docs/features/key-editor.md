@@ -27,7 +27,8 @@ saved, and a new project closes the editors.
 | Command | What it does | Reference |
 |---|---|---|
 | `editor.input` | Notes played, such as a chord from a MIDI keyboard: with step input they go into the active part at the step input cursor as notes of the length quantize's length, and the cursor moves on by a step of the quantize grid; with MIDI input the first selected note takes the played pitch and velocities, and the next note is selected | pp. 1219-1220 |
-| `editor.played` | MIDI input into the editors' step and MIDI input, which the engine runs with what the MIDI inputs receive while an editor's input is on: the keys pressed until all are up again go into `editor.input` as one chord | pp. 1219-1220 |
+| `editor.step` | Right and Left Arrow in step input: the step input cursor moves by steps of the quantize grid, not before the project's start (Right inserts a rest); while keys played on the MIDI inputs are held for the editor, their chord gets that many quantize steps longer or shorter instead (down to a step), and the cursor moves on by the steps it got longer too | p. 1220 |
+| `editor.played` | MIDI input into the editors' step and MIDI input, which the engine runs with the notes the tracks get from all MIDI inputs and the chord pads while an editor's input is on: the keys pressed until all are up again go into `editor.input` as one chord | pp. 1219-1220 |
 | `note.chord` | The chord notes of a part make (query) | p. 1216 |
 | `note.voicing` | Fits notes to a chord type, or inverts them or drops notes | pp. 1215-1217 |
 | `note.move` | Moves notes into another MIDI part, by `ticks` on the project's timeline and by `semitones` in pitch, keeping their ids and every other field, with the selected controller events (`controllers`) shifted in time: what a drag between in-place editors sends ([in-place-editor.md](in-place-editor.md)) | pp. 1188, 1261 |
@@ -44,12 +45,18 @@ saved, and a new project closes the editors.
   selected note stays. Then the next note of its part is selected, for a series of notes.
 - **Live MIDI input** (#679). While an open editor has step or MIDI input on, the editors listen to the MIDI inputs
   (`midi.activityListen` with the listener `keyEditor` and `post` `editor.played`), and each run of `midi.activity`
-  posts what the inputs received to `editor.played`. Only notes of the ports in all MIDI inputs count, so that a
-  control surface's buttons insert nothing. The keys pressed until all of them are up again are one chord, which then
-  goes into `editor.input` with each note's note-on velocity and note-off velocity (a note-on of velocity 0 counts as
-  0.5): one undo step per chord, in the editor whose step or MIDI input went on last, else the first one that has it
-  on. Waiting for the release gives the chord all its keys and their release velocities. With no editor's input on
-  any more, the editors stop listening, and the next start begins afresh, without what was held or played meanwhile.
+  posts the notes the tracks got to `editor.played` (#2154): those of all MIDI inputs, so that a control surface's
+  buttons outside them insert nothing, the on-screen keyboard's, and the chord pads', so that a pad's remote key puts in
+  the pad's chord, not its own pitch: its chord as the players voice it, before Snap Playback to Musical Grid and the
+  pattern player mode. The audio thread gives them a queue of their own, which an MPE controller's expression doesn't
+  crowd out. The keys pressed until all of them are up again are one chord, which then goes into `editor.input` with
+  each note's note-on velocity and note-off velocity (a note-on of velocity 0 counts as 64): one undo step per chord, in
+  the editor whose step or MIDI input went on last, else the first one that has it on. Waiting for the release gives the
+  chord all its keys and their release velocities. When notes were lost, the keys down are forgotten with their chord,
+  since their note-offs may have gone, and the next key starts afresh: those down before the notes that came when a
+  device started and dropped the input that waited (`cleared`), those still down after them when the queue was full
+  (`dropped`). With no editor's input on any more, the editors stop listening, and the next start begins
+  afresh, without what was held or played meanwhile.
   `midi.activity` runs only while an audio device runs, at most ten times a second; offline a test runs it.
 - **Chords** (`src/engine/midi/chords.h`). The types are the Chord Editing section's: the triads major, minor,
   diminished, augmented, sus2 and sus4, and the 4-note chords major7, minor7, dominant7, halfDiminished7,
@@ -67,7 +74,7 @@ the edits of several parts go in one `history.transaction`.
 
 ```
 .key-editor[tool=objectSelection|draw|line|erase|trim|split|glue|mute]
-  .toolbar.key-editor-toolbar
+  .toolbar.key-editor-toolbar         its items wrap onto three rows at most; the rest is hidden, the last first (#2169)
     button.key-tool[key-tool]         the tools; .checked for the current one; the chosen line tool opens
                                       #key-line-menu with its modes (controller-lanes.md)
     button.key-transpose[semitones]   Move Up, Move Down, Move Up More, Move Down More (+1, -1, +12, -12)
@@ -141,7 +148,8 @@ A press in the note display gives the editor the keyboard focus. Its element is 
 and Down transpose the selected notes by a semitone, with Shift by an octave, and Delete and Backspace delete them
 (p. 1214): the key commands `keyEditor.transposeUp`, `keyEditor.transposeDown`, `keyEditor.transposeOctaveUp`,
 `keyEditor.transposeOctaveDown` and `keyEditor.delete` ([key-commands.md](key-commands.md), #679), which the Key
-Commands dialog binds to other keys. In the lower zone they come before the project window's keys, so Delete deletes
+Commands dialog binds to other keys. With step input on, Right and Left (`keyEditor.stepRight`, `keyEditor.stepLeft`)
+send `editor.step` (p. 1220); with it off they select the next or previous event as elsewhere. In the lower zone they come before the project window's keys, so Delete deletes
 the notes, not the project window's selected events.
 
 | Tool | Gesture | Reference |
@@ -201,10 +209,9 @@ the notes, not the project window's selected events.
 
 ## Not yet
 
-The on-screen keyboard into step and MIDI input (`midi.activity` leaves it out); Left and Right moving the step input
-cursor and lengthening a held chord; the Mute tool on notes (notes have no mute yet; it mutes the
-Articulations lane's articulations), the Range Selection, Zoom and Time Warp tools, and the Line tool in the note
-display (it draws on the controller lanes); the selection rectangle, the trim tool's drag across several notes and the
+The Mute tool on notes (notes have no mute yet; it mutes the Articulations lane's articulations), the Range Selection,
+Zoom and Time Warp tools, and the Line tool in the note display (it draws on the controller lanes); the selection
+rectangle, the trim tool's drag across several notes and the
 draw tool's modifiers for velocity, pitch and position; the nudge buttons, Solo Editor, Record in Editor, pitch
 visibility, the Scale Assistant, the status line and Set up Window Layout;
 horizontal zoom and scrolling; the key at the mouse's pitch lit while the mouse moves in the note display (p. 1204);
@@ -221,12 +228,15 @@ key editor's context menu.
   part, the channel of a note that stays and notes ending at the part's end; MIDI input with and without Record Pitch,
   a chord, Keep Existing Notes and no selection; the undo step's name; notes played on the MIDI inputs
   (`editor.played`) going in as chords once all their keys are up, with their velocities, one undo step each, nothing
-  from a port outside all MIDI inputs or while input is off, and a dummy MIDI keyboard playing through `midi.activity`
-  into the editor whose input went on last, then into the other one, and nothing played while both were off; chord recognition, fitting and voicings;
-  `note.chord` and `note.voicing` with undo and their errors; Acoustic Feedback off at first and the event colors, set
-  as view state without an undo step; Indicate Transpositions off at first, as view state, its steps from transpose
-  events within the part (not before or after it) with the root key's step and the part's own transpose, muted
-  transpose events and an Independent part.
+  while input is off, a pitch down twice up once both keys are, and lost notes forgetting the keys down, after the notes
+  for a full queue and before them for a device start; a dummy MIDI keyboard playing through `midi.activity` into the
+  editor whose input went on last, then into the other one, nothing played while both were off or from a port outside
+  all MIDI inputs, the on-screen keyboard's notes, a flood of expression crowding out no note, and a chord pad's remote
+  key putting in the pad's chord; `editor.step` moving the cursor, not before the project's start, and lengthening and
+  shortening a held chord, down to a step; chord recognition, fitting and voicings; `note.chord` and `note.voicing` with
+  undo and their errors; Acoustic Feedback off at first and the event colors, set as view state without an undo step;
+  Indicate Transpositions off at first, as view state, its steps from transpose events within the part (not before or
+  after it) with the root key's step and the part's own transpose, muted transpose events and an Independent part.
 - `tests/keyeditor_ui_tests.cpp` drives the app with `ui::Automation`: the keyboard and notes at their time and pitch,
   keys lit for selected notes; the piano keyboard at 1024x600, at dp ratios of 1.5 and 1: white keys of equal height
   across the keyboard, black keys narrower on their rows, the mouse on the right part of a white key beside a black key
@@ -248,14 +258,15 @@ key editor's context menu.
   step; each gesture's undo step named the same over notes of one part and of two, also the drumstick's delete drag
   (`tests/drumeditor_ui_tests.cpp`); the transpose palette, Up and Down (with Shift), Delete and Backspace, and
   Transpose Up bound to another key, and typing a pitch and a start before the part's on the info line; step input with
-  its cursor, a click moving it, and MIDI input selecting the next note; the Chord Editing section naming and changing a
+  its cursor, a click moving it, Right and Left moving it, and MIDI input selecting the next note; the Chord Editing section naming and changing a
   chord; the toolbox with the setting on and off, with and without a modifier key, choosing tools; drags on the
   keyboard's left part zooming the rows in and out between the limits, from the height a style sheet gives them, also
   after a style change at a zoom and back at 1, the keyboard as high as the rows of any height, nothing zoomed or
   scrolled without a row height to scale and no height left on the rows for a later style, the zoom snapping to 1 near
   it, and scrolling the note display, while a click there zooms nothing, and a click and a drag there leaving a note an
   earlier press selected and the history alone; the lower zone's key editor at its default size giving the note display
-  more room than the controller lanes, at dp ratios 1 and 1.5, and the lanes whole in a lower zone of 400 dp; the editor
+  more room than the controller lanes, at dp ratios 1, 1.5 and 2, with the toolbar at three rows at most, and the lanes
+  whole in a lower zone of 400 dp; the editor
   window's lane keeping its 64 dp and the note display its 40%, and the in-place editor's lanes keeping their height
   with its toolbar shown; the Event Colors menu's Part, notes in their part's own color or else their track's, a
   selected note without it, and Default; the menu in the drum editor and in the in-place editor, where with Active Part
