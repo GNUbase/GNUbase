@@ -3967,6 +3967,34 @@ namespace gnubase::engine
 				schema(rangeParameters, {}), eventsResult(), false},
 			"Crop Range", cropRange);
 
+		// Range Tool Splits Partly Selected Events (#1910): the event display's Mute and Unmute on a range.
+		Json withMute = rangeParameters;
+		withMute["mute"] = boolean();
+		addEdit(engine,
+			{"range.set", 1,
+				"Splits the audio events and MIDI parts on " + range +
+					" at its edges as range.split does (splitNotes too), then mutes or unmutes (mute) those in it as "
+					"event.set does: Mute and Unmute on a selection range with Range Tool Splits Partly Selected "
+					"Events (reference manual pp. 277, 293, 1595). Locked events stay whole and are set only when they "
+					"lie wholly in the range. Returns the events it set.",
+				schema(withMute, {"mute"}), eventsResult(), false},
+			"Change events",
+			[this](Project& project, CommandContext& context)
+			{
+				const Range range = rangeFrom(project, context, true);
+				splitRange(project, context);
+				Json set = Json::array();
+				for (const Item& item : within(project, range.tracks, range.start, range.end, true))
+					if (!item.locked() ||
+						(samples(project, item.position()) >= range.start &&
+							samples(project, endOf(project, item)) <= range.end))
+						set.push_back(item.id());
+				if (set.empty())
+					return Json{{"events", set}};
+				return runEdit(
+					"event.set", project, {{"events", set}, {"mute", context.parameters().at("mute")}}, context);
+			});
+
 		addEdit(engine,
 			{"range.delete", 1,
 				"Deletes what lies in " + range +
