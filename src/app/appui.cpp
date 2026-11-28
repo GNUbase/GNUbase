@@ -717,55 +717,7 @@ namespace gnubase::app
 		{
 			ui::Panel added{panel.id, panel.title, "project", panel.zone, {}};
 			if (added.id == "inspector")
-				added.create = [this](Rml::Element& element)
-				{
-					auto inspector = std::make_shared<ui::Inspector>(
-						m_binding, element, [this](uint64_t track)
-						{ m_shell.post([this, track] { openChannelSettings(track); }); }, [this](uint64_t track)
-						{ m_shell.post([this, track] { openArticulationMaps(m_main, track); }); },
-						[this](uint64_t track, bool project)
-						{
-							m_shell.post(
-								[this, track, project]
-								{
-									if (project)
-										openDialog(m_main, "rule-editor.rml", {{"target", "project"}});
-									else
-										openDialog(m_main, "rule-editor.rml",
-											{{"target", "track"}, {"track", std::to_string(track)}});
-								});
-						},
-						[this] { m_shell.post([this] { openArranger(); }); });
-					m_inspector = inspector;
-					// Load and Save Input Assignment (p. 1304) ask for the file in the window the inspector shows in.
-					inspector->setInputAssignmentFile(
-						[this](uint64_t track, bool save)
-						{
-							const ui::Window* window = m_docking.windowOf("inspector");
-							ui::FileDialog dialog;
-							dialog.kind = save ? ui::FileDialogKind::Save : ui::FileDialogKind::Open;
-							dialog.title = save ? "Save Input Assignment" : "Load Input Assignment";
-							dialog.filters = {{"Input assignments", "neinput"}};
-							dialog.parent = window != nullptr ? window->id() : m_main.id();
-							chooseProjectFile(dialog,
-								[this, track, save](std::filesystem::path file)
-								{
-									if (save && file.extension() != ".neinput")
-										file += ".neinput";
-									m_binding.send(save ? "noteExpression.saveInputs" : "noteExpression.loadInputs",
-										{{"track", track}, {"path", file.u8string()}});
-								});
-						});
-					// In a window of its own, the Choose Track Color pane needs a menu in its document (#2026).
-					Rml::ElementDocument* document = element.GetOwnerDocument();
-					if (document == nullptr || !document->HasAttribute("panel"))
-						return std::shared_ptr<void>(inspector);
-					auto colors = std::make_shared<ui::ColorMenu>([this] { return m_eventDisplay.get(); },
-						[this] { return m_trackList.get(); }, m_binding, *document);
-					return std::shared_ptr<void>(
-						std::make_shared<std::pair<std::shared_ptr<ui::Inspector>, std::shared_ptr<ui::ColorMenu>>>(
-							std::move(inspector), std::move(colors)));
-				};
+				added.create = [this](Rml::Element& element) { return createInspector(element); };
 			// The lower zone's editor (reference manual pp. 1132-1156) and, on the Visibility tab's Editor page, its
 			// visibility; the Track page has the track visibility (#166).
 			else if (added.id == "editor" || added.id == "visibility")
@@ -3189,6 +3141,54 @@ namespace gnubase::app
 				if (file.extension() != ".drm")
 					file += ".drm";
 				m_binding.send("drumMap.export", {{"map", map}, {"path", file.u8string()}});
+			});
+	}
+
+	std::shared_ptr<void> AppUi::createInspector(Rml::Element& element)
+	{
+		auto inspector = std::make_shared<ui::Inspector>(
+			m_binding, element, [this](uint64_t track) { m_shell.post([this, track] { openChannelSettings(track); }); },
+			[this](uint64_t track) { m_shell.post([this, track] { openArticulationMaps(m_main, track); }); },
+			[this](uint64_t track, bool project)
+			{
+				m_shell.post(
+					[this, track, project]
+					{
+						if (project)
+							openDialog(m_main, "rule-editor.rml", {{"target", "project"}});
+						else
+							openDialog(
+								m_main, "rule-editor.rml", {{"target", "track"}, {"track", std::to_string(track)}});
+					});
+			},
+			[this] { m_shell.post([this] { openArranger(); }); });
+		m_inspector = inspector;
+		inspector->setInputAssignmentFile([this](uint64_t track, bool save) { chooseInputAssignment(track, save); });
+		// In a window of its own, the Choose Track Color pane needs a menu in its document (#2026).
+		Rml::ElementDocument* document = element.GetOwnerDocument();
+		if (document == nullptr || !document->HasAttribute("panel"))
+			return {inspector};
+		auto colors = std::make_shared<ui::ColorMenu>(
+			[this] { return m_eventDisplay.get(); }, [this] { return m_trackList.get(); }, m_binding, *document);
+		return {std::make_shared<std::pair<std::shared_ptr<ui::Inspector>, std::shared_ptr<ui::ColorMenu>>>(
+			std::move(inspector), std::move(colors))};
+	}
+
+	void AppUi::chooseInputAssignment(uint64_t track, bool save)
+	{
+		const ui::Window* window = m_docking.windowOf("inspector");
+		ui::FileDialog dialog;
+		dialog.kind = save ? ui::FileDialogKind::Save : ui::FileDialogKind::Open;
+		dialog.title = save ? "Save Input Assignment" : "Load Input Assignment";
+		dialog.filters = {{"Input assignments", "neinput"}};
+		dialog.parent = window != nullptr ? window->id() : m_main.id();
+		chooseProjectFile(dialog,
+			[this, track, save](std::filesystem::path file)
+			{
+				if (save && file.extension() != ".neinput")
+					file += ".neinput";
+				m_binding.send(save ? "noteExpression.saveInputs" : "noteExpression.loadInputs",
+					{{"track", track}, {"path", file.u8string()}});
 			});
 	}
 

@@ -382,6 +382,12 @@ namespace gnubase::app
 		// and drumMap.export.
 		void saveDrumMap(ui::WindowId parent, const std::string& editor = "window");
 		void chooseDrumMapFile(ui::WindowId parent, uint64_t map);
+		// The project window's inspector panel in the element, with a Choose Track Color pane of its own in a window of
+		// its own (#2026).
+		std::shared_ptr<void> createInspector(Rml::Element& element);
+		// The inspector's Load (save false) and Save Input Assignment (reference manual p. 1304): asks for the file in
+		// the inspector's window, then runs noteExpression.loadInputs or noteExpression.saveInputs for the track.
+		void chooseInputAssignment(uint64_t track, bool save);
 		// The Drum Map Setup (resources/ui/drum-maps.rml, #882), showing the drum map of the editor window's active
 		// track, else the lower zone's, if it has one.
 		void openDrumMaps(ui::Window& window);
