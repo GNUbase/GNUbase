@@ -496,27 +496,27 @@ TEST_CASE("the MIDI editors' event colors are view state", "[unit]")
 
 TEST_CASE("notes played on the MIDI inputs go into step input as chords once all their keys are up", "[unit]")
 {
-	// Reference manual pp. 1219-1220: editor.played, as midi.activity posts it.
+	// Reference manual pp. 1219-1220: editor.played, as midi.activity posts it, each note {pitch, velocity, on}.
 	Fixture f;
-	const auto played = [&f](const std::vector<std::vector<int>>& messages, bool inAllInputs = true)
+	const auto played = [&f](const std::vector<std::vector<int>>& notes, int dropped = 0)
 	{
-		Json received = Json::array();
-		for (const std::vector<int>& bytes : messages)
-			received.push_back({{"bytes", bytes}, {"inAllInputs", inAllInputs}});
-		return f.call("editor.played", {{"received", received}}).at("chords");
+		Json list = Json::array();
+		for (const std::vector<int>& note : notes)
+			list.push_back({{"pitch", note[0]}, {"velocity", note[1]}, {"on", note[2] != 0}});
+		return f.call("editor.played", {{"notes", list}, {"dropped", dropped}}).at("chords");
 	};
 	// Off, nothing goes in.
-	CHECK(played({{0x90, 60, 127}, {0x80, 60, 0}}).empty());
+	CHECK(played({{60, 127, 1}, {60, 0, 0}}).empty());
 	f.call("editor.set", {{"editor", "window"}, {"stepInput", true}, {"lengthQuantize", "1/16"}});
 	// A chord: the keys pressed until all are up, with their note-on and note-off velocities.
-	CHECK(played({{0x90, 64, 127}, {0x91, 60, 0x40}, {0x80, 64, 127}}).empty());
-	const Json chords = played({{0x90, 60, 0}});
+	CHECK(played({{64, 127, 1}, {60, 0x40, 1}, {64, 127, 0}}).empty());
+	const Json chords = played({{60, 64, 0}});
 	REQUIRE(chords.size() == 1);
 	CHECK(chords[0].size() == 2);
 	f.call("editor.set", {{"editor", "window"}, {"recordReleaseVelocity", true}}); // after the chord went in
-	// A port outside all MIDI inputs plays nothing in; then a note.
-	CHECK(played({{0x90, 50, 100}, {0x80, 50, 0}}, false).empty());
-	CHECK(played({{0x90, 67, 100}, {0xB0, 64, 127}, {0x80, 67, 0}}).size() == 1);
+	// A pitch that is down twice, as two chord pad players play it, is up once both of its keys are (#2154).
+	CHECK(played({{67, 100, 1}, {67, 100, 1}, {67, 0, 0}}).empty());
+	CHECK(played({{67, 0, 0}}).size() == 1);
 	const Json notes = f.partNotes();
 	REQUIRE(notes.size() == 3);
 	CHECK(notes[0].at("pitch") == 60);
@@ -530,6 +530,12 @@ TEST_CASE("notes played on the MIDI inputs go into step input as chords once all
 	// Each chord is an undo step of its own.
 	f.call("history.undo");
 	CHECK(f.partNotes().size() == 2);
+
+	// Lost notes, such as a note-off: the keys still down are forgotten, so the next key goes in on its own, rather
+	// than waiting for a key whose note-off never comes (#2154).
+	CHECK(played({{48, 100, 1}}, 1).empty());
+	CHECK(played({{50, 100, 1}, {50, 0, 0}}).size() == 1);
+	CHECK(f.partNotes().back().at("pitch") == 50);
 }
 
 TEST_CASE("a MIDI keyboard plays into the key editor whose step or MIDI input went on last", "[integration]")
@@ -608,4 +614,27 @@ TEST_CASE("a MIDI keyboard plays into the key editor whose step or MIDI input we
 	send(0x80, 52, 0);
 	CHECK(until([&f, &ids] { return f.pitches({ids[1]}) == std::vector<int>{52}; }));
 	CHECK(f.partNotes().size() == 3);
+
+	// Step input takes what the tracks get (#2154): the on-screen keyboard's notes, and a chord pad's remote key the
+	// pad's chord, C major on C1 by default (chord-pads.md), not its own pitch.
+	f.call("editor.set", {{"editor", "window"}, {"midiInput", false}, {"stepInput", true}, {"keepNotes", true}});
+	f.call("midi.keyboard", {{"messages", {{{"bytes", {0x90, 74, 100}}}, {{"bytes", {0x80, 74, 0}}}}}});
+	CHECK(until([&f] { return f.partNotes().size() == 4; }));
+	// Expression that overfills midi.activity's 256 messages, as an MPE controller's for its held notes, crowds no note
+	// out: the notes have a queue of their own.
+	for (int i = 0; i < 300; ++i)
+		send(0xB0, 74, static_cast<uint8_t>(i % 128));
+	send(0x90, 76, 100);
+	send(0x80, 76, 0);
+	CHECK(until([&f] { return f.partNotes().size() == 5; }));
+	f.call("chordPads.set", {{"remote", true}});
+	f.call("audio.render", {{"frames", 64}}); // the new graph
+	send(0x90, 36, 100);
+	send(0x80, 36, 0);
+	CHECK(until([&f] { return f.partNotes().size() == 9; }));
+	std::vector<int> pitches;
+	for (const Json& note : f.partNotes())
+		pitches.push_back(note.at("pitch").get<int>());
+	std::sort(pitches.begin(), pitches.end());
+	CHECK(pitches == std::vector<int>{48, 48, 52, 60, 64, 67, 72, 74, 76}); // the first 48 is the note MIDI input changed
 }

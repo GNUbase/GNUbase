@@ -680,9 +680,9 @@ namespace gnubase::engine
 		// the chord they play, which goes in once they are all up.
 		struct LiveInput
 		{
-			bool listening = false; // midi.activityListen is on for the key editors
-			std::string editor;     // the editor whose step or MIDI input went on last
-			std::set<int> down;
+			bool listening = false;  // midi.activityListen is on for the key editors
+			std::string editor;      // the editor whose step or MIDI input went on last
+			std::multiset<int> down; // a pitch as often as it is down, such as from two chord pad players
 			Json chord = Json::array();
 		};
 
@@ -1419,24 +1419,30 @@ namespace gnubase::engine
 				return Json{{"part", partId}, {"notes", notes}};
 			});
 
-		const Json bytesSchema = {{"type", "array"}, {"items", {{"type", "integer"}}}};
 		engine.registerCommand(
 			{"editor.played", 1,
 				"MIDI input played into the key editors' step and MIDI input (reference manual pp. 1219-1220), as "
-				"midi.activity takes it: the engine runs it with what the MIDI inputs receive while an editor's step "
-				"or MIDI input is on (midi.activityListen with post). received: messages, each with its bytes and "
-				"whether its port belongs to all MIDI inputs (inAllInputs, by default true); only those of ports "
-				"that do count, and only their notes. The keys pressed until all of them are up again are one chord: "
-				"then editor.input runs with its notes, each with its note-on velocity and its note-off velocity "
-				"(0.5 for a note-on of velocity 0), in the editor whose step or MIDI input went on last, or else the "
-				"first one with it on. Returns the chords it sent, each the notes as editor.input takes them.",
-				{{"type", "object"}, {"additionalProperties", false}, {"required", {"received"}},
+				"midi.activity posts it: the engine runs it with the notes the tracks get from all MIDI inputs and "
+				"the chord pads while an editor's step or MIDI input is on (midi.activityListen with post), so a "
+				"chord pad's remote key puts in the pad's chord, not its own pitch (#2154). notes: each with its "
+				"pitch, velocity (0 to 127) and whether it is a note-on (on). The keys pressed until all of them are "
+				"up again are one chord: then editor.input runs with its notes, each with its note-on velocity and "
+				"its note-off velocity, in the editor whose step or MIDI input went on last, or else the first one "
+				"with it on. dropped: how many notes were lost before these; then the keys still down after them "
+				"are forgotten, with their chord, since their note-offs may be lost, and the next key starts afresh. "
+				"Returns the chords it sent, each the notes as editor.input takes them.",
+				{{"type", "object"}, {"additionalProperties", false}, {"required", {"notes"}},
 					{"properties",
-						{{"received",
-							{{"type", "array"},
-								{"items",
-									{{"type", "object"}, {"required", {"bytes"}},
-										{"properties", {{"bytes", bytesSchema}, {"inAllInputs", boolean}}}}}}}}}},
+						{{"notes",
+							 {{"type", "array"},
+								 {"items",
+									 {{"type", "object"}, {"additionalProperties", false},
+										 {"required", {"pitch", "velocity", "on"}},
+										 {"properties",
+											 {{"pitch", {{"type", "integer"}, {"minimum", 0}, {"maximum", 127}}},
+												 {"velocity", {{"type", "integer"}, {"minimum", 0}, {"maximum", 127}}},
+												 {"on", boolean}}}}}}},
+							{"dropped", {{"type", "integer"}, {"minimum", 0}}}}}},
 				{{"type", "object"}, {"required", {"chords"}}, {"properties", {{"chords", {{"type", "array"}}}}}},
 				false},
 			[views, live, &model, &engine](CommandContext& context)
@@ -1445,15 +1451,13 @@ namespace gnubase::engine
 				const std::string editor = inputEditor(*live, *views, model);
 				listen(*live, !editor.empty(), context);
 				Json chords = Json::array();
-				for (const Json& each : context.parameters().at("received"))
+				for (const Json& each : context.parameters().at("notes"))
 				{
-					const Json& bytes = each.at("bytes");
-					if (editor.empty() || !each.value("inAllInputs", true) || bytes.size() < 3)
-						continue;
-					const int status = bytes.at(0).get<int>() & 0xF0;
-					const int pitch = bytes.at(1).get<int>() & 0x7F;
-					const int velocity = bytes.at(2).get<int>() & 0x7F;
-					if (status == 0x90 && velocity > 0)
+					if (editor.empty())
+						break;
+					const int pitch = each.at("pitch").get<int>();
+					const int velocity = each.at("velocity").get<int>();
+					if (each.at("on").get<bool>())
 					{
 						const bool fresh = std::none_of(live->chord.begin(), live->chord.end(),
 							[pitch](const Json& note) { return note.at("pitch") == pitch; });
@@ -1461,11 +1465,12 @@ namespace gnubase::engine
 						if (fresh)
 							live->chord.push_back({{"pitch", pitch}, {"velocity", velocity / 127.0}});
 					}
-					else if ((status == 0x80 || status == 0x90) && live->down.erase(pitch) != 0)
+					else if (const auto down = live->down.find(pitch); down != live->down.end())
 					{
+						live->down.erase(down);
 						for (Json& note : live->chord)
 							if (note.at("pitch") == pitch)
-								note["releaseVelocity"] = status == 0x80 ? velocity / 127.0 : 0.5;
+								note["releaseVelocity"] = velocity / 127.0;
 						if (live->down.empty())
 						{
 							engine.post("editor.input", {{"editor", editor}, {"notes", live->chord}});
@@ -1473,6 +1478,11 @@ namespace gnubase::engine
 							live->chord = Json::array();
 						}
 					}
+				}
+				if (context.parameters().value("dropped", 0) > 0)
+				{
+					live->down.clear();
+					live->chord = Json::array();
 				}
 				return Json{{"chords", chords}};
 			});

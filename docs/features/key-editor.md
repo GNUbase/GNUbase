@@ -27,7 +27,7 @@ saved, and a new project closes the editors.
 | Command | What it does | Reference |
 |---|---|---|
 | `editor.input` | Notes played, such as a chord from a MIDI keyboard: with step input they go into the active part at the step input cursor as notes of the length quantize's length, and the cursor moves on by a step of the quantize grid; with MIDI input the first selected note takes the played pitch and velocities, and the next note is selected | pp. 1219-1220 |
-| `editor.played` | MIDI input into the editors' step and MIDI input, which the engine runs with what the MIDI inputs receive while an editor's input is on: the keys pressed until all are up again go into `editor.input` as one chord | pp. 1219-1220 |
+| `editor.played` | MIDI input into the editors' step and MIDI input, which the engine runs with the notes the tracks get from all MIDI inputs and the chord pads while an editor's input is on: the keys pressed until all are up again go into `editor.input` as one chord | pp. 1219-1220 |
 | `note.chord` | The chord notes of a part make (query) | p. 1216 |
 | `note.voicing` | Fits notes to a chord type, or inverts them or drops notes | pp. 1215-1217 |
 | `note.move` | Moves notes into another MIDI part, by `ticks` on the project's timeline and by `semitones` in pitch, keeping their ids and every other field, with the selected controller events (`controllers`) shifted in time: what a drag between in-place editors sends ([in-place-editor.md](in-place-editor.md)) | pp. 1188, 1261 |
@@ -44,12 +44,17 @@ saved, and a new project closes the editors.
   selected note stays. Then the next note of its part is selected, for a series of notes.
 - **Live MIDI input** (#679). While an open editor has step or MIDI input on, the editors listen to the MIDI inputs
   (`midi.activityListen` with the listener `keyEditor` and `post` `editor.played`), and each run of `midi.activity`
-  posts what the inputs received to `editor.played`. Only notes of the ports in all MIDI inputs count, so that a
-  control surface's buttons insert nothing. The keys pressed until all of them are up again are one chord, which then
-  goes into `editor.input` with each note's note-on velocity and note-off velocity (a note-on of velocity 0 counts as
-  0.5): one undo step per chord, in the editor whose step or MIDI input went on last, else the first one that has it
-  on. Waiting for the release gives the chord all its keys and their release velocities. With no editor's input on
-  any more, the editors stop listening, and the next start begins afresh, without what was held or played meanwhile.
+  posts the notes the tracks got to `editor.played` (#2154): those of all MIDI inputs, so that a control surface's
+  buttons outside them insert nothing, the on-screen keyboard's, and the chord pads', so that a pad's remote key puts
+  in the pad's chord, not its own pitch. The audio thread takes them after the pads played and gives them a queue of
+  their own, which an MPE controller's expression doesn't crowd out. The keys pressed until all of them are up again
+  are one chord, which then goes into `editor.input` with each note's note-on velocity and note-off velocity (a
+  note-on of velocity 0 counts as 64): one undo step per chord, in the editor whose step or MIDI input went on last,
+  else the first one that has it on. Waiting for the release gives the chord all its keys and their release
+  velocities. When notes were lost, as when the queue was full or a device started, the keys still down after the
+  notes that came are forgotten with their chord, since their note-offs may have gone, and the next key starts afresh.
+  With no editor's input on any more, the editors stop listening, and the next start begins afresh, without what was
+  held or played meanwhile.
   `midi.activity` runs only while an audio device runs, at most ten times a second; offline a test runs it.
 - **Chords** (`src/engine/midi/chords.h`). The types are the Chord Editing section's: the triads major, minor,
   diminished, augmented, sus2 and sus4, and the 4-note chords major7, minor7, dominant7, halfDiminished7,
@@ -221,12 +226,14 @@ key editor's context menu.
   part, the channel of a note that stays and notes ending at the part's end; MIDI input with and without Record Pitch,
   a chord, Keep Existing Notes and no selection; the undo step's name; notes played on the MIDI inputs
   (`editor.played`) going in as chords once all their keys are up, with their velocities, one undo step each, nothing
-  from a port outside all MIDI inputs or while input is off, and a dummy MIDI keyboard playing through `midi.activity`
-  into the editor whose input went on last, then into the other one, and nothing played while both were off; chord recognition, fitting and voicings;
-  `note.chord` and `note.voicing` with undo and their errors; Acoustic Feedback off at first and the event colors, set
-  as view state without an undo step; Indicate Transpositions off at first, as view state, its steps from transpose
-  events within the part (not before or after it) with the root key's step and the part's own transpose, muted
-  transpose events and an Independent part.
+  while input is off, a pitch down twice up once both keys are, and lost notes forgetting the keys down; a dummy MIDI
+  keyboard playing through `midi.activity` into the editor whose input went on last, then into the other one, nothing
+  played while both were off or from a port outside all MIDI inputs, the on-screen keyboard's notes, a flood of
+  expression crowding out no note, and a chord pad's remote key putting in the pad's chord; chord recognition, fitting
+  and voicings; `note.chord` and `note.voicing` with undo and their errors; Acoustic Feedback off at first and the
+  event colors, set as view state without an undo step; Indicate Transpositions off at first, as view state, its steps
+  from transpose events within the part (not before or after it) with the root key's step and the part's own
+  transpose, muted transpose events and an Independent part.
 - `tests/keyeditor_ui_tests.cpp` drives the app with `ui::Automation`: the keyboard and notes at their time and pitch,
   keys lit for selected notes; the piano keyboard at 1024x600, at dp ratios of 1.5 and 1: white keys of equal height
   across the keyboard, black keys narrower on their rows, the mouse on the right part of a white key beside a black key

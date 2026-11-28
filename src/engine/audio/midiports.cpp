@@ -3,6 +3,7 @@
 
 #include "engine/audio/miditap.h"
 #include "engine/engine.h"
+#include "engine/midi/midivalues.h"
 #include "engine/settings/usersettings.h"
 #include "platform/log.h"
 
@@ -267,6 +268,29 @@ namespace gnubase::engine
 				if (!m_monitor.tryPush(received))
 					m_monitorDropped.fetch_add(1, std::memory_order_relaxed);
 			});
+	}
+
+	void MidiPorts::notesPlayed(const graph::EventBuffer& allInputs, const PadBuffers& pads) noexcept
+	{
+		if (!m_notesListen.load(std::memory_order_relaxed))
+			return;
+		bool any = false;
+		const auto push = [this, &any](uint8_t pitch, uint8_t velocity, bool on)
+		{
+			if (!m_notes.tryPush(PlayedNote{static_cast<uint8_t>(pitch & 0x7F), velocity, on}))
+				m_notesDropped.fetch_add(1, std::memory_order_relaxed);
+			any = true;
+		};
+		using Type = graph::ProcessEvent::Type;
+		for (const graph::ProcessEvent& event : allInputs)
+			if (event.type == Type::NoteOn || event.type == Type::NoteOff)
+				push(event.key, midi::velocityToMidi1(event.velocity), event.type == Type::NoteOn);
+		for (const audio::MidiBuffer& buffer : pads)
+			for (const audio::MidiMessage& message : buffer)
+				if (const int status = message.bytes[0] & 0xF0; message.size == 3 && (status == 0x90 || status == 0x80))
+					push(message.bytes[1], message.bytes[2] & 0x7F, status == 0x90 && message.bytes[2] > 0);
+		if (any) // midi.activity runs, which posts them
+			m_activityCount.fetch_add(1, std::memory_order_relaxed);
 	}
 
 	bool MidiPorts::playPad(const audio::MidiMessage& message, const ChordPadKeys& keys, PadBuffers& pads) noexcept
@@ -664,9 +688,12 @@ namespace gnubase::engine
 				"others' (#1832). Off by default; turning it on while no listener has it on starts afresh, without "
 				"what "
 				"came before, and a second listener's on keeps what the first one still reads. post names a command "
-				"that each run of midi.activity with input then posts with it as {received}, each message also with "
-				"inAllInputs, whether its port belongs to all MIDI inputs, while the listener has it on: the key "
-				"editors' step and MIDI input take the notes played so (editor.played, #679).",
+				"that each run of midi.activity with notes then posts while the listener has it on, with {notes, "
+				"dropped}: the notes the tracks get from all MIDI inputs, the on-screen keyboard's too, and from the "
+				"chord pads, so a remote key's pad chord rather than the key, each with its pitch, velocity (0 to "
+				"127) and whether it is a note-on (on), and how many notes were lost since the last post, as when a "
+				"device started. They have a queue of their own, which no other input crowds out: the key editors' "
+				"step and MIDI input take the notes played so (editor.played, #679, #2154).",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["on"],
 					"properties": {"on": {"type": "boolean"}, "listener": {"type": "string"},
 					"post": {"type": "string"}}})"),
@@ -680,8 +707,13 @@ namespace gnubase::engine
 					m_activityListeners[listener] = context.parameters().value("post", std::string());
 				else
 					m_activityListeners.erase(listener);
+				const bool posts = std::any_of(m_activityListeners.begin(), m_activityListeners.end(),
+					[](const auto& each) { return !each.second.empty(); });
 				if (!was && !m_activityListeners.empty())
 					dropActivity();
+				else if (posts && !m_notesListen.load(std::memory_order_relaxed))
+					dropNotes(); // the first post starts afresh too
+				m_notesListen.store(posts, std::memory_order_relaxed);
 				m_activityListen.store(!m_activityListeners.empty(), std::memory_order_relaxed);
 				return Json::object();
 			});
@@ -802,7 +834,6 @@ namespace gnubase::engine
 				listOnce();
 				context.leaveOutOfLog();
 				Json received = Json::array();
-				Json posted = Json::array(); // for the listeners' post: also whether the port is in all MIDI inputs
 				Received entry;
 				while (m_activity.tryPop(entry))
 				{
@@ -813,18 +844,20 @@ namespace gnubase::engine
 					const std::vector<uint8_t> bytes(
 						entry.message.bytes.begin(), entry.message.bytes.begin() + entry.message.size);
 					received.push_back({{"backend", port->backend->name()}, {"id", port->info.id}, {"bytes", bytes}});
-					posted.push_back(received.back());
-					posted.back()["inAllInputs"] = inAllInputs(*port);
 				}
+				Json notes = Json::array();
+				PlayedNote note;
+				while (m_notes.tryPop(note))
+					notes.push_back({{"pitch", note.pitch}, {"velocity", note.velocity}, {"on", note.on}});
+				const size_t lost = m_notesDropped.exchange(0, std::memory_order_relaxed);
+				if (!notes.empty() || lost > 0)
+					for (const auto& listener : m_activityListeners)
+						if (!listener.second.empty())
+							engine.post(listener.second, {{"notes", notes}, {"dropped", lost}});
 				Json result = {{"received", std::move(received)},
 					{"dropped", m_activityDropped.exchange(0, std::memory_order_relaxed)}};
 				if (!result.at("received").empty())
-				{
 					context.emit("midi.activity", result);
-					for (const auto& listener : m_activityListeners)
-						if (!listener.second.empty())
-							engine.post(listener.second, {{"received", posted}});
-				}
 				return result;
 			});
 	}
