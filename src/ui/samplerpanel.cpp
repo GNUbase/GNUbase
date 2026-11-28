@@ -29,8 +29,8 @@ namespace gnubase::ui
 	{
 		// The markers and the handles are drag elements: their drag events come wherever the mouse is, and the
 		// dragend wherever the button goes up, outside the window too.
-		constexpr std::array<Rml::EventId, 5> g_events = {Rml::EventId::Dragstart, Rml::EventId::Drag,
-			Rml::EventId::Dragend, Rml::EventId::Click, Rml::EventId::Change};
+		constexpr std::array<Rml::EventId, 6> g_events = {Rml::EventId::Dragstart, Rml::EventId::Drag,
+			Rml::EventId::Dragend, Rml::EventId::Click, Rml::EventId::Change, Rml::EventId::Mousedown};
 
 		constexpr int64_t g_maxPixels = 65536; // media.peaks' limits
 		constexpr int64_t g_maxColumnValues = 262144;
@@ -203,7 +203,7 @@ namespace gnubase::ui
 				R"(" marker=")" + marker + R"(" title=")" + marker +
 				R"("><div class="sampler-marker-line"/><div class="sampler-marker-flag"/></div>)";
 		element.SetInnerRML(
-			R"(<div class="sampler-panel empty" id="sampler-panel">)"
+			R"(<div class="sampler-panel empty" id="sampler-panel" focuszone="sampler">)"
 			R"(<div class="sampler-hint">Select a sampler track</div>)"
 			R"(<div class="sampler-toolbar">)"
 			R"(<button id="sampler-read" type="toggle" title="Read Automation" disabled="">Read</button>)"
@@ -584,7 +584,7 @@ namespace gnubase::ui
 				wave->SetAttribute("scale", m_viewWidth * static_cast<double>(m_length) * ratio / m_askedWidth);
 			wave->SetAttribute("gain", m_gain);
 		}
-		const double minimum = m_length > 64 ? 64.0 / static_cast<double>(m_length) : 1.0;
+		const double minimum = minimumWidth();
 		m_showing = true;
 		const auto setValue = [](Rml::Element* element, double value)
 		{
@@ -600,6 +600,12 @@ namespace gnubase::ui
 		ask();
 	}
 
+	// The narrowest view, as a share of the sample: 64 frames, or the whole sample when it is shorter.
+	double SamplerPanel::minimumWidth() const
+	{
+		return m_length > 64 ? 64.0 / static_cast<double>(m_length) : 1.0;
+	}
+
 	// The horizontal zoom shows from the whole sample down to 64 frames around the middle of what it showed, the
 	// scroll slider moves that along the sample, and the vertical zoom raises the waveform up to 64 times.
 	void SamplerPanel::zoom(const std::string& slider, double value)
@@ -610,9 +616,8 @@ namespace gnubase::ui
 		}
 		else if (slider == "sampler-horizontal-zoom")
 		{
-			const double minimum = m_length > 64 ? 64.0 / static_cast<double>(m_length) : 1.0;
 			const double middle = m_viewStart + (m_viewWidth / 2.0);
-			m_viewWidth = std::pow(minimum, std::clamp(value, 0.0, 1.0));
+			m_viewWidth = std::pow(minimumWidth(), std::clamp(value, 0.0, 1.0));
 			m_viewStart = middle - (m_viewWidth / 2.0);
 		}
 		else
@@ -620,6 +625,23 @@ namespace gnubase::ui
 			m_viewStart = std::clamp(value, 0.0, 1.0) * (1.0 - m_viewWidth);
 		}
 		m_viewStart = std::clamp(m_viewStart, 0.0, 1.0 - m_viewWidth);
+		showView();
+	}
+
+	// The zoom's key commands halve or double the part shown around its middle, as far as the horizontal zoom goes,
+	// or the waveform's gain from 1 to 64 times, as the vertical zoom does; Zoom Full shows the whole sample.
+	void SamplerPanel::zoomBy(const std::string& action)
+	{
+		if (!canZoom())
+			return;
+		const double middle = m_viewStart + (m_viewWidth / 2.0);
+		if (action == "in" || action == "out")
+			m_viewWidth = std::clamp(action == "in" ? m_viewWidth / 2.0 : m_viewWidth * 2.0, minimumWidth(), 1.0);
+		else if (action == "full")
+			m_viewWidth = 1.0;
+		else if (action == "inVertically" || action == "outVertically")
+			m_gain = std::clamp(action == "inVertically" ? m_gain * 2.0 : m_gain / 2.0, 1.0, 64.0);
+		m_viewStart = std::clamp(middle - (m_viewWidth / 2.0), 0.0, 1.0 - m_viewWidth);
 		showView();
 	}
 
@@ -974,8 +996,25 @@ namespace gnubase::ui
 
 	void SamplerPanel::load(uint64_t track, const std::string& path, bool keepSettings)
 	{
-		m_binding.send("sampler.load", {{"track", track}, {"path", path}, {"keepSettings", keepSettings}},
-			[this, alive = std::weak_ptr<bool>(m_alive), track](const engine::Result& result)
+		sendLoad({{"track", track}, {"path", path}, {"keepSettings", keepSettings}});
+	}
+
+	bool SamplerPanel::dropEvent(uint64_t event, const Rml::Element& target)
+	{
+		bool over = false;
+		for (const Rml::Element* each = &target; each != nullptr && !over; each = each->GetParentNode())
+			over = each == m_root.get();
+		if (!over || m_track == 0)
+			return false;
+		sendLoad({{"track", m_track}, {"event", event}, {"keepSettings", m_lock}});
+		return true;
+	}
+
+	void SamplerPanel::sendLoad(const Json& parameters)
+	{
+		m_binding.send("sampler.load", parameters,
+			[this, alive = std::weak_ptr<bool>(m_alive), track = parameters.at("track").get<uint64_t>()](
+				const engine::Result& result)
 			{
 				if (!alive.expired() && track == m_track)
 					showMessage(result.ok() ? "" : "Loading the sample failed: " + result.error);
@@ -1014,6 +1053,17 @@ namespace gnubase::ui
 		Rml::Element* target = event.GetTargetElement();
 		switch (event.GetId())
 		{
+		case Rml::EventId::Mousedown:
+			// The keys go to the key commands of the panel's focus zone, which zoom the display (p. 717).
+			if (const Rml::Element* display = find("sampler-display"); display != nullptr)
+				for (const Rml::Element* each = target; each != nullptr; each = each->GetParentNode())
+					if (each == display)
+					{
+						if (Rml::Element* panel = find("sampler-panel"))
+							panel->Focus();
+						break;
+					}
+			return;
 		case Rml::EventId::Dragstart:
 			if (m_track == 0)
 				return;

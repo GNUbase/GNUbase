@@ -40,9 +40,10 @@ namespace gnubase::ui
 	// one undo step (EngineBinding::sendStep); a click on a key sets the root key. A file dropped on the panel, or
 	// chosen with Import Audio File, loads into the sampler (sampler.load path), keeping the settings with Lock
 	// Parameter Settings; Normalize Sample runs sampler.normalize with the toolbar's Normalization Level (p. 735). Why
-	// a load, Normalize Sample or MIDI Reset failed shows in the toolbar (#1122). Lock Parameter Settings, the
-	// Normalization Level and Snap to Zero Crossing are the user setting ui.samplerPanel, so they last when the panel
-	// is made anew, and so is the ruler's format. Use it on the UI thread; the binding must outlive it.
+	// a load, Normalize Sample or MIDI Reset failed shows in the toolbar (#1122). A press in the display gives the
+	// panel the keyboard focus, its focus zone sampler, whose key commands zoom the display. Lock Parameter Settings,
+	// the Normalization Level and Snap to Zero Crossing are the user setting ui.samplerPanel, so they last when the
+	// panel is made anew, and so is the ruler's format. Use it on the UI thread; the binding must outlive it.
 	class SamplerPanel final : private Rml::EventListener
 	{
 	public:
@@ -64,6 +65,16 @@ namespace gnubase::ui
 
 		// Loads the audio file at path into a sampler track, keeping its settings or not, and shows why it failed.
 		void load(uint64_t track, const std::string& path, bool keepSettings);
+
+		// An audio event dropped on target, e.g. dragged from the event display (reference manual p. 710): when target
+		// lies in the panel and it shows a sampler track, loads the event's section into it as a dropped file loads,
+		// and returns true.
+		bool dropEvent(uint64_t event, const Rml::Element& target);
+
+		// The display's zoom by key command (p. 717): in, out, inVertically, outVertically or full. It can while the
+		// panel shows a sample.
+		void zoomBy(const std::string& action);
+		bool canZoom() const { return m_track != 0 && m_length > 0; }
 
 	private:
 		struct Parameter
@@ -93,6 +104,8 @@ namespace gnubase::ui
 		void ask();
 		void showView();
 		void zoom(const std::string& slider, double value);
+		double minimumWidth() const;
+		void sendLoad(const engine::Json& parameters);
 		double viewed(double position) const;
 		void set(uint32_t id, double value, int gesture);
 		void drag(const Rml::Event& event);

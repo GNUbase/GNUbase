@@ -151,6 +151,16 @@ in-place editor's.
 | Shift+Up, Shift+Down | `keyEditor.transposeOctaveUp`, `keyEditor.transposeOctaveDown` | Transpose by an octave |
 | Delete, Backspace | `keyEditor.delete` | Delete |
 
+The sampler panel is the focus zone `sampler` ([sampler-track.md](sampler-track.md), #1122), which a press in its
+display gives the focus, in the lower zone or a window of its own; there the project window's zoom keys zoom its
+display (p. 717):
+
+| Keys | Command | Reference |
+|---|---|---|
+| H, G | `samplerPanel.zoomIn`, `samplerPanel.zoomOut` | Zoom In, Zoom Out |
+| Shift+H, Shift+G | `samplerPanel.zoomInVertically`, `samplerPanel.zoomOutVertically` | Zoom In/Out Vertically |
+| Shift+F | `samplerPanel.zoomFull` | Zoom Full |
+
 The UI command `file.quit` (Quit, in the main menu's File menu) has Mod+Q, everywhere, and `window.onScreenKeyboard`
 (Show/Hide On-Screen Keyboard, [onscreen-keyboard.md](onscreen-keyboard.md)) Alt+K. Commands that come with their
 tickets bring their keys, such as the mixer's F3 and Alt+F3 ([mixer-window.md](mixer-window.md)), cycle, record and the
