@@ -94,6 +94,6 @@ track, and the files that `noteExpression.loadInputs` refuses.
 ## Not yet
 
 - Show Additional Functions' MIDI Controller Setup (pp. 1165, 1302), once the dialog exists (#737, #2120).
-- Record MIDI as Note Expression, Overdub Note Exp.
-  and its Latch Buffer (p. 1302): recording into the notes of the parts that play, which the input doesn't hold (#1515);
-  the release phases of Convert to Note Expression (p. 1316, #1515).
+- Record MIDI as Note Expression, Overdub Note Exp. and its Latch Buffer (p. 1302): recording into the notes of the
+  parts that play, which the input doesn't hold (#1515); the release phases of Convert to Note Expression (p. 1316,
+  #1515).
