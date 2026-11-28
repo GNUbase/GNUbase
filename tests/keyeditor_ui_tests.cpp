@@ -2663,7 +2663,7 @@ TEST_CASE("the event colors menu colors notes by velocity, pitch or channel as t
 	const auto recolor = [&f](const std::string& value)
 	{
 		Rml::Element* picker = nullptr;
-		ui::Window* window = f.app.shell().find(f.app.appUi().editorWindowId());
+		const ui::Window* window = f.app.shell().find(f.app.appUi().editorWindowId());
 		for (int i = 0; window != nullptr && i < window->context().GetNumDocuments() && picker == nullptr; ++i)
 			picker = window->context().GetDocument(i)->QuerySelector("#event-colors-picker");
 		REQUIRE(picker != nullptr);
