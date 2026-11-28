@@ -504,17 +504,18 @@ namespace gnubase::engine::settings
 								{"required", Json::array({"name", "color"})}, {"additionalProperties", false}}}},
 					Json::array()},
 				{"editing.defaultCrossfade",
-					"The default crossfade (reference manual p. 391): its mode and the shapes of its fade in and fade "
-					"out, which new crossfades get (event.crossfade, and crossfade.set without a mode, as audio "
-					"quantize and "
-					"closing gaps use it); the crossfade editor's As Default sets it.",
+					"The default crossfade (reference manual pp. 388, 391): its mode and the shapes of its fade in and "
+					"fade out, which new crossfades get (event.crossfade, and crossfade.set without a mode, as audio "
+					"quantize and closing gaps use it), and its length in seconds, by which event.crossfade makes "
+					"events overlap whose clips overlap; the crossfade editor's As Default sets it.",
 					Json{{"type", "object"},
 						{"properties",
 							{{"mode", {{"type", "string"}, {"enum", crossfadeModeNames()}}},
 								{"shape", {{"type", "string"}, {"enum", fadeShapeNames()}}},
-								{"outShape", {{"type", "string"}, {"enum", fadeShapeNames()}}}}},
+								{"outShape", {{"type", "string"}, {"enum", fadeShapeNames()}}},
+								{"length", {{"type", "number"}, {"minimum", 0}}}}},
 						{"required", {"mode", "shape", "outShape"}}, {"additionalProperties", false}},
-					Json{{"mode", "equalGain"}, {"shape", "linear"}, {"outShape", "linear"}}},
+					Json{{"mode", "equalGain"}, {"shape", "linear"}, {"outShape", "linear"}, {"length", 0.01}}},
 				{"editing.defaultFadeIn",
 					"The default fade in (reference manual p. 385): its shape and length in seconds, which Apply "
 					"Standard Fade In gives the selected audio events; the fade dialog's As Default sets it.",

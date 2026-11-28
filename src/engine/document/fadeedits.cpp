@@ -131,6 +131,50 @@ namespace gnubase::engine
 			return fresh;
 		}
 
+		// Two events that don't overlap but whose clips do are lengthened until they overlap, by the default
+		// crossfade's length centred where they meet, or over the range (reference manual p. 388); as far as the
+		// clips reach, and only longer. Returns whether they overlap now.
+		bool lengthen(Project& project, ProjectModel& model, AudioEvent& from, AudioEvent& to,
+			const std::optional<std::pair<time::Samples, time::Samples>>& range, CommandContext& context)
+		{
+			if (from.lock || to.lock || from.part != to.part || from.lane != to.lane)
+				return false;
+			const EventSpan out = eventSpan(project, from);
+			const EventSpan in = eventSpan(project, to);
+			const auto media = static_cast<double>(project.media.at(project.clips.at(from.clip).media).length);
+			const time::Samples first = std::max(
+				out.start + 1, in.start + std::llround(eventSamples(project, to, -static_cast<double>(to.offset))));
+			const time::Samples last = std::min(in.end - 1,
+				out.start + std::llround(eventSamples(project, from, media - static_cast<double>(from.offset))));
+			time::Samples start = 0;
+			time::Samples end = 0;
+			if (range)
+			{
+				std::tie(start, end) = *range;
+			}
+			else
+			{
+				const double seconds = context.call("settings.get", {{"key", "editing.defaultCrossfade"}})
+										   .at("value")
+										   .value("length", 0.01);
+				const auto length = std::llround(seconds * project.sampleRate);
+				start = std::max(first, (out.end + in.start - length) / 2);
+				end = std::min(last, start + length);
+				start = std::max(first, end - length);
+			}
+			start = std::min(std::max(start, first), in.start);
+			end = std::max(std::min(end, last), out.end);
+			if (start >= end)
+				return false;
+			if (end > out.end)
+				model.runEdit("event.resize", project,
+					{{"events", {from.id}}, {"edge", "end"}, {"delta", end - out.end}}, context);
+			if (start < in.start)
+				model.runEdit("event.resize", project,
+					{{"events", {to.id}}, {"edge", "start"}, {"delta", start - in.start}}, context);
+			return true;
+		}
+
 		Json setCrossfade(Project& project, CommandContext& context)
 		{
 			const Json& parameters = context.parameters();
@@ -251,7 +295,7 @@ namespace gnubase::engine
 		// Crossfade (reference manual p. 388): each event given with the events next to it on its track that it
 		// overlaps, as crossfade.set does it with the default settings; crossfades there already stay. With a range,
 		// only where the range touches the overlap, and the crossfades are fitted to the range.
-		Json crossfade(Project& project, std::vector<ObjectId> given, CommandContext& context,
+		Json crossfade(Project& project, ProjectModel& model, std::vector<ObjectId> given, CommandContext& context,
 			const std::optional<std::pair<time::Samples, time::Samples>>& range = std::nullopt)
 		{
 			for (const ObjectId id : given)
@@ -273,12 +317,19 @@ namespace gnubase::engine
 					{ return std::tie(a.first.start, a.second->id) < std::tie(b.first.start, b.second->id); });
 				for (size_t i = 1; i < row.size(); ++i)
 				{
-					const EventSpan& out = row[i - 1].first;
-					const EventSpan& in = row[i].first;
-					const AudioEvent& from = *row[i - 1].second;
+					AudioEvent& from = *row[i - 1].second;
 					AudioEvent& to = *row[i].second;
 					const bool chosen =
 						single ? isGiven(from.id) || isGiven(to.id) : isGiven(from.id) && isGiven(to.id);
+					if (chosen && row[i - 1].first.start < row[i].first.start &&
+						row[i - 1].first.end <= row[i].first.start &&
+						lengthen(project, model, from, to, range, context))
+					{
+						row[i - 1].first = eventSpan(project, from);
+						row[i].first = eventSpan(project, to);
+					}
+					const EventSpan& out = row[i - 1].first;
+					const EventSpan& in = row[i].first;
 					if (!chosen || out.start >= in.start || in.start >= out.end || out.end > in.end ||
 						(range && (range->first >= out.end || range->second <= in.start)))
 						continue;
@@ -325,7 +376,7 @@ namespace gnubase::engine
 		// The Fades menu's range functions (reference manual pp. 384-385, 388-389, 396): fade in to the range's start
 		// or from its end, fade out from its end or start, or both to fit it; crossfade the events where the range
 		// touches their overlap, or remove the crossfades that play in it.
-		Json fadesToRange(Project& project, CommandContext& context)
+		Json fadesToRange(Project& project, ProjectModel& model, CommandContext& context)
 		{
 			const Json& parameters = context.parameters();
 			const auto start = parameters.at("start").get<time::Samples>();
@@ -348,7 +399,7 @@ namespace gnubase::engine
 						onTracks(event) && start < span.end && end > span.start)
 						crossing.push_back(id);
 				require(!crossing.empty(), "no audio event on the range's tracks crosses the range");
-				return crossfade(project, crossing, context, std::pair{start, end});
+				return crossfade(project, model, crossing, context, std::pair{start, end});
 			}
 			// A crossfade that plays in the range: removed, or fitted to it, its fade in up to the range's end and
 			// its fade out from its start, instead of its events' own fades.
@@ -419,9 +470,9 @@ namespace gnubase::engine
 			return {{"events", events}};
 		}
 
-		Json crossfadeEvents(Project& project, CommandContext& context)
+		Json crossfadeEvents(Project& project, ProjectModel& model, CommandContext& context)
 		{
-			return crossfade(project, context.parameters().at("events").get<std::vector<ObjectId>>(), context);
+			return crossfade(project, model, context.parameters().at("events").get<std::vector<ObjectId>>(), context);
 		}
 
 		// Remove Fade In, Remove Fade Out and Remove Fades (reference manual pp. 385, 395).
@@ -635,23 +686,28 @@ namespace gnubase::engine
 				"overlap within the range instead gets its fade in up to the range's end and its fade out from the "
 				"range's start, and its events' own fades stay. Shapes stay; a fade that no longer fits next to the "
 				"one set gets shorter. crossfade (Crossfade): the events on the tracks where the range touches their "
-				"overlap, as event.crossfade does it with them, with the crossfades fitted to the range as adjust "
-				"does it; a range that touches no overlap is refused. remove (Remove Fades): the crossfades that play "
+				"overlap, as event.crossfade does it with them (events that don't overlap are lengthened over the "
+				"range), with the crossfades fitted to the range as adjust does it; a range that touches no overlap "
+				"is refused. remove (Remove Fades): the crossfades that play "
 				"within the range. Returns the events changed, for crossfade and remove those that fade in.",
 				object({{"start", integer}, {"end", integer}, {"tracks", ids},
 						   {"fade", {{"type", "string"}, {"enum", {"in", "out", "adjust", "crossfade", "remove"}}}}},
 					{"start", "end", "fade"}),
 				eventsResult, false},
-			"Fades to Range", fadesToRange);
+			"Fades to Range",
+			[this](Project& project, CommandContext& context) { return fadesToRange(project, *this, context); });
 		addEdit(engine,
 			{"event.crossfade", 1,
 				"Crossfades audio events with the overlapping ones next to them on their tracks, with the default "
 				"crossfade (the user setting editing.defaultCrossfade) over the whole overlap: several events with "
 				"each other where one starts inside the one before it "
-				"and ends after it, one event with the events on either side of it like that. Crossfades there already "
-				"stay as they are. Returns the events that fade in.",
+				"and ends after it, one event with the events on either side of it like that. Events next to each "
+				"other that don't overlap but whose clips do are lengthened until they overlap by the default "
+				"crossfade's length, centred where they meet, as far as their clips reach (unlocked events in the "
+				"same part and lane). Crossfades there already stay as they are. Returns the events that fade in.",
 				object({{"events", ids}}, {"events"}), eventsResult, false},
-			"Crossfade", crossfadeEvents);
+			"Crossfade",
+			[this](Project& project, CommandContext& context) { return crossfadeEvents(project, *this, context); });
 		addEdit(engine,
 			{"event.removeFades", 1,
 				"Removes the fade in (fadeIn, default true) and the fade out (fadeOut, default true) of audio events, "
