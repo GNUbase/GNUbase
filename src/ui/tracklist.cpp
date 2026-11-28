@@ -2,6 +2,7 @@
 #include "ui/tracklist.h"
 
 #include "ui/markers.h"
+#include "ui/midipatches.h"
 #include "ui/mixer.h"
 #include "ui/tempotrack.h"
 #include "ui/timeformat.h"
@@ -262,8 +263,8 @@ namespace gnubase::ui
 				return control == "timeBase" && type != "folder" && type != "ruler" && type != "signature";
 			if (control == "record" || control == "monitor")
 				return type == "audio" || type == "instrument" || type == "midi";
-			// The MIDI channel, as in the inspector (reference manual p. 349).
-			if (control == "midiChannel")
+			// The MIDI channel and Programs, as in the inspector (reference manual pp. 195, 349, 1108).
+			if (control == "midiChannel" || control == "program")
 				return type == "midi";
 			// Edit In-Place (reference manual pp. 194, 1261).
 			if (control == "editInPlace")
@@ -296,6 +297,8 @@ namespace gnubase::ui
 					R"(" disabled/>)";
 			if (control == "midiChannel")
 				return R"(<select class="midi-channel" control="midiChannel" title="MIDI Channel"/>)";
+			if (control == "program")
+				return R"(<select class="program" control="program" title="Programs"/>)";
 			if (control == "timeOffset")
 				return R"(<textdisplay class="display time-offset" control="timeOffset" title="Time Offset"/>)";
 			if (control == "setTimeOffset")
@@ -801,6 +804,12 @@ namespace gnubase::ui
 				const Json& values = event.data.at("values");
 				if (const auto controls = values.find("ui.trackControls"); controls != values.end())
 					loadControls(*controls);
+				if (const auto devices = values.find("midi.devices"); devices != values.end())
+				{
+					m_devices = *devices;
+					m_devicesKnown = true;
+					showState();
+				}
 				if (const auto widths = values.find("ui.trackWidths"); widths != values.end())
 					loadWidths(*widths);
 				if (const auto type = values.find("editing.tempoType"); type != values.end() && type->is_string())
@@ -861,6 +870,15 @@ namespace gnubase::ui
 					return;
 				m_tempoType = result.value.at("value").get<std::string>();
 				showTempo();
+			});
+		// The MIDI devices for Programs (reference manual p. 1113).
+		m_binding.send("settings.get", {{"key", "midi.devices"}},
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (alive.expired() || !result.ok() || m_devicesKnown) // gone, or newer changes win
+					return;
+				m_devices = result.value.at("value");
+				showState();
 			});
 		m_binding.send("settings.get", {{"key", "ui.trackControls"}},
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
@@ -1378,6 +1396,12 @@ namespace gnubase::ui
 					const Json midiChannel = channel != nullptr ? channel->value("midiChannel", Json()) : Json();
 					widgets::fill(*button, channels,
 						midiChannel.is_number_integer() ? std::to_string(midiChannel.get<int>()) : "any");
+					continue;
+				}
+				if (name == "program")
+				{
+					if (channel != nullptr)
+						widgets::fill(*button, midipatches::options(m_devices, *channel), midipatches::value(*channel));
 					continue;
 				}
 				if (name == "arrangerChain")
@@ -2075,6 +2099,7 @@ namespace gnubase::ui
 					tempoChanged(*target, event);
 				rulerChange(*target, event.GetParameter<Rml::String>("value", ""));
 				midiChannelChange(*target, event.GetParameter<Rml::String>("value", ""));
+				programChange(*target, event.GetParameter<Rml::String>("value", ""));
 				markerChange(*target, event.GetParameter<Rml::String>("value", ""));
 				signatureOption(*target, event.GetParameter<Rml::String>("value", ""));
 				// Select Track for Auditioning and Select Active Arranger Chain: a track's or chain's ID.
@@ -2145,8 +2170,8 @@ namespace gnubase::ui
 	void TrackList::control(
 		Rml::Element& button, const Row& row, const std::string& name, bool exclusive, bool defeat, bool shift)
 	{
-		if (name == "currentTempo" || name == "tempoType" || name == "midiChannel" || name == "signatureOptions" ||
-			markerMenu(name))
+		if (name == "currentTempo" || name == "tempoType" || name == "midiChannel" || name == "program" ||
+			name == "signatureOptions" || markerMenu(name))
 			return; // fields and lists, which change
 		if (name == "addPositionMarker")
 		{
@@ -2348,6 +2373,21 @@ namespace gnubase::ui
 		const Json midiChannel = value == "any" ? Json(nullptr) : Json(std::stoi(value));
 		if (channel != nullptr && channel->value("midiChannel", Json()) != midiChannel)
 			m_binding.send("channel.set", {{"channel", row->channel}, {"midiChannel", midiChannel}});
+	}
+
+	void TrackList::programChange(Rml::Element& control, const std::string& value)
+	{
+		const Row* row = rowOf(&control);
+		if (row == nullptr || control.GetAttribute<Rml::String>("control", "") != "program" || value.empty())
+			return;
+		const Json* channel = channelOf(*row);
+		if (channel == nullptr)
+			return;
+		Json patch = midipatches::choose(*channel, value);
+		if (patch.is_null())
+			return;
+		patch["channel"] = row->channel;
+		m_binding.send("channel.set", patch);
 	}
 
 	void TrackList::rulerChange(Rml::Element& control, const std::string& value)

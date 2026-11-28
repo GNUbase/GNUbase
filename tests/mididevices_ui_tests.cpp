@@ -566,6 +566,51 @@ TEST_CASE("the track list's MIDI channel control chooses the MIDI channel of a M
 	CHECK(app.waitUntil([&] { return attribute(app, list, "value") == "any"; }));
 }
 
+TEST_CASE("the track list's program selector chooses a MIDI track's program or its device's patches by name", "[ui]")
+{
+	// The track controls' Programs (reference manual p. 195), the inspector's program selector (pp. 1108, 1113).
+	test::UiApp app{{1200, 600}};
+	ui::EventDisplay& display = app.appUi().showProject();
+	app.setDpRatio(1.0F);
+	app.call("settings.set",
+		{{"key", "ui.trackControls"},
+			{"value", {{"midi", {"mute", "solo", "program"}}, {"instrument", {"mute", "solo", "program"}}}}});
+	app.call("track.add", {{"type", "midi"}});
+	app.call("track.add", {{"type", "instrument"}});
+	REQUIRE(app.waitUntil([&] { return display.project().at("tracks").size() == 2; }));
+	const std::string list = ".track-list select[control=program]";
+	// MIDI tracks only: the instrument track's row doesn't show it, although its controls name it.
+	REQUIRE(app.waitUntil([&] { return elements(app, ".track-list [control=mute]").size() == 2; }));
+	REQUIRE(app.waitUntil([&] { return elements(app, list).size() == 1; }));
+	REQUIRE(app.waitUntil([&] { return attribute(app, list, "value") == "off"; }));
+	CHECK(selected(app, list) == "Off");
+
+	// Without a device: Off and programs 1 to 128, keeping the bank.
+	const Json id = channel(app).at("id");
+	app.call("channel.set", {{"channel", id}, {"bank", 300}});
+	choose(app, list, 3);
+	REQUIRE(app.waitUntil([&] { return channel(app).at("program") == 2; }));
+	CHECK(channel(app).at("bank") == 300);
+	CHECK(app.waitUntil([&] { return attribute(app, list, "value") == "2:300"; }));
+	CHECK(selected(app, list) == "3");
+
+	// With an installed device: its patches by name, the track's own patch listed, and the list following the setting.
+	app.call("channel.set", {{"channel", id}, {"device", "Sound Module"}});
+	app.call("midiDevice.install", {{"name", "Sound Module"}, {"template", "gm"}});
+	REQUIRE(app.waitUntil([&] { return selected(app, list) == "Program 3"; }));
+	app.call("channel.set", {{"channel", id}, {"program", 0}, {"bank", nullptr}});
+	REQUIRE(app.waitUntil([&] { return selected(app, list) == "Piano / Acoustic Grand Piano"; }));
+	choose(app, list, 4);
+	REQUIRE(app.waitUntil([&] { return channel(app).at("program") == 4; }));
+	CHECK(channel(app).at("bank").is_null());
+	CHECK(app.waitUntil([&] { return selected(app, list) == "Piano / Electric Piano 1"; }));
+	click(app, list); // back to Off
+	for (int i = 0; i < 5; ++i)
+		app.ui().key(std::nullopt, "Up");
+	click(app, list);
+	CHECK(app.waitUntil([&] { return channel(app).at("program").is_null(); }));
+}
+
 TEST_CASE("the MIDI device manager's Bank Assignment gives a MIDI channel one bank in the program selector", "[ui]")
 {
 	// Reference manual p. 1109: a device with several banks shows the bank assigned to the track's MIDI channel.

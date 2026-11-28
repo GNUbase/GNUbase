@@ -1929,6 +1929,15 @@ meter .meter-peak
 	padding: 0 2dp;
 }
 
+/* A MIDI track's Programs (docs/features/midi-devices.md): Off, 1 to 128, or its device's patches by name. */
+.track-list .track-controls select.program
+{
+	width: 96dp;
+	height: 18dp;
+	margin-left: 2dp;
+	padding: 0 2dp;
+}
+
 /* The chord track's Select Track for Auditioning (docs/features/chord-track.md). */
 .track-list .track-controls select.chord-audition
 {

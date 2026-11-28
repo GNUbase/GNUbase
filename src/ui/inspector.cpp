@@ -5,6 +5,7 @@
 #include "engine/midi/modifiers.h"
 #include "engine/time/tempomap.h"
 #include "platform/log.h"
+#include "ui/midipatches.h"
 #include "ui/transposetrack.h"
 #include "ui/widgets.h"
 #include "ui/widgetutils.h"
@@ -486,53 +487,6 @@ namespace gnubase::ui
 		bool hasVersions(const std::string& type)
 		{
 			return type == "audio" || type == "instrument" || type == "midi";
-		}
-
-		// A MIDI track's patch as the program selector's value: "off", or the program and bank, "5:300" ("5:" without a
-		// bank).
-		std::string patchValue(const Json& program, const Json& bank)
-		{
-			if (!program.is_number_integer())
-				return "off";
-			return std::to_string(program.get<int>()) + ":" + (bank.is_number_integer() ? bank.dump() : "");
-		}
-
-		// The program selector's choices (reference manual pp. 1108, 1113): a device's patches by name, or without one
-		// programs 1 to 128 (keeping the bank), always with Off, and the channel's own patch if no choice has it.
-		Options programs(const Json* device, const Json& channel)
-		{
-			Options options{{"off", "Off"}};
-			const Json bank = channel.value("bank", Json());
-			if (device == nullptr)
-			{
-				for (int program = 0; program < 128; ++program)
-					options.emplace_back(patchValue(program, bank), std::to_string(program + 1));
-				return options;
-			}
-			// The bank that the Bank Assignment (p. 1109) gives the track's MIDI channel, else all of them. A track on
-			// Any uses channel 1's bank: GNUbase's choice, the manual doesn't say.
-			Json banks = device->at("banks");
-			const Json midiChannel = channel.value("midiChannel", Json());
-			const Json assigned =
-				device->value("bankAssignment", Json::object())
-					.value(std::to_string(midiChannel.is_number_integer() ? midiChannel.get<int>() + 1 : 1), Json());
-			if (assigned.is_number_integer() && assigned.get<int64_t>() >= 0 && assigned.get<size_t>() < banks.size())
-				banks = Json::array({banks.at(assigned.get<size_t>())});
-			for (const Json& deviceBank : banks)
-				for (const Json& patch : deviceBank.at("patches"))
-				{
-					std::string name;
-					for (const std::string& part : {banks.size() > 1 ? deviceBank.at("name").get<std::string>() : "",
-							 patch.value("folder", std::string()), patch.at("name").get<std::string>()})
-						if (!part.empty())
-							name += (name.empty() ? "" : " / ") + part;
-					options.emplace_back(patchValue(patch.at("program"), patch.value("bank", Json())), name);
-				}
-			const std::string current = patchValue(channel.value("program", Json()), bank);
-			if (std::none_of(
-					options.begin(), options.end(), [&](const auto& option) { return option.first == current; }))
-				options.emplace_back(current, "Program " + std::to_string(channel.at("program").get<int>() + 1));
-			return options;
 		}
 
 		// A channel's input transformer mode: off, project or track.
@@ -1173,8 +1127,7 @@ namespace gnubase::ui
 					widgets::fill(*select, devices, named);
 				const Json bank = channel->value("bank", Json());
 				if (Rml::Element* program = element("select[control=program]"))
-					widgets::fill(
-						*program, programs(device, *channel), patchValue(channel->value("program", Json()), bank));
+					widgets::fill(*program, midipatches::options(m_devices, *channel), midipatches::value(*channel));
 				if (Rml::Element* field = element("textdisplay[control=bank]"))
 					field->SetAttribute(
 						"value", bank.is_number_integer() ? std::to_string(bank.get<int>() + 1) : "Off");
@@ -2223,19 +2176,9 @@ namespace gnubase::ui
 		}
 		else if (name == "program")
 		{
-			// The patch's program and bank: "off", or "5:300" ("5:" without a bank).
-			const auto chosen = event.GetParameter<Rml::String>("value", "off");
-			const size_t colon = chosen.find(':');
-			if (colon == std::string::npos)
-			{
-				if (!m_channel.value("program", Json()).is_null())
-					sendChannel({{"program", nullptr}});
-				return;
-			}
-			const Json program = std::stoi(chosen.substr(0, colon));
-			const Json bank = colon + 1 < chosen.size() ? Json(std::stoi(chosen.substr(colon + 1))) : Json(nullptr);
-			if (m_channel.value("program", Json()) != program || m_channel.value("bank", Json()) != bank)
-				sendChannel({{"program", program}, {"bank", bank}});
+			if (Json patch = midipatches::choose(m_channel, event.GetParameter<Rml::String>("value", "off"));
+				!patch.is_null())
+				sendChannel(std::move(patch));
 			return;
 		}
 		// Not what it is already, such as a drop-down list that show filled.

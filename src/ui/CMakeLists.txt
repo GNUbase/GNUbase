@@ -82,6 +82,8 @@ add_library(gnubase-ui STATIC
 	meterpanel.h
 	midieditor.cpp
 	midieditor.h
+	midipatches.cpp
+	midipatches.h
 	mixer.cpp
 	mixer.h
 	onscreenkeyboard.cpp
