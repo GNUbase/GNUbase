@@ -2481,6 +2481,8 @@ TEST_CASE("the lower zone's key editor at its default size gives the note displa
 		// The note display has its 40%, or the lanes are down to their footer and it has the rest.
 		CHECK(std::abs(body + lanes - room) <= 1.0);
 		CHECK(((body >= (0.4 * editor) - 1.0) || (lanes <= px(22) + 0.5)));
+		// And keeps part of its own at every ratio, a row of notes or more.
+		CHECK(body >= px(12) - 0.5);
 		// The footer stays whole inside the editor.
 		CHECK(height(".controller-lanes-footer") >= px(22) - 0.5);
 		CHECK(bottom(".controller-lanes-footer") <= bottom(".key-editor") + 0.5);

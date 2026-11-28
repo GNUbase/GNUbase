@@ -52,9 +52,10 @@ saved, and a new project closes the editors.
   crowd out. The keys pressed until all of them are up again are one chord, which then goes into `editor.input` with
   each note's note-on velocity and note-off velocity (a note-on of velocity 0 counts as 64): one undo step per chord, in
   the editor whose step or MIDI input went on last, else the first one that has it on. Waiting for the release gives the
-  chord all its keys and their release velocities. When notes were lost, as when the queue was full or a device started,
-  the keys still down after the notes that came are forgotten with their chord, since their note-offs may have gone, and
-  the next key starts afresh. With no editor's input on any more, the editors stop listening, and the next start begins
+  chord all its keys and their release velocities. When notes were lost, the keys down are forgotten with their chord,
+  since their note-offs may have gone, and the next key starts afresh: those down before the notes that came when a
+  device started and dropped the input that waited (`cleared`), those still down after them when the queue was full
+  (`dropped`). With no editor's input on any more, the editors stop listening, and the next start begins
   afresh, without what was held or played meanwhile.
   `midi.activity` runs only while an audio device runs, at most ten times a second; offline a test runs it.
 - **Chords** (`src/engine/midi/chords.h`). The types are the Chord Editing section's: the triads major, minor,
@@ -227,15 +228,15 @@ key editor's context menu.
   part, the channel of a note that stays and notes ending at the part's end; MIDI input with and without Record Pitch,
   a chord, Keep Existing Notes and no selection; the undo step's name; notes played on the MIDI inputs
   (`editor.played`) going in as chords once all their keys are up, with their velocities, one undo step each, nothing
-  while input is off, a pitch down twice up once both keys are, and lost notes forgetting the keys down; a dummy MIDI
-  keyboard playing through `midi.activity` into the editor whose input went on last, then into the other one, nothing
-  played while both were off or from a port outside all MIDI inputs, the on-screen keyboard's notes, a flood of
-  expression crowding out no note, and a chord pad's remote key putting in the pad's chord; `editor.step` moving the
-  cursor, not before the project's start, and lengthening and shortening a held chord, down to a step; chord
-  recognition, fitting and voicings; `note.chord` and `note.voicing` with undo and their errors; Acoustic Feedback off
-  at first and the event colors, set as view state without an undo step; Indicate Transpositions off at first, as view
-  state, its steps from transpose events within the part (not before or after it) with the root key's step and the
-  part's own transpose, muted transpose events and an Independent part.
+  while input is off, a pitch down twice up once both keys are, and lost notes forgetting the keys down, after the notes
+  for a full queue and before them for a device start; a dummy MIDI keyboard playing through `midi.activity` into the
+  editor whose input went on last, then into the other one, nothing played while both were off or from a port outside
+  all MIDI inputs, the on-screen keyboard's notes, a flood of expression crowding out no note, and a chord pad's remote
+  key putting in the pad's chord; `editor.step` moving the cursor, not before the project's start, and lengthening and
+  shortening a held chord, down to a step; chord recognition, fitting and voicings; `note.chord` and `note.voicing` with
+  undo and their errors; Acoustic Feedback off at first and the event colors, set as view state without an undo step;
+  Indicate Transpositions off at first, as view state, its steps from transpose events within the part (not before or
+  after it) with the root key's step and the part's own transpose, muted transpose events and an Independent part.
 - `tests/keyeditor_ui_tests.cpp` drives the app with `ui::Automation`: the keyboard and notes at their time and pitch,
   keys lit for selected notes; the piano keyboard at 1024x600, at dp ratios of 1.5 and 1: white keys of equal height
   across the keyboard, black keys narrower on their rows, the mouse on the right part of a white key beside a black key

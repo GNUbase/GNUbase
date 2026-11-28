@@ -1437,8 +1437,10 @@ namespace gnubase::engine
 				"pitch, velocity (0 to 127) and whether it is a note-on (on). The keys pressed until all of them are "
 				"up again are one chord: then editor.input runs with its notes, each with its note-on velocity and "
 				"its note-off velocity, in the editor whose step or MIDI input went on last, or else the first one "
-				"with it on. dropped: how many notes were lost before these; then the keys still down after them "
-				"are forgotten, with their chord, since their note-offs may be lost, and the next key starts afresh. "
+				"with it on. Lost notes forget the keys down, with their chord, since their note-offs may be lost, "
+				"and the next key starts afresh: cleared, true when the input was dropped before these notes, as when "
+				"a device started, forgets the keys down before them; dropped, how many notes didn't fit after these, "
+				"as when the queue was full, forgets those still down after them. "
 				"Returns the chords it sent, each the notes as editor.input takes them.",
 				{{"type", "object"}, {"additionalProperties", false}, {"required", {"notes"}},
 					{"properties",
@@ -1451,7 +1453,7 @@ namespace gnubase::engine
 											 {{"pitch", {{"type", "integer"}, {"minimum", 0}, {"maximum", 127}}},
 												 {"velocity", {{"type", "integer"}, {"minimum", 0}, {"maximum", 127}}},
 												 {"on", boolean}}}}}}},
-							{"dropped", {{"type", "integer"}, {"minimum", 0}}}}}},
+							{"dropped", {{"type", "integer"}, {"minimum", 0}}}, {"cleared", boolean}}}},
 				{{"type", "object"}, {"required", {"chords"}}, {"properties", {{"chords", {{"type", "array"}}}}}},
 				false},
 			[views, live, &model, &engine](CommandContext& context)
@@ -1460,6 +1462,14 @@ namespace gnubase::engine
 				const std::string editor = inputEditor(*live, *views, model);
 				listen(*live, !editor.empty(), context);
 				Json chords = Json::array();
+				const auto forget = [&live]
+				{
+					live->down.clear();
+					live->chord = Json::array();
+					live->steps = 0;
+				};
+				if (context.parameters().value("cleared", false))
+					forget();
 				for (const Json& each : context.parameters().at("notes"))
 				{
 					if (editor.empty())
@@ -1491,11 +1501,7 @@ namespace gnubase::engine
 					}
 				}
 				if (context.parameters().value("dropped", 0) > 0)
-				{
-					live->down.clear();
-					live->chord = Json::array();
-					live->steps = 0;
-				}
+					forget();
 				return Json{{"chords", chords}};
 			});
 

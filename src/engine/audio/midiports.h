@@ -121,13 +121,14 @@ namespace gnubase::engine
 		uint64_t activity() const { return m_activityCount.load(std::memory_order_relaxed); }
 
 		// Drops the input that waits for the audio thread, and what midi.activity hasn't taken yet. Only while no
-		// audio thread takes, on the command thread. The posts hear that notes went, as their note-offs may have.
+		// audio thread takes, on the command thread. The next post hears that notes went before its own (cleared), as
+		// their note-offs may have.
 		void clear()
 		{
 			m_queue.clear();
 			dropActivity();
 			if (m_notesListen.load(std::memory_order_relaxed))
-				m_notesDropped.store(1, std::memory_order_relaxed);
+				m_notesCleared = true;
 		}
 
 		// Inputs that can be open at once.
@@ -202,7 +203,8 @@ namespace gnubase::engine
 			bool on = false;
 		};
 		rt::SpscQueue<PlayedNote> m_notes{4096};
-		std::atomic<size_t> m_notesDropped{0};
+		std::atomic<size_t> m_notesDropped{0};  // didn't fit, after those queued
+		bool m_notesCleared = false;            // command thread: clear() dropped notes before those queued
 		std::atomic<bool> m_notesListen{false}; // a listener has a post
 		// Command thread: empties m_notes.
 		void dropNotes()
@@ -212,6 +214,7 @@ namespace gnubase::engine
 			{
 			}
 			m_notesDropped.store(0, std::memory_order_relaxed);
+			m_notesCleared = false;
 		}
 		// Command thread: empties m_activity and m_notes.
 		void dropActivity()

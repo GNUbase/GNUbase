@@ -498,12 +498,12 @@ TEST_CASE("notes played on the MIDI inputs go into step input as chords once all
 {
 	// Reference manual pp. 1219-1220: editor.played, as midi.activity posts it, each note {pitch, velocity, on}.
 	Fixture f;
-	const auto played = [&f](const std::vector<std::vector<int>>& notes, int dropped = 0)
+	const auto played = [&f](const std::vector<std::vector<int>>& notes, int dropped = 0, bool cleared = false)
 	{
 		Json list = Json::array();
 		for (const std::vector<int>& note : notes)
 			list.push_back({{"pitch", note[0]}, {"velocity", note[1]}, {"on", note[2] != 0}});
-		return f.call("editor.played", {{"notes", list}, {"dropped", dropped}}).at("chords");
+		return f.call("editor.played", {{"notes", list}, {"dropped", dropped}, {"cleared", cleared}}).at("chords");
 	};
 	// Off, nothing goes in.
 	CHECK(played({{60, 127, 1}, {60, 0, 0}}).empty());
@@ -536,6 +536,14 @@ TEST_CASE("notes played on the MIDI inputs go into step input as chords once all
 	CHECK(played({{48, 100, 1}}, 1).empty());
 	CHECK(played({{50, 100, 1}, {50, 0, 0}}).size() == 1);
 	CHECK(f.partNotes().back().at("pitch") == 50);
+	// Input dropped before these notes, as when a device started (cleared): the keys down before them are forgotten,
+	// and a key whose note-on comes with the loss still goes in once it is up.
+	CHECK(played({{52, 100, 1}}).empty());
+	CHECK(played({{53, 100, 1}}, 0, true).empty());
+	const Json afterStart = played({{53, 0, 0}});
+	REQUIRE(afterStart.size() == 1);
+	REQUIRE(afterStart[0].size() == 1);
+	CHECK(afterStart[0][0].at("pitch") == 53);
 }
 
 TEST_CASE("Right and Left Arrow move the step input cursor, and while keys are held lengthen or shorten their chord",
@@ -685,4 +693,22 @@ TEST_CASE("a MIDI keyboard plays into the key editor whose step or MIDI input we
 	std::sort(pitches.begin(), pitches.end());
 	CHECK(
 		pitches == std::vector<int>{48, 48, 52, 60, 64, 67, 72, 74, 76}); // the first 48 is the note MIDI input changed
+
+	// A device start drops the input that waited, and the next post says so before its notes: a key held past the run
+	// of midi.activity that took its note-on still goes in once it is up.
+	f.call("audio.start");
+	f.call("audio.stop");
+	send(0x90, 84, 100);
+	bool noteOnTaken = false;
+	for (int tries = 0; tries < 2000 && !noteOnTaken; ++tries)
+	{
+		f.call("audio.render", {{"frames", 64}});
+		noteOnTaken = !f.call("midi.activity").at("received").empty();
+		if (!noteOnTaken)
+			std::this_thread::sleep_for(std::chrono::milliseconds(5));
+	}
+	REQUIRE(noteOnTaken);
+	CHECK(f.partNotes().size() == 9);
+	send(0x80, 84, 0);
+	CHECK(until([&f] { return f.partNotes().size() == 10; }));
 }

@@ -689,10 +689,13 @@ namespace gnubase::engine
 				"what "
 				"came before, and a second listener's on keeps what the first one still reads. post names a command "
 				"that each run of midi.activity with notes then posts while the listener has it on, with {notes, "
-				"dropped}: the notes the tracks get from all MIDI inputs, the on-screen keyboard's too, and from the "
+				"dropped, cleared}: the notes the tracks get from all MIDI inputs, the on-screen keyboard's too, and "
+				"from the "
 				"chord pads, so a remote key's pad chord rather than the key, each with its pitch, velocity (0 to "
-				"127) and whether it is a note-on (on), and how many notes were lost since the last post, as when a "
-				"device started. They have a queue of their own, which no other input crowds out: the key editors' "
+				"127) and whether it is a note-on (on), how many notes didn't fit after these, as when the queue was "
+				"full, "
+				"and whether the input was dropped before these, as when a device started. They have a queue of their "
+				"own, which no other input crowds out: the key editors' "
 				"step and MIDI input take the notes played so (editor.played, #679, #2154).",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["on"],
 					"properties": {"on": {"type": "boolean"}, "listener": {"type": "string"},
@@ -850,10 +853,11 @@ namespace gnubase::engine
 				while (m_notes.tryPop(note))
 					notes.push_back({{"pitch", note.pitch}, {"velocity", note.velocity}, {"on", note.on}});
 				const size_t lost = m_notesDropped.exchange(0, std::memory_order_relaxed);
-				if (!notes.empty() || lost > 0)
+				const bool cleared = std::exchange(m_notesCleared, false);
+				if (!notes.empty() || lost > 0 || cleared)
 					for (const auto& listener : m_activityListeners)
 						if (!listener.second.empty())
-							engine.post(listener.second, {{"notes", notes}, {"dropped", lost}});
+							engine.post(listener.second, {{"notes", notes}, {"dropped", lost}, {"cleared", cleared}});
 				Json result = {{"received", std::move(received)},
 					{"dropped", m_activityDropped.exchange(0, std::memory_order_relaxed)}};
 				if (!result.at("received").empty())
