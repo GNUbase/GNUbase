@@ -3600,6 +3600,59 @@ TEST_CASE(
 	CHECK(eventVolume(f.audioEvents()[0]) == 0.0);
 }
 
+TEST_CASE(
+	"an audio event's waveform is drawn with its volume and volume curve, also while the volume is dragged", "[unit]")
+{
+	// Reference manual pp. 399, 402: the waveform image changes with the volume.
+	Fixture f;
+	const auto waveVolume = [&f]() -> const ui::VolumeLine*
+	{
+		Rml::ElementList waves;
+		f.document.QuerySelectorAll(waves, ".waveforms waveform");
+		const auto* wave = waves.size() == 1 ? dynamic_cast<ui::Waveform*>(waves[0]) : nullptr;
+		return wave != nullptr ? &wave->volume() : nullptr;
+	};
+	f.call("audioEvent.set", {{"event", f.event}, {"volume", -6.0}});
+	f.call("audioEvent.setVolumeCurve",
+		{{"event", f.event}, {"points", {{{"position", 100}, {"volume", -6.0}, {"curve", 0.0}}}}});
+	REQUIRE(f.waitUntil(
+		[&]
+		{
+			const ui::VolumeLine* volume = waveVolume();
+			return volume != nullptr && volume->points.size() == 1 && std::abs(volume->gain - 0.5) < 0.01;
+		}));
+	CHECK(std::abs(waveVolume()->points[0].gain - 0.5) < 0.01);
+	CHECK(waveVolume()->rate > 0.0);
+	// At 0 dB without a curve, it is drawn as the peaks are.
+	f.call("history.undo");
+	f.call("history.undo");
+	REQUIRE(f.waitUntil([&] { return waveVolume() != nullptr && waveVolume()->rate == 0.0; }));
+
+	// While the event volume control is dragged 10 dp down the 40 dp lane, it follows: -6 dB.
+	f.display.select({f.event});
+	f.step();
+	f.automation.press(std::nullopt, f.at(216, 36), ui::MouseButton::Left);
+	f.automation.move(std::nullopt, f.at(216, 46));
+	f.step();
+	CHECK(std::abs(waveVolume()->gain - 0.5) < 0.01);
+	f.automation.release(std::nullopt, f.at(216, 46), ui::MouseButton::Left);
+	REQUIRE(f.waitUntil([&f] { return std::abs(eventVolume(f.audioEvents()[0]) + 6.0) < 0.1; }));
+	CHECK(f.waitUntil([&] { return std::abs(waveVolume()->gain - 0.5) < 0.01; }));
+
+	// And while the draw tool drags a curve point: one at 0 dB, a quarter up, 5 dp up is 0.75 in all, the point 1.5.
+	f.call("audioEvent.setVolumeCurve",
+		{{"event", f.event}, {"points", {{{"position", 9600}, {"volume", 0.0}, {"curve", 0.0}}}}});
+	REQUIRE(f.waitUntil([&] { return waveVolume()->points.size() == 1; }));
+	f.display.setTool(ui::Tool::Draw);
+	f.automation.press(std::nullopt, f.at(220, 30), ui::MouseButton::Left);
+	f.automation.move(std::nullopt, f.at(220, 25));
+	f.step();
+	CHECK(std::abs(waveVolume()->points[0].gain - 1.5) < 0.01);
+	f.automation.release(std::nullopt, f.at(220, 25), ui::MouseButton::Left);
+	REQUIRE(f.waitUntil(
+		[&f] { return std::abs(f.audioEvents()[0].at("volumeCurve")[0].at("volume").get<double>() - 3.52) < 0.05; }));
+}
+
 TEST_CASE("a selected audio event too narrow for its volume control shows none", "[unit]")
 {
 	// The control sits 16 dp in from the start, so an event under 32 dp has no room for it beside its edges: 30 dp
@@ -3777,6 +3830,63 @@ TEST_CASE("the draw tool adds and drags volume curve points, the erase tool remo
 	// An unselected event shows no points, so the erase tool there removes the event, not a point (#670).
 	f.display.select({});
 	f.click(240, 20);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents().empty(); }));
+}
+
+TEST_CASE("the draw tool selects curve points, with Shift several, and Delete removes them", "[unit]")
+{
+	// Reference manual p. 400: a click on a point selects it, Shift and a click adds one, Delete removes them.
+	Fixture f;
+	f.display.setTool(ui::Tool::Draw);
+	f.call("audioEvent.setVolumeCurve",
+		{{"event", f.event},
+			{"points",
+				{{{"position", 4800}, {"volume", -6.0}, {"curve", 0.0}},
+					{{"position", 9600}, {"volume", -6.0}, {"curve", 0.0}},
+					{{"position", 14400}, {"volume", -6.0}, {"curve", 0.0}}}}});
+	f.display.select({f.event});
+	// Which points the volume line draws as selected.
+	const auto selected = [&f](std::vector<size_t> points, size_t of = 3)
+	{
+		return f.waitUntil(
+			[&f, &points, of]
+			{
+				const std::vector<ui::VolumeLine>& lines = fadeLines(f).lanes()[0].volumes;
+				return lines.size() == 1 && lines[0].points.size() == of && lines[0].selected == points;
+			});
+	};
+	REQUIRE(selected({}));
+	// The points at 0.1, 0.2 and 0.3 seconds into the event from 2 seconds, a quarter up the 40 dp lane.
+	f.click(210, 30);
+	CHECK(selected({0}));
+	f.click(230, 30);
+	CHECK(selected({2}));
+	f.click(210, 30, {"shift"});
+	CHECK(selected({0, 2}));
+	f.click(230, 30, {"shift"}); // again: no longer
+	CHECK(selected({0}));
+	f.click(230, 30, {"shift"});
+	CHECK(f.audioEvents()[0].at("volumeCurve").size() == 3); // selecting changes nothing
+
+	// Delete removes the selected points rather than the event, as one undo step.
+	f.run("edit.delete");
+	REQUIRE(
+		f.waitUntil([&f] { return f.audioEvents().size() == 1 && f.audioEvents()[0].at("volumeCurve").size() == 1; }));
+	CHECK(f.audioEvents()[0].at("volumeCurve")[0].at("position") == 9600);
+	CHECK(f.waitUntil(
+		[&f]
+		{
+			const std::vector<ui::VolumeLine>& lines = fadeLines(f).lanes()[0].volumes;
+			return lines.size() == 1 && lines[0].points.size() == 1 && lines[0].selected.empty();
+		}));
+	// The selected points go when their event leaves the selection: selected again, Delete removes the event.
+	f.click(220, 30);
+	CHECK(selected({0}, 1));
+	f.display.setTool(ui::Tool::ObjectSelection);
+	f.click(150, 60); // the MIDI part
+	f.click(240, 20);
+	CHECK(selected({}, 1));
+	f.run("edit.delete");
 	REQUIRE(f.waitUntil([&f] { return f.audioEvents().empty(); }));
 }
 
@@ -3988,8 +4098,11 @@ TEST_CASE("the draw tool moves a curve point drawn clipped at the lane's top fro
 	f.call("audioEvent.setVolumeCurve", {{"event", f.event}, {"points", {{{"position", 9600}, {"volume", 6.0}}}}});
 	REQUIRE(shows(6.0));
 	f.display.setTool(ui::Tool::Draw);
-	// A drag up leaves the point as it is and makes no undo step.
+	// A drag up leaves the point as it is and sends no edit: the project's revision stays, and it stays modified as it
+	// was.
+	const Json before = f.call("project.revision");
 	f.drag(220, 4, 220, 0);
+	CHECK(f.call("project.revision") == before);
 	// 4 dp down a 40 dp lane takes a tenth of the lane off its real height: +8.36 dB in all, the point +5.36 dB, not
 	// a tenth below the top (+2.1 dB).
 	f.drag(220, 1, 220, 5);
@@ -4025,6 +4138,43 @@ TEST_CASE("the draw tool moves a curve point drawn clipped at the lane's top fro
 	REQUIRE(f.waitUntil([&] { return pointVolume() != -3.0; }));
 	CHECK(std::abs(pointVolume() - 3.0) < 0.05);
 	CHECK(f.audioEvents()[0].at("volumeCurve").size() == 1);
+}
+
+TEST_CASE("below 0 dB of event volume, the draw tool takes a curve point no higher than +6 dB", "[unit]")
+{
+	// #829: a point goes up to +6 dB, so with the event at -12 dB the line reaches -6 dB at most, a quarter up the
+	// 40 dp lane, whose top stays +6 dB for every event. A click or drag above that puts the point at +6 dB.
+	Fixture f;
+	const auto pointVolume = [&f] { return f.audioEvents()[0].at("volumeCurve")[0].at("volume").get<double>(); };
+	// Waits until the display shows the event's line with points, at most at gain in all.
+	const auto shows = [&f](size_t points, double gain)
+	{
+		return f.waitUntil(
+			[&f, points, gain]
+			{
+				const std::vector<ui::FadeLines::Lane>& lanes = fadeLines(f).lanes();
+				if (lanes.empty() || lanes[0].volumes.size() != 1 || lanes[0].volumes[0].points.size() != points)
+					return false;
+				const ui::VolumeLine& line = lanes[0].volumes[0];
+				return std::abs((line.gain * (points != 0 ? line.points[0].gain : 1.0)) - gain) < 0.01;
+			});
+	};
+	f.call("audioEvent.set", {{"event", f.event}, {"volume", -12.0}});
+	REQUIRE(shows(0, 0.25));
+	f.display.setTool(ui::Tool::Draw);
+	f.click(220, 2);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("volumeCurve").size() == 1; }));
+	CHECK(pointVolume() == 6.0);
+	REQUIRE(shows(1, 0.5));
+	// Dragged up to the top, it stays as it is and sends no edit.
+	const Json before = f.call("project.revision");
+	f.drag(220, 30, 220, 0);
+	CHECK(f.call("project.revision") == before);
+	CHECK(pointVolume() == 6.0);
+	// 5 dp down from there: an eighth of the lane, -12 dB in all, the point 0 dB.
+	f.drag(220, 30, 220, 35);
+	REQUIRE(f.waitUntil([&] { return pointVolume() != 6.0; }));
+	CHECK(std::abs(pointVolume()) < 0.1);
 }
 
 TEST_CASE("Remove Volume Curve removes the selected events' curves, or resets them in the selection range", "[unit]")

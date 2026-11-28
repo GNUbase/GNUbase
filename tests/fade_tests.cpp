@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <functional>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -1082,8 +1083,8 @@ TEST_CASE("event.crossfade joins selected events with the overlapping ones next 
 	const ObjectId clip = session.addClip(writeClip(dir, "one", 1, 20000, one));
 	const ObjectId a = session.addEvent(track, clip, 0, 3000);
 	const ObjectId b = session.addEvent(track, clip, 2000, 3000);
-	const ObjectId c = session.addEvent(track, clip, 4000, 3000);
-	const ObjectId d = session.addEvent(track, clip, 8000, 1000); // apart
+	const ObjectId c = session.addEvent(track, clip, 4000, 3000, 17000); // up to its clip's end
+	const ObjectId d = session.addEvent(track, clip, 8000, 1000);        // apart, from its clip's start
 
 	// Two events: the crossfade between them, with the default settings.
 	CHECK(run(client, "event.crossfade", {{"events", {a, b}}}).at("events") == Json{b});
@@ -1098,6 +1099,66 @@ TEST_CASE("event.crossfade joins selected events with the overlapping ones next 
 
 	CHECK_THAT(reject(client, "event.crossfade", {{"events", {d}}}), ContainsSubstring("overlap"));
 	CHECK_THAT(reject(client, "event.crossfade", {{"events", {999}}}), ContainsSubstring("no audio event 999"));
+}
+
+TEST_CASE("event.crossfade lengthens events whose clips overlap", "[unit]")
+{
+	// Reference manual p. 388: where the events don't overlap but their clips do, the events are lengthened so that
+	// they overlap by the default crossfade's length, and crossfade there.
+	const gnubase::test::TempDir dir;
+	Session session;
+	Client& client = session.client;
+	const ObjectId track = session.addTrack();
+	const ObjectId clip = session.addClip(writeClip(dir, "one", 1, 20000, one));
+	const ObjectId a = session.addEvent(track, clip, 0, 3000);
+	const ObjectId b = session.addEvent(track, clip, 3000, 3000, 5000);
+	const ObjectId c = session.addEvent(track, clip, 7000, 2000);
+	const ObjectId d = session.addEvent(track, clip, 10000, 1000);        // nothing of its clip before it
+	const ObjectId e = session.addEvent(track, clip, 12000, 1000, 19000); // nothing of its clip after it
+	const ObjectId f = session.addEvent(track, clip, 13000, 1000);
+	const auto span = [&client](ObjectId id)
+	{
+		const Json event = eventOf(client, id);
+		return std::tuple{
+			event.at("position").get<int64_t>(), event.at("offset").get<int64_t>(), event.at("length").get<int64_t>()};
+	};
+
+	// Events that meet: 10 ms (480 frames at 48 kHz) at first, centred where they meet.
+	CHECK(run(client, "settings.get", {{"key", "editing.defaultCrossfade"}}).at("value").at("length") == 0.01);
+	CHECK(run(client, "event.crossfade", {{"events", {a, b}}}).at("events") == Json{b});
+	CHECK(span(a) == std::tuple{0, 0, 3240});
+	CHECK(span(b) == std::tuple{2760, 4760, 3240});
+	CHECK(crossfadeFrom(client, b) == a);
+	CHECK(eventOf(client, b).at("crossfade").at("length") == 0); // the whole overlap
+	CHECK(run(client, "history.get").at("steps").back().at("action") == "Crossfade");
+
+	// With a gap, as far as the clips reach: d can't start earlier, so c ends the default length after d's start.
+	run(client, "settings.set",
+		{{"key", "editing.defaultCrossfade"},
+			{"value", {{"mode", "equalGain"}, {"shape", "linear"}, {"outShape", "linear"}, {"length", 0.02}}}});
+	CHECK(run(client, "event.crossfade", {{"events", {c, d}}}).at("events") == Json{d});
+	CHECK(span(c) == std::tuple{7000, 0, 3960});
+	CHECK(span(d) == std::tuple{10000, 0, 1000});
+	CHECK(crossfadeFrom(client, d) == c);
+
+	// Clips that don't overlap can't crossfade.
+	CHECK_THAT(reject(client, "event.crossfade", {{"events", {e, f}}}), ContainsSubstring("overlap"));
+	CHECK(span(e) == std::tuple{12000, 19000, 1000});
+
+	// On a range, the events are lengthened over the range, if it reaches across where they meet: not over one
+	// inside a next to b.
+	run(client, "history.undo");
+	run(client, "history.undo");
+	CHECK_THAT(
+		reject(client, "range.fades", {{"start", 100}, {"end", 200}, {"tracks", {track}}, {"fade", "crossfade"}}),
+		ContainsSubstring("overlap"));
+	CHECK(span(a) == std::tuple{0, 0, 3000});
+	CHECK(span(b) == std::tuple{3000, 5000, 3000});
+	CHECK(run(client, "range.fades", {{"start", 2900}, {"end", 3300}, {"tracks", {track}}, {"fade", "crossfade"}})
+			  .at("events") == Json{b});
+	CHECK(span(a) == std::tuple{0, 0, 3300});
+	CHECK(span(b) == std::tuple{2900, 4900, 3100});
+	CHECK(eventOf(client, b).at("crossfade").at("length") == 400);
 }
 
 TEST_CASE("event.crossfade takes events with the same start in the order of their ids", "[unit]")

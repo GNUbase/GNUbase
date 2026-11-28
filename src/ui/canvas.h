@@ -9,6 +9,7 @@
 #include <RmlUi/Core/Mesh.h>
 #include <RmlUi/Core/Texture.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -274,12 +275,29 @@ namespace gnubase::ui
 		std::vector<int16_t> high;
 	};
 
+	// The volume of an audio event (#139) from start to end: its volume (gain, linear) times its volume curve, points
+	// in its clip's frames, as the engine plays it (engine::curveGain); the clip frame at start is offset, rate its
+	// frames per second. The line goes from silence at the bottom of the lane to g_volumeLineTop at the top.
+	struct VolumeLine
+	{
+		double start = 0.0;
+		double end = 0.0;
+		double rate = 0.0;
+		int64_t offset = 0;
+		double gain = 1.0;
+		std::vector<engine::GainPoint> points;
+		bool handles = false;         // squares at the points
+		std::vector<size_t> selected; // the points whose squares are drawn in stroke-color, as selected
+	};
+	inline constexpr double g_volumeLineTop = 1.9952623149688795; // +6 dB, the most an event's volume can be
+
 	// <waveform>: the peaks of one or more channels, one above the other, in color, or in the span's own color with
 	// own-color-tint over it if that isn't none. As high as its lane, it keeps event-inset off the lane's edges inside
 	// its padding, as <event-lanes> keeps events, unless that would leave it no pixel (as in lanes no higher than twice
 	// the inset, where events drop it). A pixel shows the columns it covers; columns wider than a pixel are repeated.
 	// The attribute brightness (0 to 1, 0.5 by default; the event display's Waveform Brightness, #1313) draws it
-	// brighter or dimmer (brightened).
+	// brighter or dimmer (brightened). An audio event's waveform is drawn with its volume and volume curve (setVolume,
+	// reference manual pp. 399, 402).
 	class Waveform final : public Canvas
 	{
 	public:
@@ -291,6 +309,9 @@ namespace gnubase::ui
 		void setColor(uint32_t color);
 		const TimeSpan& span() const { return m_span; }
 		const std::vector<PeakColumns>& channels() const { return m_channels; }
+		// Scales each pixel's peaks by the volume there; one with rate 0, the default, leaves them as they are.
+		void setVolume(VolumeLine volume);
+		const VolumeLine& volume() const { return m_volume; }
 
 	protected:
 		void build(const Frame& frame, Rml::TexturedMeshList& meshes) override;
@@ -298,6 +319,7 @@ namespace gnubase::ui
 
 	private:
 		TimeSpan m_span;
+		VolumeLine m_volume;
 		std::vector<PeakColumns> m_channels;
 	};
 
@@ -350,24 +372,9 @@ namespace gnubase::ui
 		bool in = true;
 	};
 
-	// The volume of an audio event (#139) from start to end: its volume (gain, linear) times its volume curve, points
-	// in its clip's frames, as the engine plays it (engine::curveGain); the clip frame at start is offset, rate its
-	// frames per second. The line goes from silence at the bottom of the lane to g_volumeLineTop at the top.
-	struct VolumeLine
-	{
-		double start = 0.0;
-		double end = 0.0;
-		double rate = 0.0;
-		int64_t offset = 0;
-		double gain = 1.0;
-		std::vector<engine::GainPoint> points;
-		bool handles = false; // squares at the points
-	};
-	inline constexpr double g_volumeLineTop = 1.9952623149688795; // +6 dB, the most an event's volume can be
-
 	// <fade-lines>: the fades and volume lines of the event lanes' events in stroke-color, and handles filled with
 	// color: fade handles, squares at the top of a lane at the positions given, event volume controls, squares at its
-	// bottom, and a volume line's points.
+	// bottom, and a volume line's points, the selected ones in stroke-color.
 	class FadeLines final : public Canvas
 	{
 	public:

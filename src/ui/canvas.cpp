@@ -631,6 +631,19 @@ namespace gnubase::ui
 		changed();
 	}
 
+	void Waveform::setVolume(VolumeLine volume)
+	{
+		const auto samePoints = [](const engine::GainPoint& a, const engine::GainPoint& b)
+		{ return a.position == b.position && a.gain == b.gain && a.curve == b.curve; };
+		if (volume.start == m_volume.start && volume.end == m_volume.end && volume.rate == m_volume.rate &&
+			volume.offset == m_volume.offset && volume.gain == m_volume.gain &&
+			std::equal(
+				volume.points.begin(), volume.points.end(), m_volume.points.begin(), m_volume.points.end(), samePoints))
+			return; // the display sends it on every move of a drag
+		m_volume = std::move(volume);
+		changed();
+	}
+
 	void Waveform::build(const Frame& frame, Rml::TexturedMeshList& meshes)
 	{
 		if (m_channels.empty() || !(m_span.length > 0.0))
@@ -664,9 +677,11 @@ namespace gnubase::ui
 			const double perColumn = m_span.length / static_cast<double>(columns);
 			const double middle = frame.y(0.0) + offset + (height * (static_cast<float>(channel) + 0.5F));
 			const double half = height / 2.0;
+			double volume = 1.0; // at the pixel's middle
 			const auto y = [&](int16_t sample)
 			{
-				return static_cast<float>(std::round(middle - (std::clamp(sample / 32767.0 * gain, -1.0, 1.0) * half)));
+				return static_cast<float>(
+					std::round(middle - (std::clamp(sample / 32767.0 * gain * volume, -1.0, 1.0) * half)));
 			};
 			float previousTop = 0.0F;
 			float previousBottom = 0.0F;
@@ -681,6 +696,11 @@ namespace gnubase::ui
 					std::clamp(std::floor(start / perColumn), 0.0, static_cast<double>(columns - 1)));
 				const auto b = static_cast<std::ptrdiff_t>(
 					std::clamp(std::ceil(end / perColumn), static_cast<double>(a + 1), static_cast<double>(columns)));
+				if (m_volume.rate > 0.0)
+					volume = m_volume.gain *
+						engine::curveGain(m_volume.points,
+							static_cast<double>(m_volume.offset) +
+								((((pixel + 0.5) * frame.unitsPerPixel) - m_volume.start) * m_volume.rate));
 				const int16_t low = *std::min_element(peaks.low.begin() + a, peaks.low.begin() + b);
 				const int16_t high = *std::max_element(peaks.high.begin() + a, peaks.high.begin() + b);
 				const float top = y(high);
@@ -938,8 +958,9 @@ namespace gnubase::ui
 						line(mesh, {xs[i - 1], y(gain(xs[i - 1]))}, {xs[i], y(gain(xs[i]))}, colour, width);
 					if (handle.alpha == 0 || !volume.handles)
 						continue;
-					for (const engine::GainPoint& point : volume.points)
+					for (size_t i = 0; i < volume.points.size(); ++i)
 					{
+						const engine::GainPoint& point = volume.points[i];
 						const double seconds =
 							volume.start + (static_cast<double>(point.position - volume.offset) / volume.rate);
 						if (seconds < volume.start || seconds > volume.end)
@@ -948,7 +969,10 @@ namespace gnubase::ui
 						const double at = y(std::clamp(volume.gain * point.gain / g_volumeLineTop, 0.0, 1.0));
 						quad(mesh, static_cast<float>(x - (handleSize / 2.0)),
 							static_cast<float>(at - (handleSize / 2.0)), static_cast<float>(x + (handleSize / 2.0)),
-							static_cast<float>(at + (handleSize / 2.0)), handle);
+							static_cast<float>(at + (handleSize / 2.0)),
+							std::find(volume.selected.begin(), volume.selected.end(), i) != volume.selected.end()
+								? colour
+								: handle);
 					}
 				}
 			// Fade handles at the top of the lane, event volume controls at its bottom.

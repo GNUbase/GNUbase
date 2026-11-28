@@ -333,6 +333,8 @@ namespace gnubase::ui
 		m_selection = std::move(events);
 		if (!m_selection.empty())
 			m_selectedPoints.clear(); // events or automation points (#121); setLanes shows it
+		if (!std::binary_search(m_selection.begin(), m_selection.end(), m_curveEvent))
+			m_curvePoints.clear(); // the selected curve points go with their event
 		setLanes();
 		showSelection();
 	}

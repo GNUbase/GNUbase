@@ -402,6 +402,36 @@ TEST_CASE("a waveform shows in each pixel the peaks of the columns it covers", "
 	CHECK(extent(vertices, green())[3] == 80.0F); // the second channel's -32767 at the bottom
 }
 
+TEST_CASE("a waveform is drawn with the volume and volume curve of its event", "[unit]")
+{
+	// Reference manual pp. 399, 402: the waveform image follows the event volume and its curve.
+	OneWindow fixture;
+	fixture.show("waveform { width: 4dp; height: 40dp; color: #00ff00; }", R"(<waveform id="wave" scale="100"/>)");
+	auto& wave = fixture.element<ui::Waveform>("wave");
+	ui::PeakColumns peaks;
+	peaks.low.assign(8, -32767);
+	peaks.high.assign(8, 32767);
+	wave.setPeaks({0.0, 400.0}, {peaks});
+	// At half the gain up to 200 seconds, a quarter after it: a clip frame a second from the event's start at 0.
+	wave.setVolume({0.0, 400.0, 1.0, 0, 0.5, {{200, 1.0, 0.0}, {200, 0.5, 0.0}}, false, {}});
+	const std::vector<Rml::Vertex> vertices = fixture.draw();
+	// Two quads, each widened over two pixels; the element's 40 dp start at 40.
+	REQUIRE(vertices.size() == 8);
+	const auto extentOf = [&vertices](size_t quad)
+	{
+		float top = 1e9F;
+		float bottom = -1e9F;
+		for (size_t v = quad * 4; v < (quad + 1) * 4; ++v)
+		{
+			top = std::min(top, vertices[v].position.y);
+			bottom = std::max(bottom, vertices[v].position.y);
+		}
+		return std::pair{top, bottom};
+	};
+	CHECK(extentOf(0) == std::pair{50.0F, 70.0F});
+	CHECK(extentOf(1) == std::pair{55.0F, 65.0F});
+}
+
 TEST_CASE("a waveform with a color of its own shows in it when the style sheet tints own colors", "[unit]")
 {
 	// An audio event's waveform in its event's color (#1312).

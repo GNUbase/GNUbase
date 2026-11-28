@@ -431,7 +431,7 @@ TEST_CASE("As Default in the crossfade editor sets the default crossfade, which 
 	choose(app, "#crossfade-out-shape", 3); // S-curve
 	click(app, "#crossfade-default");
 	CHECK(app.call("settings.get", {{"key", "editing.defaultCrossfade"}}).at("value") ==
-		Json{{"mode", "custom"}, {"shape", "linear"}, {"outShape", "sCurve"}});
+		Json{{"mode", "custom"}, {"shape", "linear"}, {"outShape", "sCurve"}, {"length", 0.25}});
 	// It changes no crossfade, and the editor stays open.
 	CHECK(open(app, "#crossfade-editor"));
 	click(app, "#crossfade-cancel");
@@ -444,7 +444,10 @@ TEST_CASE("As Default in the crossfade editor sets the default crossfade, which 
 	CHECK(eventOf(app, events.second).at("crossfade").at("mode") == "custom");
 	CHECK(eventOf(app, events.second).at("crossfade").at("outShape") == "sCurve");
 
-	// Recall Default shows the default in the editor, which OK then gives the crossfade.
+	// Recall Default shows the default in the editor, which OK then gives the crossfade, with its length (p. 388).
+	app.call("settings.set",
+		{{"key", "editing.defaultCrossfade"},
+			{"value", {{"mode", "custom"}, {"shape", "linear"}, {"outShape", "sCurve"}, {"length", 0.1}}}});
 	app.call("crossfade.set", {{"from", events.first}, {"to", events.second}, {"mode", "equalPower"}});
 	REQUIRE(app.waitUntil(
 		[&display] { return display.project().at("audioEvents")[1].at("crossfade").at("mode") == "equalPower"; }));
@@ -453,8 +456,11 @@ TEST_CASE("As Default in the crossfade editor sets the default crossfade, which 
 	click(app, "#crossfade-recall-default");
 	CHECK(element(app, "#crossfade-mode").at("value") == "custom");
 	CHECK(element(app, "#crossfade-out-shape").at("value") == "sCurve");
+	CHECK(element(app, "#crossfade-in-length").at("value") == "100.0");
 	click(app, "#crossfade-ok");
 	closes(app, "#crossfade-editor");
 	CHECK(eventOf(app, events.second).at("crossfade").at("mode") == "custom");
 	CHECK(eventOf(app, events.second).at("crossfade").at("outShape") == "sCurve");
+	CHECK(eventOf(app, events.second).at("crossfade").at("length") == 4800);
+	CHECK(eventOf(app, events.second).at("crossfade").at("outLength") == 4800);
 }

@@ -4,9 +4,9 @@
      (audio.crossfade on events that crossfade). Its Lua reads the crossfade when the dialog shows: its mode, the
      curves of its fade out and fade in, and their lengths in milliseconds, up to the overlap of the two events. OK
      sends them with crossfade.set, a length left as shown as it was, not rounded to the 0.1 ms shown; Remove removes
-     the crossfade (crossfade.remove), Cancel drops the changes. As Default (p. 392) makes the mode and shapes shown
-     the default crossfade (the user setting editing.defaultCrossfade) that new crossfades get, and Recall Default
-     shows the default's; both leave the dialog open. -->
+     the crossfade (crossfade.remove), Cancel drops the changes. As Default (p. 391) makes the mode, shapes and length
+     shown (the longer fade's) the default crossfade (the user setting editing.defaultCrossfade) that new crossfades
+     get, and Recall Default shows the default's; both leave the dialog open. -->
 <rml>
 <head>
 	<title>Crossfade</title>
@@ -177,9 +177,17 @@
 		end
 
 		function dialog.asDefault(document)
+			-- The crossfade's length is the longer of its fades (p. 388: the length new crossfades get where the
+			-- events are lengthened).
+			local inLength = tonumber(valueOf(document, "crossfade-in-length"))
+			local outLength = tonumber(valueOf(document, "crossfade-out-length"))
+			if inLength == nil or outLength == nil then
+				document:GetElementById("crossfade-message").inner_rml = "Lengths must be numbers of milliseconds"
+				return
+			end
 			local ok, failure = pcall(gnubase.settings.set, {key = "editing.defaultCrossfade", value = {
 				mode = valueOf(document, "crossfade-mode"), shape = valueOf(document, "crossfade-in-shape"),
-				outShape = valueOf(document, "crossfade-out-shape")}})
+				outShape = valueOf(document, "crossfade-out-shape"), length = math.max(inLength, outLength) / 1000}})
 			document:GetElementById("crossfade-message").inner_rml = ok and "" or escape(tostring(failure))
 		end
 
@@ -188,6 +196,10 @@
 			document:GetElementById("crossfade-mode"):SetAttribute("value", default.mode)
 			document:GetElementById("crossfade-in-shape"):SetAttribute("value", default.shape)
 			document:GetElementById("crossfade-out-shape"):SetAttribute("value", default.outShape)
+			-- Up to the overlap, as far as the crossfade can go.
+			local length = milliseconds(math.min((default.length or 0.01) * 1000, dialog.overlap))
+			document:GetElementById("crossfade-in-length"):SetAttribute("value", length)
+			document:GetElementById("crossfade-out-length"):SetAttribute("value", length)
 		end
 
 		function dialog.remove(document)

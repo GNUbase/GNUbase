@@ -6,6 +6,7 @@
 #include "engine/document/document.h"
 #include "engine/document/serialize.h"
 #include "ui/eventdisplay.h"
+#include "ui/eventwaveforms.h"
 
 #include <RmlUi/Core/Element.h>
 
@@ -15,8 +16,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <functional>
+#include <map>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace gnubase::ui
@@ -327,6 +331,18 @@ namespace gnubase::ui
 		return curve;
 	}
 
+	std::vector<size_t> EventDisplay::selectedCurvePoints(
+		uint64_t event, const std::vector<engine::VolumePoint>& curve) const
+	{
+		std::vector<size_t> points;
+		if (event != m_curveEvent || !std::binary_search(m_selection.begin(), m_selection.end(), event))
+			return points;
+		for (size_t i = 0; i < curve.size(); ++i)
+			if (std::find(m_curvePoints.begin(), m_curvePoints.end(), curve[i]) != m_curvePoints.end())
+				points.push_back(i);
+		return points;
+	}
+
 	void EventDisplay::curveUp(double x, double y)
 	{
 		drawCurveTo(x, y, true);
@@ -334,15 +350,29 @@ namespace gnubase::ui
 		if (const auto fades = m_fades.find(m_dragEvent); fades != m_fades.end())
 		{
 			const std::vector<engine::VolumePoint> curve = draggedCurve(m_dragEvent);
-			const auto same = [](const engine::VolumePoint& a, const engine::VolumePoint& b)
-			{ return a.position == b.position && a.volume == b.volume && a.curve == b.curve; };
-			if (!std::equal(curve.begin(), curve.end(), fades->second.curve.begin(), fades->second.curve.end(), same))
+			const bool changed = curve != fades->second.curve;
+			// A click on a point selects it, with Shift adds it to the selected ones or takes it out again (p. 400).
+			if (m_dragPoint && *m_dragPoint < fades->second.curve.size() && !changed)
+			{
+				const engine::VolumePoint& clicked = fades->second.curve[*m_dragPoint];
+				if (m_curveEvent != m_dragEvent || m_pressed != "shift")
+					m_curvePoints.clear();
+				m_curveEvent = m_dragEvent;
+				if (const auto found = std::find(m_curvePoints.begin(), m_curvePoints.end(), clicked);
+					found != m_curvePoints.end())
+					m_curvePoints.erase(found);
+				else
+					m_curvePoints.push_back(clicked);
+			}
+			if (changed)
 				edit("audioEvent.setVolumeCurve", {{"event", m_dragEvent}, {"points", engine::toJson(curve)}});
 		}
 		m_dragPoint.reset();
 		m_drawnCurve.clear();
 		m_dragDx = 0.0;
 		m_dragDy = 0.0;
+		m_drag = Drag::None;
+		showFades(); // the points selected
 	}
 
 	bool EventDisplay::eraseCurvePoint(const Shown& shown, double x, double y)
@@ -359,24 +389,61 @@ namespace gnubase::ui
 		return true;
 	}
 
-	void EventDisplay::showVolume(FadeLines::Lane& lane, const Shown& shown) const
+	std::optional<VolumeLine> EventDisplay::volumeLine(const Shown& shown) const
 	{
 		const AudioFades& fades = m_fades.at(shown.id);
 		const bool selected = std::binary_search(m_selection.begin(), m_selection.end(), shown.id);
-		if (const std::optional<double> fader = faderOf(shown); selected && fader)
-			lane.faders.push_back(*fader);
 		const double volume = draggedVolume(shown.id);
 		const std::vector<engine::VolumePoint> curve = draggedCurve(shown.id);
 		// Events at 0 dB without a curve show no line, unless the volume is being dragged.
 		const bool dragging = selected && m_drag == Drag::Volume && m_dragMoved;
 		if (curve.empty() && volume == 0.0 && !dragging)
-			return;
-		lane.volumes.push_back(
-			{shown.start, shown.end, fades.timeRate, fades.offset, gain(volume), engine::gainPoints(curve), selected});
+			return std::nullopt;
+		return VolumeLine{shown.start, shown.end, fades.timeRate, fades.offset, gain(volume), engine::gainPoints(curve),
+			selected, selectedCurvePoints(shown.id, curve)};
+	}
+
+	void EventDisplay::showVolume(FadeLines::Lane& lane, const Shown& shown) const
+	{
+		const bool selected = std::binary_search(m_selection.begin(), m_selection.end(), shown.id);
+		if (const std::optional<double> fader = faderOf(shown); selected && fader)
+			lane.faders.push_back(*fader);
+		if (std::optional<VolumeLine> line = volumeLine(shown))
+			lane.volumes.push_back(std::move(*line));
+	}
+
+	void EventDisplay::showWaveVolumes()
+	{
+		// The waveforms stay where the events are while a drag moves them, and so do the volumes they're drawn with.
+		std::map<uint64_t, VolumeLine> volumes;
+		for (const Shown& shown : m_events)
+			if (const auto fades = m_fades.find(shown.id); fades != m_fades.end() && fades->second.rate > 0.0)
+				if (std::optional<VolumeLine> line = volumeLine(shown))
+					volumes[shown.id] = std::move(*line);
+		m_waveforms->setVolumes(std::move(volumes));
 	}
 
 	void EventDisplay::addVolumeActions()
 	{
+		// Delete removes the selected curve points rather than events (reference manual p. 400).
+		const std::function<void()> deleteEvents = m_actions.at("edit.delete");
+		m_actions["edit.delete"] = [this, deleteEvents]
+		{
+			const auto fades = m_fades.find(m_curveEvent);
+			const std::vector<size_t> points =
+				fades != m_fades.end() ? selectedCurvePoints(m_curveEvent, fades->second.curve) : std::vector<size_t>();
+			if (points.empty())
+			{
+				deleteEvents();
+				return;
+			}
+			std::vector<engine::VolumePoint> curve;
+			for (size_t i = 0; i < fades->second.curve.size(); ++i)
+				if (!std::binary_search(points.begin(), points.end(), i))
+					curve.push_back(fades->second.curve[i]);
+			m_curvePoints.clear();
+			edit("audioEvent.setVolumeCurve", {{"event", m_curveEvent}, {"points", engine::toJson(curve)}});
+		};
 		// Remove Volume Curve (reference manual p. 401): in the selection range, else of the selected events.
 		m_actions["audio.removeVolumeCurve"] = [this]
 		{
