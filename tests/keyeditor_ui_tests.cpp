@@ -2701,6 +2701,16 @@ TEST_CASE("the event colors menu colors notes by velocity, pitch or channel as t
 	REQUIRE(f.app.waitUntil([&] { return f.view().at("eventColors") == "part"; }));
 	f.app.shell().step(std::chrono::milliseconds(0));
 	CHECK(f.elements("#key-event-colors-menu menuitem[event-colors-setup][disabled]").size() == 1);
+	// Nor has Sound Slot; back on Velocity, Setup is enabled again.
+	choose("[event-colors=soundSlot]");
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("eventColors") == "soundSlot"; }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.elements("#key-event-colors-menu menuitem[event-colors-setup][disabled]").size() == 1);
+	choose("[event-colors=velocity]");
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("eventColors") == "velocity"; }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.elements("#key-event-colors-menu menuitem[event-colors-setup][disabled]").empty());
+	CHECK(f.elements("#key-event-colors-menu menuitem[event-colors-setup]").size() == 1);
 }
 
 TEST_CASE("Indicate Transpositions shows the notes at the pitches they play", "[ui]")

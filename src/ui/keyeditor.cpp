@@ -835,7 +835,7 @@ namespace gnubase::ui
 			{
 				auto index = note.at("channel").get<size_t>();
 				if (colors == "velocity")
-					index = static_cast<size_t>(std::lround(note.at("velocity").get<double>() * 127.0)) / 16;
+					index = static_cast<size_t>(std::lround(note.at("velocity").get<double>() * g_maxVelocity)) / 16;
 				else if (colors == "pitch")
 					index = note.at("pitch").get<size_t>() % 12;
 				if (index < scheme->size())
@@ -968,7 +968,7 @@ namespace gnubase::ui
 					else
 					{
 						shown->SetAttribute("color", wanted);
-						shown->SetProperty("background-color", wanted); // the part's or slot's color, user data
+						shown->SetProperty("background-color", wanted); // the note's event color, user data
 					}
 				}
 		placeItems();
