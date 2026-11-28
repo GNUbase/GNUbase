@@ -1276,7 +1276,9 @@ namespace gnubase::engine
 				if (preFader && !tap)
 				{
 					tap = std::make_shared<PreFaderTap>(channelCount(channel.format));
-					fader->tapPreFader(tap, m_mutePreSends);
+					// The send's gain mutes a channel that the mute button mutes, so that switching the setting
+					// glides the send once, not the tap as well.
+					fader->tapPreFader(tap, m_mutePreSends && !channel.muted);
 				}
 				while (desc.nodes[sendNode].kind != graph::NodeKind::Send)
 					++sendNode;

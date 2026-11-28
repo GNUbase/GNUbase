@@ -552,25 +552,49 @@ TEST_CASE("Mute Pre-Send when Mute: mute automation mutes pre-fader sends from i
 TEST_CASE(
 	"Mute Pre-Send when Mute switched on or off for a muted channel glides its pre-fader sends there", "[integration]")
 {
-	Sends mixer;
-	mixer.set({{"mute", true},
-		{"sends", {{{"send", 1}, {"destination", mixer.effect}, {"on", true}, {"level", -6.0}, {"preFader", true}}}}});
-	run(mixer.client, "audio.render", {{"frames", 128}});
+	const int blockSize = GENERATE(64, 100);
+	INFO("block size " << blockSize);
+	const auto block = static_cast<int64_t>(blockSize);
+	Sends mixer(blockSize);
+	mixer.set({{"monitor", true}, {"mute", true}});
+	sendPreFader(mixer);
+	run(mixer.client, "transport.play");
+	run(mixer.client, "audio.render", {{"frames", 2 * block}});
 	run(mixer.client, "settings.set", {{"key", "audio.mutePreSends"}, {"value", true}});
-	run(mixer.client, "audio.render", {{"frames", 128}});
+	run(mixer.client, "audio.render", {{"frames", 2 * block}});
 	run(mixer.client, "settings.set", {{"key", "audio.mutePreSends"}, {"value", false}});
-	run(mixer.client, "audio.render", {{"frames", 128}});
+	run(mixer.client, "audio.render", {{"frames", 2 * block}});
+	const std::vector<float> output = mixer.output(6 * block);
+
+	// The track's input, as it passes it on alone. Only the send's gain glides, out over the first block of the new
+	// graph and in again over the first block of the next one, as on a channel the mute button doesn't mute.
+	const std::vector<float> input = played(blockSize, Strip::Stereo, [](Sends&) {}, 6 * block);
 	const double half = gain(-6.0);
-	checkGain(mixer.output(384),
-		[half](size_t i)
+	const auto expected = [half, block](size_t i)
+	{
+		const auto frame = static_cast<int64_t>(i);
+		const double x = static_cast<double>((frame % block) + 1) / static_cast<double>(block);
+		switch (frame / block)
 		{
-			const double x = std::min(1.0, static_cast<double>((i % 128) + 1) / 64.0); // through a block's glide
-			if (i < 128)
-				return half;
-			if (i < 256)
-				return half * (1.0 - x);
+		case 2:
+			return half * (1.0 - x);
+		case 3:
+			return 0.0;
+		case 4:
 			return half * x;
-		});
+		default:
+			return half;
+		}
+	};
+	size_t wrong = 0;
+	size_t first = 0;
+	for (size_t i = 0; i < output.size(); ++i)
+		if (std::abs(output[i] - (input[i] * expected(i))) > 1e-6 && wrong++ == 0)
+			first = i;
+	INFO(wrong << " wrong frames, the first at " << first << ": " << output[first] << " instead of "
+			   << input[first] * expected(first));
+	CHECK(wrong == 0);
+	CHECK(std::any_of(input.begin(), input.end(), [](float sample) { return sample != 0.0f; }));
 }
 
 TEST_CASE("Mute Pre-Send when Mute switched on or off under mute automation glides the pre-fader sends there",
