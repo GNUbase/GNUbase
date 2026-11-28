@@ -316,7 +316,9 @@ namespace gnubase::ui
 				R"(" title=")" + each.title + R"(">)" + each.label + "</button>";
 		// The toolbar's and the info line's sections, which their setup panes show, hide and order (p. 1575): sets of
 		// their own for the key editor, the drum editor and the in-place editors (docs/features/docking.md).
-		const std::string kind = m_name.rfind("inPlace:", 0) == 0 ? "inPlace" : (drum ? "drumEditor" : "keyEditor");
+		std::string kind = drum ? "drumEditor" : "keyEditor";
+		if (m_name.rfind("inPlace:", 0) == 0)
+			kind = "inPlace";
 		const auto section = [](const char* id, const char* label, const std::string& content)
 		{
 			return std::string(R"(<div class="toolbar-section" section=")") + id + R"(" label=")" + label + R"(">)" +
@@ -1038,8 +1040,12 @@ namespace gnubase::ui
 				}
 			}
 		const std::string nameList = activeTrack().value("nameList", std::string("none"));
-		setInner(root->QuerySelector("#drum-names"),
-			nameList == "gm" ? "GM Default" : (nameList == "pads" ? "Pad Names" : "No Names"));
+		std::string listName = "No Names";
+		if (nameList == "gm")
+			listName = "GM Default";
+		else if (nameList == "pads")
+			listName = "Pad Names";
+		setInner(root->QuerySelector("#drum-names"), listName);
 		for (const auto& [index, selector, on] :
 			{std::make_tuple(size_t{4}, "menuitem[visible-sounds=withEvents]", visibleSounds == "withEvents"),
 				std::make_tuple(size_t{4}, "menuitem[visible-sounds=inUse]", visibleSounds == "inUse"),

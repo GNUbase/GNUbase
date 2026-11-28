@@ -13,12 +13,31 @@
 	min-height: 0;
 }
 
+/* The toolbar wraps button by button, as it did before it had sections: they are inline in its lines, so that a
+   narrow editor doesn't move a whole section to the next line (#1766). */
 .key-editor-toolbar
 {
+	display: block;
 	flex-shrink: 0;
-	flex-wrap: wrap;
 	height: auto;
 	min-height: 32dp;
+	padding: 4dp 6dp 0 6dp;
+}
+
+.key-editor-toolbar .toolbar-section
+{
+	display: inline;
+}
+
+/* Lines as high as the buttons, which their text's baseline would make a little higher. */
+.key-editor-toolbar button, .key-editor-toolbar valuefield
+{
+	vertical-align: top;
+}
+
+.key-editor-toolbar .toolbar-section.hidden
+{
+	display: none;
 }
 
 .key-editor-toolbar valuefield
@@ -471,7 +490,11 @@
 	display: none;
 }
 
-.in-place-editor.toolbar-shown .key-editor-toolbar,
+.in-place-editor.toolbar-shown .key-editor-toolbar
+{
+	display: block;
+}
+
 .in-place-editor.toolbar-shown .key-editor-info
 {
 	display: flex;
